@@ -32,6 +32,26 @@ this file only once it is verified against MPAS output.
 5. **Physics.** The physics suites, reusing CPPWRF's verified ports where MPAS calls the same code.
 6. **FP32 identity, multi-GPU, performance.**
 
+## Feasibility (MPAS-Atmosphere v8.4.2 against CPPWRF 1.4.0)
+
+A first map of the work, counted from the two source trees:
+
+- **Physics, `mesoscale_reference` suite** (WSM6, new Tiedtke, YSU + GWDO, RRTMG LW/SW, revised MM5 surface layer,
+  Noah): every scheme has a CPPWRF port. The RRTMG cores and the Noah land model match WRF 4.8.0 almost line for line;
+  the MPAS wrappers, and the external MMM-physics revision MPAS pins, differ in places, so each port is re-verified
+  against MPAS, not assumed.
+- **Physics, `convection_permitting` suite** (Thompson, Grell-Freitas, MYNN): MPAS calls older or different code than
+  WRF 4.8.0 (Thompson based on WRF 4.1.4, the monolithic Grell-Freitas, MMM-physics MYNN), so these need new ports.
+- **Constants:** MPAS uses g = 9.80616 m s⁻² where WRF uses 9.81, so physics shared with CPPWRF is parameterised, not
+  copied.
+- **Dynamical core:** about 11,700 lines of Fortran (CPPWRF's WRF dynamical core is about 9,000 lines of C++/CUDA): a
+  split-explicit solver on the unstructured Voronoi C-grid, whose sums over the edges of each cell must keep MPAS's order
+  for bit identity.
+- **GPU in the reference model:** MPAS v8.4.2 carries 1,331 lines of OpenACC, all in the dynamical core and the halo
+  and vector-reconstruction code; its physics runs on the CPU.
+- **First milestone:** read MPAS's own `init.nc` / `lbc` files and mesh partitions directly (as CPPWRF reads WRF's
+  `wrfinput` / `wrfbdy`), port the dynamical core on the CPU in FP64, and compare with MPAS real\*8 at tolerance 0.
+
 ## Method (from CPPWRF)
 
 - The reference is the Fortran model as built by its default toolchain, including vectorised loops and the exact
