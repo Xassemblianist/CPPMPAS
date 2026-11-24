@@ -41,8 +41,8 @@ this file only once it is verified against MPAS output.
 
 ## License
 
-To be decided before the first code lands (CPPWRF is GPL-3.0-or-later; MPAS is distributed under its own BSD-style
-license, whose notices will be kept in any derived file).
+GPL-3.0-or-later (LICENSE). Files derived from MPAS keep MPAS's own copyright and license notices (MPAS is distributed
+under a BSD-style license), and files derived from WRF keep WRF's notices, as in CPPWRF.
 
 ## Author
 
