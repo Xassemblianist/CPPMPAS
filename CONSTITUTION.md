@@ -18,6 +18,15 @@ that says why.
 4. **FP32 identity follows the reference's real\*4 build** once FP64 is done; a faster FP32 build that changes
    results is opt-in and is reported by its measured distance, never as identical.
 5. **Ideas that change results belong to a separate fork.** CPPMPAS reproduces MPAS; it does not improve it.
+6. **The reference is a recipe, not a version number.** It is pinned completely: compiler and version, the make
+   target and its flags (`PRECISION=double`, optimisation and `-march` choices), the I/O layer (SMIOL or PIO) and
+   its version, the MPI library and version (run on one process), the mesh and graph-partition files with their
+   checksums, and the initial-condition generation (`init_atmosphere`) with its namelists and input data. The
+   recipe is recorded with every reference. Any change to it makes a new reference, and comparisons against the
+   old one are void until the references are regenerated.
+7. **MPAS's own GPU (OpenACC) build is not a reference.** CPPMPAS is compared for correctness only with the pinned
+   CPU real\*8 build (and later the real\*4 build). OpenACC output may be used to compare performance, never to
+   judge correctness.
 
 ## 2. How porting is done
 
@@ -33,6 +42,11 @@ that says why.
 5. **Shared physics is re-verified, never assumed.** Where MPAS calls the same scheme as WRF, CPPWRF's port is a
    starting point only: constants (g = 9.80616 m s⁻² in MPAS), wrappers and pinned physics revisions differ, so the
    scheme is checked against MPAS's own output.
+6. **Code shared with CPPWRF never diverges silently.** Every scheme or routine taken from CPPWRF records its
+   source (CPPWRF commit and file) in a header comment and in `SHARED_WITH_CPPWRF.md`. MPAS-specific differences
+   (constants such as g, wrapper and revision differences) enter as parameters, never as edits of the shared
+   logic. A bug fix found in either project is reported to the other and applied and verified there, and the
+   ledger records both commits. A common library may replace the copies later; until then this rule holds.
 
 ## 3. How it is proven
 
