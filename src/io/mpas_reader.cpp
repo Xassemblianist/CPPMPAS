@@ -404,6 +404,8 @@ FieldRef field_ref(MpasInput& in, const std::string& name) {
   if (name == #x) { r.i = &m.x; return r; }
 #define CPPMPAS_S(x) \
   if (name == #x) { r.r = &s.x; return r; }
+#define CPPMPAS_D(x) \
+  if (name == #x) { r.r = &in.diag.x; return r; }
   CPPMPAS_I(indexToCellID) CPPMPAS_I(indexToEdgeID) CPPMPAS_I(indexToVertexID)
   CPPMPAS_I(nEdgesOnCell) CPPMPAS_I(nEdgesOnEdge) CPPMPAS_I(cellsOnCell) CPPMPAS_I(edgesOnCell)
   CPPMPAS_I(verticesOnCell) CPPMPAS_I(cellsOnEdge) CPPMPAS_I(verticesOnEdge) CPPMPAS_I(edgesOnEdge)
@@ -420,6 +422,20 @@ FieldRef field_ref(MpasInput& in, const std::string& name) {
   CPPMPAS_R(zb3) CPPMPAS_R(dss) CPPMPAS_R(deriv_two) CPPMPAS_R(coeffs_reconstruct)
   CPPMPAS_S(u_init) CPPMPAS_S(v_init) CPPMPAS_S(t_init) CPPMPAS_S(u) CPPMPAS_S(w) CPPMPAS_S(rho)
   CPPMPAS_S(theta) CPPMPAS_S(rho_base) CPPMPAS_S(theta_base) CPPMPAS_S(surface_pressure)
+  // computed by atm_mpas_init_block (core_atmosphere/atm_init.hpp); allocated only after it ran
+  CPPMPAS_R(invAreaCell) CPPMPAS_R(invDvEdge) CPPMPAS_R(invDcEdge) CPPMPAS_R(invAreaTriangle)
+  CPPMPAS_R(edgesOnCell_sign) CPPMPAS_R(edgesOnVertex_sign) CPPMPAS_R(zb_cell) CPPMPAS_R(zb3_cell)
+  CPPMPAS_I(kiteForCell) CPPMPAS_I(advCellsForEdge) CPPMPAS_I(nAdvCellsForEdge) CPPMPAS_R(adv_coefs)
+  CPPMPAS_R(adv_coefs_3rd) CPPMPAS_R(deformation_coef_c2) CPPMPAS_R(deformation_coef_s2)
+  CPPMPAS_R(deformation_coef_cs) CPPMPAS_R(deformation_coef_c) CPPMPAS_R(deformation_coef_s)
+  CPPMPAS_R(meshScalingDel2) CPPMPAS_R(meshScalingDel4) CPPMPAS_R(meshScalingRegionalCell)
+  CPPMPAS_R(meshScalingRegionalEdge) CPPMPAS_R(etp) CPPMPAS_R(etm) CPPMPAS_R(ewp) CPPMPAS_R(ewm)
+  CPPMPAS_R(specZoneMaskCell) CPPMPAS_R(specZoneMaskEdge) CPPMPAS_R(specZoneMaskVertex)
+  CPPMPAS_I(nearestRelaxationCell)
+  CPPMPAS_S(theta_m) CPPMPAS_S(rho_zz)
+  CPPMPAS_D(ru) CPPMPAS_D(rw) CPPMPAS_D(rho_p) CPPMPAS_D(rtheta_base) CPPMPAS_D(rtheta_p) CPPMPAS_D(exner)
+  CPPMPAS_D(exner_base) CPPMPAS_D(pressure_p) CPPMPAS_D(pressure_base)
+#undef CPPMPAS_D
 #undef CPPMPAS_R
 #undef CPPMPAS_I
 #undef CPPMPAS_S

@@ -4,6 +4,9 @@
 //   cppmpas roundtrip <in> <out> [--init] [--scalars ...] [--fields a,b,...]
 //   cppmpas history   <init> <out> --fields a,b,... [--scalars ...] [--file-id ID]
 //   cppmpas dump      <in> <out.nc> [--init] [--scalars ...]
+//   cppmpas init      <init> <out> --fields a,b,... [--namelist namelist.atmosphere] [--scalars ...] [--file-id ID]
+// init runs the computations of atm_mpas_init_block (core_atmosphere/atm_init.hpp) on an init file and writes the
+// given fields as MPAS writes them to a history / restart file (global order, Registry layout).
 // dump writes every array as MPAS holds it in memory on one rank: local order, local 1-based indices, the garbage
 // element included (dimensions <dim>_mem); compare with MPAS memory dumps after nothing more than a type change.
 #include <algorithm>
@@ -13,6 +16,8 @@
 #include <string>
 #include <vector>
 
+#include "core/namelist.hpp"
+#include "core_atmosphere/atm_init.hpp"
 #include "io/mpas_reader.hpp"
 #include "io/mpas_writer.hpp"
 #include "io/registry.hpp"
@@ -34,7 +39,7 @@ struct Args {
   std::vector<std::string> pos;
   bool init = false;
   std::vector<std::string> scalars{"qv"}, fields;
-  std::string file_id;
+  std::string file_id, namelist;
 };
 
 Args parse(int argc, char** argv) {
@@ -49,6 +54,7 @@ Args parse(int argc, char** argv) {
     else if (s == "--scalars") a.scalars = split(next());
     else if (s == "--fields") a.fields = split(next());
     else if (s == "--file-id") a.file_id = next();
+    else if (s == "--namelist") a.namelist = next();
     else if (s.rfind("--", 0) == 0) throw Error("unknown option " + s);
     else a.pos.push_back(s);
   }
@@ -107,7 +113,7 @@ void dump(MpasInput& in, const std::string& out) {
 }
 
 int run(int argc, char** argv) {
-  if (argc < 2) throw Error("usage: cppmpas info|roundtrip|history|dump ...");
+  if (argc < 2) throw Error("usage: cppmpas info|roundtrip|history|init|dump ...");
   const std::string cmd = argv[1];
   Args a = parse(argc, argv);
   if (cmd == "info") {
@@ -140,6 +146,18 @@ int run(int argc, char** argv) {
     write_history(in, a.pos[1], a.fields, opt);
     std::cerr << "NOTE: the namelist options MPAS writes as global attributes (mpas_subdriver.F:532-557) are not "
                  "written yet\n";
+  } else if (cmd == "init") {
+    if (a.pos.size() != 2 || a.fields.empty())
+      throw Error("usage: cppmpas init <init> <out> --fields a,b,... [--namelist file] [--scalars ...] [--file-id ID]");
+    a.init = true;
+    const InitConfig cfg = read_init_config(a.namelist);
+    MpasInput in = load(a, a.pos[0]);
+    std::vector<std::string> log;
+    atm_mpas_init_block(in.mesh, in.state, in.diag, cfg, log);
+    for (const auto& l : log) std::cerr << "MPAS log: " << l << "\n";
+    HistoryOptions opt;
+    opt.file_id = a.file_id;
+    write_history(in, a.pos[1], a.fields, opt);
   } else if (cmd == "dump") {
     if (a.pos.size() != 2) throw Error("usage: cppmpas dump <in> <out.nc> [--init] [--scalars ...]");
     MpasInput in = load(a, a.pos[0]);

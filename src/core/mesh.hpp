@@ -60,6 +60,18 @@ struct Mesh {
   FArray<real> edgeNormalVectors, localVerticalUnitVectors, cellTangentPlane;
   // vertical mesh (init file)
   FArray<real> cf1, cf2, cf3, zgrid, rdzw, dzu, rdzu, fzm, fzp, zxu, zz, zb, zb3, dss, deriv_two, coeffs_reconstruct;
+  // computed by atm_mpas_init_block (src/core_atmosphere/mpas_atm_core.F:366-617), Registry.xml:1434-1669;
+  // allocated with the Registry default (0) by allocate_init_fields()
+  FArray<real> invAreaCell, invDvEdge, invDcEdge, invAreaTriangle;
+  FArray<real> edgesOnCell_sign, edgesOnVertex_sign, zb_cell, zb3_cell;
+  FArray<int> kiteForCell;
+  FArray<int> advCellsForEdge, nAdvCellsForEdge;
+  FArray<real> adv_coefs, adv_coefs_3rd;
+  FArray<real> deformation_coef_c2, deformation_coef_s2, deformation_coef_cs, deformation_coef_c, deformation_coef_s;
+  FArray<real> meshScalingDel2, meshScalingDel4, meshScalingRegionalCell, meshScalingRegionalEdge;
+  FArray<real> etp, etm, ewp, ewm;
+  FArray<real> specZoneMaskCell, specZoneMaskEdge, specZoneMaskVertex;
+  FArray<int> nearestRelaxationCell;
 
   ElementOrder cell_order, edge_order, vertex_order;
   const ElementOrder& order(Element e) const;
@@ -72,6 +84,17 @@ struct State {
   FArray<real> u, w, rho, theta, rho_base, theta_base, surface_pressure;
   std::vector<std::string> scalar_names;    // constituents of var_array scalars, in Registry order
   FArray<real> scalars;                     // (num_scalars, nVertLevels, nCells+1)
+  // time level 1 of the prognostic state that atm_init_coupled_diagnostics sets (mpas_atm_time_integration.F:7498,
+  // 7500); u, w and scalars above are time level 1 as read
+  FArray<real> theta_m, rho_zz;             // (nVertLevels, nCells+1)
+};
+
+// The diag pool fields atm_init_coupled_diagnostics sets (mpas_atm_time_integration.F:7501-7523); rho and theta of
+// the diag pool are State::rho / State::theta (read from the input stream).
+struct Diag {
+  FArray<real> ru;                                       // (nVertLevels, nEdges+1)
+  FArray<real> rw;                                       // (nVertLevelsP1, nCells+1)
+  FArray<real> rho_p, rtheta_base, rtheta_p, exner, exner_base, pressure_p, pressure_base;  // (nVertLevels, nCells+1)
 };
 
 // MPAS's local numbering on one rank from the file's cell connectivity (global IDs, Fortran order):

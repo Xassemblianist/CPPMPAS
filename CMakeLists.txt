@@ -54,6 +54,10 @@ endif()
 add_library(cppmpas STATIC
   src/core/decomp.cpp
   src/core/mesh.cpp
+  src/core/namelist.cpp
+  src/core_atmosphere/atm_init.cpp
+  src/operators/geometry_utils.cpp
+  src/operators/vector_operations.cpp
   src/io/netcdf_file.cpp
   src/io/registry.cpp
   src/io/mpas_reader.cpp

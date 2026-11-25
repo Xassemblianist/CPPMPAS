@@ -24,6 +24,7 @@ struct SourceInfo {
 struct MpasInput {
   Mesh mesh;
   State state;
+  Diag diag;
   bool has_state = false;
   SourceInfo source;
   std::vector<std::string> warnings;  // MPAS's own warnings (mpas_bootstrapping.F), e.g. a missing attribute

@@ -111,7 +111,7 @@ void write_values(NcFile& f, MpasInput& in, const std::string& name) {
     v.resize(kStrLen, ' ');
     f.put_char(name, v, record);
   } else if (ref.i) {
-    if (!ref.i->allocated()) throw Error("write " + name + ": the field was not read");
+    if (!ref.i->allocated()) throw Error("write " + name + ": the field was neither read nor computed");
     std::vector<int> local = kConnectivity.count(name)
                                  ? prewrite_reindex(m, name, *ref.i)
                                  : std::vector<int>(ref.i->data(), ref.i->data() + ref.i->size());
@@ -126,7 +126,7 @@ void write_values(NcFile& f, MpasInput& in, const std::string& name) {
     local_to_file(m.cell_order, m.nVertLevels, local.data(), out.data());
     f.put_double(name, out, record);
   } else {
-    if (!ref.r->allocated()) throw Error("write " + name + ": the field was not read");
+    if (!ref.r->allocated()) throw Error("write " + name + ": the field was neither read nor computed");
     std::vector<double> local(ref.r->data(), ref.r->data() + ref.r->size());
     f.put_double(name, file_values(m, rv, *ref.r, local), record);
   }
