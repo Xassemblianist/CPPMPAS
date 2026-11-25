@@ -10,8 +10,15 @@ checks against WRF, all at tolerance 0). CPPMPAS applies the same method to MPAS
 
 ## Status
 
-**Planning. There is no model code here yet.** This repository records the plan; every capability will be listed in
-this file only once it is verified against MPAS output.
+**Early work. There is no dynamical core yet.** The first code is the mesh and I/O layer: MPAS grid and init files
+are read into arrays laid out as MPAS holds them in memory on one MPI rank (MPAS's local edge and vertex numbering,
+local connectivity, garbage elements), and written back in MPAS's file order. It is checked against the NCAR
+test-case meshes and an independent re-implementation of the numbering (`ctest`), not yet against MPAS output or
+MPAS memory dumps. Every capability will be listed in this file only once it is verified against MPAS output.
+
+Build: `cmake -S . -B build && cmake --build build` (C++20, NetCDF-C; FP64). Tests need
+`-DCPPMPAS_CASES_DIR=<extracted NCAR test-case tarballs> -DCPPMPAS_MPAS_COMPARE=<tools/mpas_compare.py>
+-DCPPMPAS_MPAS_REGISTRY=<MPAS v8.4.2 src/core_atmosphere/Registry.xml>`.
 
 ## Goal
 
