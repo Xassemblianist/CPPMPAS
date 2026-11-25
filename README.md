@@ -10,15 +10,26 @@ checks against WRF, all at tolerance 0). CPPMPAS applies the same method to MPAS
 
 ## Status
 
-**Early work. There is no dynamical core yet.** The first code is the mesh and I/O layer: MPAS grid and init files
-are read into arrays laid out as MPAS holds them in memory on one MPI rank (MPAS's local edge and vertex numbering,
-local connectivity, garbage elements), and written back in MPAS's file order. It is checked against the NCAR
-test-case meshes and an independent re-implementation of the numbering (`ctest`), not yet against MPAS output or
-MPAS memory dumps. Every capability will be listed in this file only once it is verified against MPAS output.
+**Early work. There is no time step yet.** What exists, all on the CPU in FP64:
+
+- The mesh and I/O layer: MPAS grid, init and restart files are read into arrays laid out as MPAS holds them in
+  memory on one MPI rank (MPAS's local edge and vertex numbering, local connectivity, garbage elements), and written
+  back in MPAS's file order. Checked on the reference's own init files (round trip identical, numbering against an
+  independent re-implementation) for the JW, SC and MW cases.
+- The init-time computations of `atm_mpas_init_block` before the first step (signs, inverses, deformation and
+  advection coefficients, mesh scaling, damping coefficients, boundary masks, `mpas_initialize_vectors`, the RBF
+  reconstruction coefficients, `atm_init_coupled_diagnostics`), with ports of the exact glibc 2.41 libm / libmvec
+  entries the reference executable calls. **Verified at tolerance 0** against the MPAS v8.4.2 FP64 references
+  (cppmpas-data releases `mpas842-dbl-{jw,sc,mw}-001`) for every array MPAS writes: `edgeNormalVectors`,
+  `localVerticalUnitVectors`, `cellTangentPlane`, `coeffs_reconstruct`, `dss`, `exner_base`, `rtheta_base`,
+  `pressure_base` (restart file) and `rho_zz`, `theta_m`, `pressure_p` (initial record of the every-step history), in
+  all three cases. The other computed arrays are not written by MPAS and are **unverified** until the reference
+  writes them (an `initdump` stream is prepared for the reference pipeline).
 
 Build: `cmake -S . -B build && cmake --build build` (C++20, NetCDF-C; FP64). Tests need
 `-DCPPMPAS_CASES_DIR=<extracted NCAR test-case tarballs> -DCPPMPAS_MPAS_COMPARE=<tools/mpas_compare.py>
--DCPPMPAS_MPAS_REGISTRY=<MPAS v8.4.2 src/core_atmosphere/Registry.xml>`.
+-DCPPMPAS_MPAS_REGISTRY=<MPAS v8.4.2 src/core_atmosphere/Registry.xml> -DCPPMPAS_REFS_DIR=<directory with the
+extracted mpas842-dbl-{mw,sc,jw}-001 releases>`; `unit_libm` needs glibc 2.41 on an x86-64 CPU with FMA and AVX2.
 
 ## Goal
 

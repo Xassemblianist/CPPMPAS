@@ -65,3 +65,49 @@ cppmpas_error_test(bad_dims "variable u has dimensions (Time, nVertLevels, nEdge
 cppmpas_error_test(unknown_scalar "scalar 'qz' is not a constituent" info --init --scalars qv,qz ${W}/mw_init.nc)
 cppmpas_error_test(unported_field "variable 'pressure' has no CPPMPAS port" history ${W}/mw_init.nc ${W}/x.nc --fields u,pressure)
 cppmpas_error_test(unknown_field "variable 'notavar' is not defined in MPAS-Atmosphere's Registry" history ${W}/mw_init.nc ${W}/x.nc --fields notavar)
+
+# ---------------------------------------------------------------------------------------------------------------
+# libm / libmvec entries of the reference (src/core/libm.hpp) against this machine's glibc 2.41 (FMA, AVX2)
+add_executable(test_libm test_libm.cpp)
+target_link_libraries(test_libm PRIVATE cppmpas mvec m)
+add_test(NAME unit_libm COMMAND test_libm 2000000)
+
+# ---------------------------------------------------------------------------------------------------------------
+# The MPAS v8.4.2 FP64 references (Xassemblianist/cppmpas-data releases mpas842-dbl-{mw,sc,jw}-001, extracted under
+# CPPMPAS_REFS_DIR): reader on the real init files, and atm_mpas_init_block against what MPAS wrote.
+set(CPPMPAS_REFS_DIR "" CACHE PATH "directory holding mpas842-dbl-{mw,sc,jw}-001/ (extracted reference releases)")
+set(REF_MW ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW)
+set(REF_SC ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC)
+set(REF_JW ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW)
+set(INIT_MW ${REF_MW}/init/mtn_wave_init.nc)
+set(INIT_SC ${REF_SC}/init/supercell_init.nc)
+set(INIT_JW ${REF_JW}/init/x1.40962.init.nc)
+set(RST_MW ${REF_MW}/forecast/restart.0000-01-01_00.30.06.nc)
+set(RST_SC ${REF_SC}/forecast/restart.0000-01-01_00.30.03.nc)
+set(RST_JW ${REF_JW}/forecast/restart.0000-01-02_00.07.30.nc)
+set(SCAL_MW qv)
+set(SCAL_SC qv,qc,qr)
+set(SCAL_JW qv)
+# arrays atm_mpas_init_block computes that MPAS writes: time-invariant ones in the restart stream (Registry.xml:
+# 535-537, 564, 566, 680-682; nothing changes them after the init block), and the time-level-1 state / pressure_p
+# in the first (t = 0) record of the every-step history (written before step 1)
+set(INIT_RESTART_FIELDS edgeNormalVectors,localVerticalUnitVectors,cellTangentPlane,coeffs_reconstruct,dss,exner_base,rtheta_base,pressure_base)
+set(INIT_STEP0_FIELDS rho_zz,theta_m,pressure_p)
+foreach(case MW SC JW)
+  # OPM02 open item 1: the reader on the reference's own init files (round trip and in-memory order)
+  add_test(NAME roundtrip_refinit_${case} COMMAND ${PY} ${T}/roundtrip.py ${EXE} ${CPPMPAS_MPAS_COMPARE} ${INIT_${case}}
+    ${W}/ref_${case} init ${SCAL_${case}})
+  add_test(NAME order_refinit_${case} COMMAND ${CMAKE_COMMAND} -E env sh -c
+    "mkdir -p '${W}' && '${EXE}' dump '${INIT_${case}}' '${W}/dump_refinit_${case}.nc' --init --scalars ${SCAL_${case}} && ${Python3_EXECUTABLE} -I '${T}/check_order.py' '${INIT_${case}}' '${W}/dump_refinit_${case}.nc' ${case}")
+  add_test(NAME readrestart_${case} COMMAND ${EXE} info ${RST_${case}} --init --scalars ${SCAL_${case}})
+  # atm_mpas_init_block on the reference init file with the reference namelist
+  add_test(NAME init_run_${case} COMMAND ${CMAKE_COMMAND} -E env sh -c
+    "mkdir -p '${W}' && rm -f '${W}/init_${case}.nc' && '${EXE}' init '${INIT_${case}}' '${W}/init_${case}.nc' --namelist '${REF_${case}}/steps/namelist.atmosphere' --scalars ${SCAL_${case}} --fields ${INIT_RESTART_FIELDS},${INIT_STEP0_FIELDS}")
+  set_tests_properties(init_run_${case} PROPERTIES FIXTURES_SETUP init_${case})
+  add_test(NAME init_restart_${case} COMMAND ${PY} ${T}/compare_arrays.py ${RST_${case}} ${W}/init_${case}.nc
+    ${INIT_RESTART_FIELDS})
+  add_test(NAME init_step0_${case} COMMAND ${PY} ${T}/compare_arrays.py ${REF_${case}}/steps/step.0000-01-01_00.00.00.nc
+    ${W}/init_${case}.nc ${INIT_STEP0_FIELDS})
+  set_tests_properties(init_restart_${case} init_step0_${case} PROPERTIES FIXTURES_REQUIRED init_${case})
+endforeach()
+cppmpas_error_test(do_restart "config_do_restart = true: the restart start-up" init ${W}/mw_init.nc ${W}/x.nc --fields dss --namelist ${T}/data/namelist.do_restart)

@@ -3,13 +3,15 @@
 """Show that every test can fail: apply one deliberate one-line bug at a time to the source, rebuild, run the tests
 it must break, require each of them to fail, restore the source. Run it through the workstation gate.
 
-usage: mutation_check.py <source dir> <build dir>
+usage: mutation_check.py <source dir> <build dir> [first]   (first: index of the first mutant to apply, default 0)
 """
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 R, W = "src/io/mpas_reader.cpp", "src/io/mpas_writer.cpp"
+A, V = "src/core_atmosphere/atm_init.cpp", "src/operators/vector_operations.cpp"
 # (file, original line fragment, mutated fragment, tests that must fail)
 MUTATIONS = [
     ("src/core/decomp.cpp", "    for (int j = 1; j <= nEdgesOnCell[i - 1]; ++j) {\n      const int e",
@@ -46,13 +48,57 @@ MUTATIONS = [
      "  throw Error(\"variable '\" + name + \"' was not read\");", ["err_unported_field"]),
     ("src/io/registry.cpp", "  if (!r) throw Error(\"variable '\" + name + \"' is not defined in MPAS-Atmosphere's Registry\");",
      "  if (!r) throw Error(\"variable '\" + name + \"' is unknown\");", ["err_unknown_field"]),
+    # --- OPM03: reader on the reference files, atm_mpas_init_block against the references, libm ports
+    (R, "    if (kInputNotUsed.count(n)) continue;", "    if (false) continue;",
+     ["readrestart_MW", "readrestart_SC", "readrestart_JW", "roundtrip_refinit_MW", "roundtrip_refinit_SC",
+      "roundtrip_refinit_JW", "order_refinit_MW", "order_refinit_SC", "order_refinit_JW"]),
+    (W, "    local_to_file(o, inner, local_values.data(), out.data());",
+     "    file_to_local(o, inner, local_values.data(), out.data());",
+     ["roundtrip_refinit_MW", "roundtrip_refinit_SC", "roundtrip_refinit_JW", "init_restart_MW"]),  # cells keep file order
+    ("src/core/libm.hpp", "    *sinx = g::copysign(g::do_cos(a, da), x);", "    *sinx = g::do_cos(a, da);",
+     ["unit_libm"]),
+    ("src/core/libm.hpp", "inline double mvec_pow(double x, double y) { return ::cppwrf::glibc::mvec::pow(x, y); }",
+     "inline double mvec_pow(double x, double y) { return ::cppwrf::glibc::pow(x, y); }", ["unit_libm"]),
+    (A, "      d.exner(k, iCell) = vector ? libm::mvec_pow(xe, rcv) : libm::pow(xe, rcv);",
+     "      d.exner(k, iCell) = libm::pow(xe, rcv);", ["init_step0_MW", "init_step0_SC", "init_step0_JW"]),
+    (A, "      d.exner_base(k, iCell) = vector ? libm::mvec_pow(xb, rcv) : libm::pow(xb, rcv);",
+     "      d.exner_base(k, iCell) = libm::pow(xb, rcv);", ["init_restart_MW", "init_restart_SC", "init_restart_JW"]),
+    (A, "      rho_zz(k, iCell) = s.rho(k, iCell) / zz(k, iCell);", "      rho_zz(k, iCell) = s.rho(k, iCell) * (1.0 / zz(k, iCell));",
+     ["init_step0_MW"]),  # SC: zz = 1
+    (A, "      theta_m(k, iCell) = s.theta(k, iCell) * (1. + rvord * s.scalars(index_qv, k, iCell));",
+     "      theta_m(k, iCell) = s.theta(k, iCell) + s.theta(k, iCell) * rvord * s.scalars(index_qv, k, iCell);",
+     ["init_step0_SC"]),
+    (A, "    for (int k = 1; k <= nVertLevels; ++k) d.rtheta_base(k, iCell) = s.theta_base(k, iCell) * s.rho_base(k, iCell);",
+     "    for (int k = 1; k <= nVertLevels; ++k) d.rtheta_base(k, iCell) = s.rho_base(k, iCell) * s.theta_base(k, iCell) * 1.0000000000000002;",
+     ["init_restart_MW"]),
+    (A, "        m.dss(k, iCell) = config_xnutr * (s * s);", "        m.dss(k, iCell) = config_xnutr * s * s;",
+     ["init_restart_MW"]),
+    (A, "        const real s = libm::sin(0.5 * pii * (z - config_zd) / (zt - config_zd));",
+     "        const real s = libm::sin(0.5 * pii * ((z - config_zd) / (zt - config_zd)));", ["init_restart_MW"]),
+    (V, "  xin[2] = xin[2] / mag;", "  xin[2] = xin[2] * (1.0 / mag);",
+     ["init_restart_JW"]),  # MW, SC planar: xin[2] = 0
+    (V, "      mpas_unit_vec_in_r3(v);\n      for (int d = 1; d <= 3; ++d) lvu(d, iCell) = v[d - 1];",
+     "      for (int d = 1; d <= 3; ++d) lvu(d, iCell) = v[d - 1];", ["init_restart_JW"]),
+    (V, "    for (int d = 1; d <= 3; ++d) normalDotRHat = normalDotRHat + env(d, iEdge) * rHat[d - 1];",
+     "    for (int d = 3; d >= 1; --d) normalDotRHat = normalDotRHat + env(d, iEdge) * rHat[d - 1];",
+     ["init_restart_JW"]),  # MW, SC planar: two of the three terms are 0
+    (V, "    alpha = alpha / static_cast<real>(pointCount);", "    alpha = alpha * (1.0 / static_cast<real>(pointCount));",
+     ["init_restart_MW", "init_restart_JW"]),
+    (V, "      for (int d = 1; d <= 3; ++d) s = s + SP(i, d) * PB(r, d);",
+     "      for (int d = 3; d >= 1; --d) s = s + SP(i, d) * PB(r, d);", ["init_restart_JW"]),
+    (V, "    X[I - 1] = X[I - 1] / a(INDX[I - 1], I);", "    X[I - 1] = X[I - 1] * (1.0 / a(INDX[I - 1], I));",
+     ["init_restart_MW"]),
+    ("src/core/namelist.cpp", "  if (c.config_do_restart)\n", "  if (false)\n", ["err_do_restart"]),
+    ("src/core/namelist.cpp", "    if (t == \"/\") { in_group = false; continue; }", "    if (false) { in_group = false; continue; }",
+     ["init_run_MW", "init_run_SC", "init_run_JW"]),
 ]
 
 
 def main():
     src, build = Path(sys.argv[1]), Path(sys.argv[2])
+    first = int(sys.argv[3]) if len(sys.argv) > 3 else 0
     covered, bad = set(), []
-    for path, old, new, tests in MUTATIONS:
+    for path, old, new, tests in MUTATIONS[first:]:
         p = src / path
         orig = p.read_text()
         if orig.count(old) != 1:
@@ -67,8 +113,9 @@ def main():
             for t in tests:
                 r = subprocess.run(["ctest", "--test-dir", str(build), "-R", f"^{t}$", "-FA", "inputs"],
                                    capture_output=True, text=True)
-                ran = "out of 1\n" in r.stdout
-                failed = r.returncode != 0 and "1 tests failed out of 1\n" in r.stdout
+                # the named test's own line in the summary (its fixture setup, if any, runs first)
+                ran = re.search(rf"Test +#\d+: {re.escape(t)} \.+", r.stdout) is not None
+                failed = r.returncode != 0 and re.search(rf"^\s*\d+ - {re.escape(t)} \(Failed\)$", r.stdout, re.M) is not None
                 print(f"{'KILLED' if failed else 'SURVIVED'} {t:22s} by {path}: {new.strip()[:70]}")
                 if failed:
                     covered.add(t)
