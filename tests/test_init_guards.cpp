@@ -263,11 +263,22 @@ int main(int argc, char** argv) {
       return false;
     };
     const auto even = init_block_verified_fields(70), odd = init_block_verified_fields(71);
-    bool every = true;
-    for (const auto& n : all) every = every && in_list(even, n.c_str());
-    expect(every, "verified fields: all computed fields for an even nVertLevels");
-    expect(!in_list(odd, "exner") && !in_list(odd, "pressure_base") && in_list(odd, "pv_edge"),
-           "verified fields: the pow tail of an odd nVertLevels is not verified");
+    const auto scaled = init_block_verified_fields(70, true);
+    // exactly the computed fields, each once; minus the four pow-tail fields for an odd nVertLevels, minus the four
+    // meshScaling* fields for a scaled mesh
+    auto exactly = [&](const std::vector<std::string>& l, const std::vector<std::string>& minus) {
+      if (l.size() + minus.size() != all.size()) return false;
+      for (const auto& n : all) {
+        const bool out = std::find(minus.begin(), minus.end(), n) != minus.end();
+        if (in_list(l, n.c_str()) == out || std::count(l.begin(), l.end(), n) > 1) return false;
+      }
+      return true;
+    };
+    expect(exactly(even, {}), "verified fields: all computed fields for an even nVertLevels");
+    expect(exactly(odd, {"exner", "exner_base", "pressure_p", "pressure_base"}),
+           "verified fields: all but the pow tail (exner, exner_base, pressure_p, pressure_base) for an odd nVertLevels");
+    expect(exactly(scaled, {"meshScalingDel2", "meshScalingDel4", "meshScalingRegionalCell", "meshScalingRegionalEdge"}),
+           "verified fields: all but meshScaling* for a scaled mesh");
   }
 
   if (fails == 0) std::printf("OK init guards unit test\n");

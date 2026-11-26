@@ -185,8 +185,13 @@ endforeach()
 add_test(NAME history_JW COMMAND ${PY} ${T}/check_history.py ${EXE} ${INIT_JW} ${CPPMPAS_MPAS_REGISTRY} ${W}/ref_JW "${HIST_FIELDS},qv" qv)
 # the namelist reader on variants of the MW reference namelist
 add_test(NAME namelist_MW COMMAND ${PY} ${T}/check_namelist.py ${EXE} ${REF_MW}/steps/namelist.atmosphere ${W}/namelist)
-# --unverified: since the initdump tests every array of the init block is proven for an even nVertLevels, and every
-# reference has one, so no CLI case can exercise the refusal; unit_init_guards checks the odd-level list
+# --unverified: every array of the init block is proven for an even nVertLevels (initdump tests), and every reference
+# has one; the synthetic sc_init.nc has nVertLevels = 3, so exner (the pow tail) needs --unverified there
+cppmpas_error_test(unverified "field exner is computed by a port not yet verified against MPAS output; --unverified writes it anyway"
+  init ${W}/sc_init.nc ${W}/x.nc --namelist ${REF_SC}/steps/namelist.atmosphere --scalars qv,qc,qr --fields pv_edge,exner)
+add_test(NAME init_unverified_SC COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -f '${W}/init_unverified_SC.nc' && '${EXE}' init '${W}/sc_init.nc' '${W}/init_unverified_SC.nc' --namelist '${REF_SC}/steps/namelist.atmosphere' --scalars qv,qc,qr --fields pv_edge,exner --unverified && test -s '${W}/init_unverified_SC.nc' && rm '${W}/init_unverified_SC.nc'")
+set_tests_properties(init_unverified_SC PROPERTIES FIXTURES_REQUIRED inputs)
 # guards and atm_core_init steps on the MW reference init file
 add_executable(test_init_guards test_init_guards.cpp)
 target_link_libraries(test_init_guards PRIVATE cppmpas)
@@ -240,6 +245,15 @@ foreach(case MW SC JW)
     set_tests_properties(initdump_${case}_${f} PROPERTIES FIXTURES_REQUIRED initdump_${case})
   endforeach()
 endforeach()
+
+# atm_compute_solve_diagnostics and mpas_reconstruct_2d as the dycore calls them (on arrays that hold values,
+# rk_step 1, 2, 3), against the init state of the initdump references and an independent implementation
+add_executable(test_solve_diag test_solve_diag.cpp)
+target_link_libraries(test_solve_diag PRIVATE cppmpas m)
+add_test(NAME unit_solve_diag COMMAND test_solve_diag
+  ${DUMPINIT_MW} ${DUMPREF_MW}/steps/namelist.atmosphere ${SCAL_MW}
+  ${DUMPINIT_SC} ${DUMPREF_SC}/steps/namelist.atmosphere ${SCAL_SC}
+  ${DUMPINIT_JW} ${DUMPREF_JW}/steps/namelist.atmosphere ${SCAL_JW})
 
 # tests/mutation_check.py's reading of CTest's output: a test that was not run does not kill a mutant
 add_test(NAME mutation_check_unit COMMAND ${PY} ${T}/test_mutation_check.py)

@@ -257,7 +257,7 @@ MUTATIONS = [
     (RC, "        uReconstructMeridional(k, iCell) = uReconstructY(k, iCell);",
      "        uReconstructMeridional(k, iCell) = uReconstructX(k, iCell);", D("uReconstructMeridional", "MW SC")),
     # sincos versus sin / cos of latCell (VR:310-311): no difference on any JW cell, an equivalent mutant there
-    (RC, "            -(uReconstructX(k, iCell) * clon + uReconstructY(k, iCell) * slon) * slat + uReconstructZ(k, iCell) * clat;",
+    (RC, "            -((uReconstructX(k, iCell) * clon + uReconstructY(k, iCell) * slon) * slat) + uReconstructZ(k, iCell) * clat;",
      "            -(uReconstructX(k, iCell) * clon * slat + uReconstructY(k, iCell) * slon * slat) + uReconstructZ(k, iCell) * clat;",
      D("uReconstructMeridional", "JW")),
     (RC, "      libm::sincos(m.lonCell(iCell), &slon, &clon);", "      libm::sincos(m.lonCell(iCell), &clon, &slon);",
@@ -430,6 +430,66 @@ MUTATIONS = [
     # behaviour can reach the CLI (each guard is killed in unit_io_core); the message the user sees can be changed
     ("src/io/registry.cpp", "  if (!r) throw Error(\"variable '\" + name + \"' is not defined in MPAS-Atmosphere's Registry\");",
      "  if (!r) throw Error(\"variable '\" + name + \"' is not in the Registry\");", ["err_unknown_field", "unit_io_core"]),
+    # --- OPM07: the two routines on arrays that hold values (unit_solve_diag): each zeroing of an accumulation
+    (S, "    for (int k = 1; k <= nVertLevels; ++k) vorticity(k, iVertex) = 0.0;\n", "", ["unit_solve_diag"]),
+    (S, "    for (int k = 1; k <= nVertLevels; ++k) divergence(k, iCell) = 0.0;\n", "", ["unit_solve_diag"]),
+    (S, "    for (int k = 1; k <= nVertLevels; ++k) ke(k, iCell) = 0.0;\n", "", ["unit_solve_diag"]),
+    (S, "      for (int k = 1; k <= nVertLevels; ++k) v(k, iEdge) = 0.0;\n", "", ["unit_solve_diag"]),
+    (S, "    for (int k = 1; k <= nVertLevels; ++k) pv_cell(k, iCell) = 0.0;\n", "", ["unit_solve_diag"]),
+    (RC, "      uReconstructX(k, iCell) = 0.0;\n", "", ["unit_solve_diag"]),
+    (RC, "      uReconstructY(k, iCell) = 0.0;\n", "", ["unit_solve_diag"]),
+    (RC, "      uReconstructZ(k, iCell) = 0.0;\n", "", ["unit_solve_diag"]),
+    # rk_step (TI:7307-7310): always recomputing v, never, inverted, the absent case, the range check
+    (S, "    if (*rk_step != 3) reconstruct_v = false;", "    if (*rk_step == 0) reconstruct_v = false;", ["unit_solve_diag"]),
+    (S, "    if (*rk_step != 3) reconstruct_v = false;", "    if (*rk_step != 1) reconstruct_v = false;", ["unit_solve_diag"]),
+    (S, "  if (rk_step.has_value()) {", "  if (true) {", ["unit_solve_diag"]),
+    (S, "  if (rk_step && (*rk_step < 1 || *rk_step > 3))", "  if (rk_step && (*rk_step < 0 || *rk_step > 3))",
+     ["unit_solve_diag"]),
+    (S, "  if (rk_step && (*rk_step < 1 || *rk_step > 3))", "  if (rk_step && (*rk_step < 1 || *rk_step > 4))",
+     ["unit_solve_diag"]),
+    # one thread's ranges, extents, kiteForCell, vertexDegree, APVM, nVertLevels
+    (S, "  if (cellStart != 1 || cellEnd != m.nCells ||", "  if (cellEnd != m.nCells ||", ["unit_solve_diag"]),
+    (S, "vertexEnd != m.nVertices || edgeStart != 1 ||", "vertexEnd != m.nVertices ||", ["unit_solve_diag"]),
+    (S, "  if (a.rank() != 2 || a.extent(0) != nL || a.extent(1) != n1)\n    fail(", "  if (a.rank() != 2 || a.extent(0) != nL)\n    fail(",
+     ["unit_solve_diag"]),
+    (S, "      if (m.kiteForCell(i, iCell) < 1 || m.kiteForCell(i, iCell) > vertexDegree)",
+     "      if (m.kiteForCell(i, iCell) < 1)", ["unit_solve_diag"]),
+    (S, "      if (m.kiteForCell(i, iCell) < 1 || m.kiteForCell(i, iCell) > vertexDegree)",
+     "      if (m.kiteForCell(i, iCell) > vertexDegree)", ["unit_solve_diag"]),
+    (S, "  if (vertexDegree != 3) fail(", "  if (false) fail(", ["unit_solve_diag"]),
+    (S, "  if (!(config_apvm_upwinding > 0.0))", "  if (config_apvm_upwinding == 0.0)", ["unit_solve_diag"]),
+    (S, "  if (nL < 1) throw Error(\"allocate_solve_diag_work", "  if (false) throw Error(\"allocate_solve_diag_work",
+     ["unit_solve_diag"]),
+    (S, "  if (nL < 1) throw Error(\"allocate_solve_diag_fields", "  if (false) throw Error(\"allocate_solve_diag_fields",
+     ["unit_solve_diag"]),
+    (S, "  w.ke_vertex.allocate({nL, m.nVertices + 1}, 0.0);", "  w.ke_vertex.allocate({nL, m.nVertices + 2}, 0.0);",
+     ["unit_solve_diag"]),
+    (S, "  for (auto* a : {&d.vorticity, &d.pv_vertex}) a->allocate({nL, nV}, 0.0);",
+     "  for (auto* a : {&d.vorticity, &d.pv_vertex}) a->allocate({nL, nV + 1}, 0.0);", ["unit_solve_diag"]),
+    # mpas_reconstruct_2d: Fortran's -a*b is -(a*b) (no negation of a NaN); sincos, not sin / cos; its checks
+    (RC, "-(uReconstructX(k, iCell) * slon) + uReconstructY(k, iCell) * clon;",
+     "-uReconstructX(k, iCell) * slon + uReconstructY(k, iCell) * clon;", ["unit_solve_diag"]),
+    (RC, "-((uReconstructX(k, iCell) * clon + uReconstructY(k, iCell) * slon) * slat) + uReconstructZ(k, iCell) * clat;",
+     "-(uReconstructX(k, iCell) * clon + uReconstructY(k, iCell) * slon) * slat + uReconstructZ(k, iCell) * clat;",
+     ["unit_solve_diag"]),
+    # (sincos -> sin / cos of latCell is not here: on |lat| < pi/2 no value is known where they differ, see
+    # tests/test_solve_diag.cpp)
+    (RC, "      libm::sincos(m.lonCell(iCell), &slon, &clon);",
+     "      slon = libm::sin(m.lonCell(iCell)), clon = libm::cos(m.lonCell(iCell));", ["unit_solve_diag"]),
+    (RC, "  if (a.rank() != 2 || a.extent(0) != nL || a.extent(1) != n1)\n    throw",
+     "  if (a.rank() != 2 || a.extent(0) != nL)\n    throw", ["unit_solve_diag"]),
+    (RC, "coeffs_reconstruct.extent(2) < nCells)\n    throw Error(",
+     "coeffs_reconstruct.extent(2) < nCells)\n    (void)0;\n  if (false) throw Error(", ["unit_solve_diag"]),
+    # the harness itself: a test that was not run is not a kill
+    ("tests/mutation_check.py", "    return status is not None and status != \"Passed\" and \"Not Run\" not in status",
+     "    return status is not None and status != \"Passed\"", ["mutation_check_unit"]),
+    # --unverified on the CLI (sc_init.nc: nVertLevels = 3) and the exact verified lists
+    (X, "    else if (s == \"--unverified\") a.unverified = true;", "    else if (s == \"--unverified\") a.unverified = false;",
+     ["init_unverified_SC"]),
+    (X, "      if (is_computed && !a.unverified && std::find(verified.begin(), verified.end(), f) == verified.end())",
+     "      if (false)", ["err_unverified"]),
+    (A, "  const std::vector<std::string> pow_tail = {\"exner\", \"exner_base\", \"pressure_p\", \"pressure_base\"};",
+     "  const std::vector<std::string> pow_tail = {\"exner\", \"pressure_p\", \"pressure_base\"};", ["unit_init_guards"]),
 ]
 
 
