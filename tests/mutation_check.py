@@ -239,7 +239,7 @@ MUTATIONS = [
      D("ke", "MW SC JW")),
     (S, "pv_cell(k, iCell) = 0.0;\n    const real r = m.invAreaCell(iCell);\n    for (int i = 1; i <= m.nEdgesOnCell(iCell); ++i) {\n      const int iVertex = m.verticesOnCell(i, iCell);",
      "pv_cell(k, iCell) = 0.0;\n    const real r = m.invAreaCell(iCell);\n    for (int i = 1; i <= m.nEdgesOnCell(iCell); ++i) {\n      const int iVertex = m.verticesOnCell(1, iCell);",
-     D("pv_cell gradPVn", "SC JW") + D("pv_cell", "MW SC")),  # MW gradPVn: neighbouring cells change alike
+     D("pv_cell gradPVn", "SC JW") + D("pv_cell", "MW")),  # MW gradPVn: neighbouring cells change alike
     (S, "      gradPVn(k, iEdge) = (pv_cell(k, c2) - pv_cell(k, c1)) * r2;",
      "      gradPVn(k, iEdge) = (pv_vertex(k, c2) - pv_vertex(k, c1)) * r2;", D("gradPVn", "MW SC JW")),
     (S, "  if (!(config_apvm_upwinding > 0.0))", "  if (false)", ["unit_init_guards"]),
@@ -479,6 +479,19 @@ EQUIVALENT_ON_SC = {
 MUTATIONS = [(p, o, n, [t for t in ts if t not in EQUIVALENT_ON_SC.get((p, n), [])]) for p, o, n, ts in MUTATIONS]
 
 
+def test_status(out, t):
+    """The status CTest prints on the named test's own line ("Passed", "***Failed", "***Not Run", "***Exception:
+    SegFault", "Subprocess aborted***Exception:", ...), or None if the test has no such line."""
+    m = re.search(rf"^\s*\d+/\d+ Test +#\d+: {re.escape(t)} \.+ *(.*?)\s+[\d.]+ sec$", out, re.M)
+    return m.group(1).strip() if m else None
+
+
+def killed(status):
+    """A test kills the mutant only if it ran and failed. "Not Run" (a fixture setup the mutant broke, a missing
+    executable, a disabled test) is a check that did not run: not a kill (CONSTITUTION.md 3.2)."""
+    return status is not None and status != "Passed" and "Not Run" not in status
+
+
 def main():
     src, build = Path(sys.argv[1]), Path(sys.argv[2])
     sel = sys.argv[3] if len(sys.argv) > 3 else "0"
@@ -499,15 +512,13 @@ def main():
             for t in tests:
                 r = subprocess.run(["ctest", "--test-dir", str(build), "-R", f"^{t}$", "-FA", "inputs"],
                                    capture_output=True, text=True)
-                # the named test's own line in the summary (its fixture setup, if any, runs first)
-                ran = re.search(rf"Test +#\d+: {re.escape(t)} \.+", r.stdout) is not None
-                # "(Failed)", or "(Subprocess aborted)", "(SEGFAULT)", ... for a test the mutant makes crash
-                failed = r.returncode != 0 and re.search(rf"^\s*\d+ - {re.escape(t)} \(.+\)$", r.stdout, re.M) is not None
+                status = test_status(r.stdout, t)
+                failed = r.returncode != 0 and killed(status)
                 print(f"{'KILLED' if failed else 'SURVIVED'} {t:22s} by {path}: {new.strip()[:70]}")
                 if failed:
                     covered.add(t)
                 else:
-                    bad.append(f"{t} survived {path}: {new.strip()} (ran={ran})")
+                    bad.append(f"{t} survived {path}: {new.strip()} (status {status!r})")
         finally:
             p.write_text(orig)
     subprocess.run(["cmake", "--build", str(build), "-j4"], capture_output=True, text=True, check=True)

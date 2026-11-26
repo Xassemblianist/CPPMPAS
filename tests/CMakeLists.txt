@@ -240,3 +240,6 @@ foreach(case MW SC JW)
     set_tests_properties(initdump_${case}_${f} PROPERTIES FIXTURES_REQUIRED initdump_${case})
   endforeach()
 endforeach()
+
+# tests/mutation_check.py's reading of CTest's output: a test that was not run does not kill a mutant
+add_test(NAME mutation_check_unit COMMAND ${PY} ${T}/test_mutation_check.py)
