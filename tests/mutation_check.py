@@ -24,6 +24,13 @@ def D(fields, cases="MW SC JW"):
 
 
 ALL3 = "MW SC JW"
+RS = "src/io/mpas_restart.cpp"
+
+
+def RST0(fields):
+    """step-0 tests of the restart run (tests/CMakeLists.txt): the state written is the restart stream's"""
+    return [f"dycore_restart0_MW_{f}" for f in fields.split()]
+
 # (file, original line fragment, mutated fragment, tests that must fail)
 MUTATIONS = [
     ("src/core/decomp.cpp", "    for (int j = 1; j <= nEdgesOnCell[i - 1]; ++j) {\n      const int e",
@@ -636,7 +643,7 @@ MUTATIONS += [
      ST(range(11), "Time")),
     (X, "      atm_timestep(dcfg, in.mesh, in.state, in.diag, f, dcfg.config_dt, add_seconds(start, n * dt_s));",
      "      atm_timestep(dcfg, in.mesh, in.state, in.diag, f, dcfg.config_dt, add_seconds(start, (n + 1) * dt_s));",
-     ST([1], "xtime u w")),
+     ST([1], "xtime u w") + ["dycore_restart_MW_output60_xtime"]),
     (X, "    write_step(0);", "", ST([0], "xtime Time u w rho_zz theta_m rho theta pressure_p qv")),
     (X, "    for (const auto& sn : in.state.scalar_names) fields.push_back(sn);", "", ST(range(11), "qv")),
     ("src/io/mpas_writer.cpp", '          f.put_att_text(n, k, "seconds since " + t);', "          f.put_att_text(n, k, v);",
@@ -664,6 +671,30 @@ MUTATIONS += [
     (X, "    for (const auto& w : a.write_fields) (void)field_ref(in, w);", "", ["err_dycore_write_fields"]),
     (X, "    if (a.pos.size() != 2 || a.steps < 0 || a.namelist.empty() || !a.fields.empty())",
      "    if (a.pos.size() != 2 || a.namelist.empty() || !a.fields.empty())", ["err_dycore_no_steps"]),
+    # the restart run (src/io/mpas_restart.cpp, the restart branch of atm_mpas_init_block, the CLI)
+    (A, "  if (!cfg.config_do_restart || (cfg.config_do_restart && cfg.config_do_DAcycling)) atm_init_coupled_diagnostics(m, s, d);",
+     "  atm_init_coupled_diagnostics(m, s, d);",
+     RST0("rho_zz pressure_p exner ru rw rtheta_p rho_p") +
+     [f"dycore_restart_MW_output60_{f}" for f in "u w rho theta divergence vorticity ke uReconstructZonal uReconstructMeridional".split()]),
+    (A, "  if (restart) {", "  if (false) {", RST0("theta_m rho_zz ru rw rtheta_p rho_p exner pressure_p rtheta_base exner_base pressure_base")),
+    (A, "      if (r.a->extents() != r.ext)", "      if (false)", ["unit_init_guards"]),
+    (RS, "  if (rtrim(xtime) != start_stamp)", "  if (false)", ["err_restart_time", "restart_refusals_MW"]),
+    (RS, "  f.Time1 = r.in.state.Time(1);", "", RST0("Time")),
+    (X, "    if (cfg.config_do_restart) restart_dycore_fields(rst, f);", "", RST0("Time")),
+    (RS, '  return rv && (rv->var_struct == "sfc_input" || rv->var_struct == "diag_physics");',
+     '  return rv && rv->var_struct == "sfc_input";', ["dycore_restart0_run_MW"]),
+    (RS, '    throw Error(path + ": MPAS reads variable " + n + " from the restart stream; CPPMPAS has no port for it");',
+     "    continue;", ["restart_refusals_MW"]),
+    (RS, '    if (!f.has_var(n)) throw Error(path + ": variable " + n + " of the restart stream is missing");',
+     '    if (false) throw Error(path + ": variable " + n + " of the restart stream is missing");', ["restart_refusals_MW"]),
+    (RS, '"pressure_base", "ru", "rw"', '"pressure_base", "rw"', ["dycore_restart0_run_MW"]),
+    (X, "    if (!cfg.config_do_restart) check_stream_time(", "    if (false) check_stream_time(", ["restart_refusals_MW"]),
+    (X, '    if (cfg.config_do_restart)\n      throw Error("config_do_restart = true: init',
+     '    if (false)\n      throw Error("config_do_restart = true: init', ["namelist_MW"]),
+    (X, "    if (cfg.config_do_restart) {\n      rst = read_mpas_restart", "    if (false) {\n      rst = read_mpas_restart",
+     ["dycore_restart0_run_MW"]),
+    ("src/core/namelist_table.inc", r'"config_do_restart", "logical", "false", "false\ntrue")',
+     r'"config_do_restart", "logical", "false", "false")', ["dycore_restart0_run_MW", "namelist_MW"]),
 ]
 
 

@@ -323,6 +323,36 @@ foreach(f IN LISTS DYCORE_OUTPUT_FIELDS)
     ${W}/dycore_long_MW/state.0000-01-01_00.30.00.nc ${f} --record 1)
   set_tests_properties(dycore_MW_output30_${f} PROPERTIES FIXTURES_REQUIRED dycore_long_MW LABELS long)
 endforeach()
+# A restart run (config_do_restart = true; tests/namelists/MW_restart is the MW forecast namelist started at 00:30:06)
+# from the reference's restart.0000-01-01_00.30.06.nc. At step 0 the state written is what the restart stream holds
+# (no atm_init_coupled_diagnostics, mpas_atm_core.F:522); after 299 steps (01:00:00) every field of output.nc record 2
+# the port holds is compared at tolerance 0 (label "long", about 3 minutes).
+set(NML_RST_MW ${CMAKE_SOURCE_DIR}/tests/namelists/MW_restart/namelist.atmosphere)
+set(DYCORE_RESTART0_FIELDS ${DYCORE_RESTART_FIELDS} rtheta_base exner_base pressure_base)
+string(REPLACE ";" "," DYCORE_RESTART0_LIST "${DYCORE_RESTART0_FIELDS}")
+add_test(NAME dycore_restart0_run_MW COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/dycore_restart0_MW' && mkdir -p '${W}/dycore_restart0_MW' && '${EXE}' run '${RST_MW}' '${W}/dycore_restart0_MW' --namelist '${NML_RST_MW}' --steps 0 --every 0 --write-at 0 --write-fields ${DYCORE_RESTART0_LIST}")
+set_tests_properties(dycore_restart0_run_MW PROPERTIES FIXTURES_SETUP dycore_restart0_MW)
+foreach(f IN LISTS DYCORE_RESTART0_FIELDS)
+  add_test(NAME dycore_restart0_MW_${f} COMMAND ${PY} ${T}/compare_arrays.py ${RST_MW}
+    ${W}/dycore_restart0_MW/state.0000-01-01_00.30.06.nc ${f})
+  set_tests_properties(dycore_restart0_MW_${f} PROPERTIES FIXTURES_REQUIRED dycore_restart0_MW)
+endforeach()
+string(REPLACE ";" "," DYCORE_OUTPUT_LIST "${DYCORE_OUTPUT_FIELDS}")
+add_test(NAME dycore_restart_run_long_MW COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/dycore_restart_long_MW' && mkdir -p '${W}/dycore_restart_long_MW' && '${EXE}' run '${RST_MW}' '${W}/dycore_restart_long_MW' --namelist '${NML_RST_MW}' --steps 299 --every 0 --write-at 299 --write-fields ${DYCORE_OUTPUT_LIST}")
+set_tests_properties(dycore_restart_run_long_MW PROPERTIES FIXTURES_SETUP dycore_restart_long_MW LABELS long TIMEOUT 900)
+foreach(f IN LISTS DYCORE_OUTPUT_FIELDS)
+  add_test(NAME dycore_restart_MW_output60_${f} COMMAND ${PY} ${T}/compare_arrays.py ${REF_MW}/forecast/output.nc
+    ${W}/dycore_restart_long_MW/state.0000-01-01_01.00.00.nc ${f} --record 2)
+  set_tests_properties(dycore_restart_MW_output60_${f} PROPERTIES FIXTURES_REQUIRED dycore_restart_long_MW LABELS long)
+endforeach()
+# the restart reader's refusals (missing restart-stream fields, a field of an active package) and the start time
+add_test(NAME restart_refusals_MW COMMAND ${PY} ${T}/check_restart.py ${EXE} ${RST_MW} ${NML_RST_MW} ${INIT_MW}
+  ${W}/restart_refusals)
+set_tests_properties(restart_refusals_MW PROPERTIES FIXTURES_REQUIRED work_dir)
+cppmpas_error_test(restart_time "does not contain the time 0000-01-01_00:30:06" run ${INIT_MW} ${W}/x_dir
+  --namelist ${NML_RST_MW} --steps 1)
 cppmpas_error_test(dycore_write_at "--write-at 12 is after the last step" run ${INIT_MW} ${W}/x_dir
   --namelist ${REF_MW}/steps/namelist.atmosphere --steps 10 --write-at 12 --write-fields u)
 cppmpas_error_test(dycore_write_fields "variable 'pressure' has no CPPMPAS port" run ${INIT_MW} ${W}/x_dir
