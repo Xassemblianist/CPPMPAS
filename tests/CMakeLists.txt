@@ -287,7 +287,8 @@ set_tests_properties(dycore_MW_mpas_compare PROPERTIES FIXTURES_REQUIRED dycore_
 add_executable(test_dycore test_dycore.cpp)
 target_link_libraries(test_dycore PRIVATE cppmpas)
 add_test(NAME unit_dycore COMMAND test_dycore ${INIT_MW} ${REF_MW}/steps/namelist.atmosphere ${W})
-set_tests_properties(unit_dycore PROPERTIES FIXTURES_REQUIRED work_dir)
+# (a timeout: a mutant of add_seconds's interval bound loops for ~1e14 days on the LLONG_MAX case)
+set_tests_properties(unit_dycore PROPERTIES FIXTURES_REQUIRED work_dir TIMEOUT 300)
 # configurations of the other references, and meshes, that the dycore refuses before it writes anything
 cppmpas_error_test(dycore_SC "config_scalar_advection = true" run ${INIT_SC} ${W}/x_dir
   --namelist ${REF_SC}/steps/namelist.atmosphere --scalars qv,qc,qr --steps 1)
