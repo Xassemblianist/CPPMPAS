@@ -288,12 +288,8 @@ add_executable(test_dycore test_dycore.cpp)
 target_link_libraries(test_dycore PRIVATE cppmpas)
 add_test(NAME unit_dycore COMMAND test_dycore ${INIT_MW} ${REF_MW}/steps/namelist.atmosphere)
 # configurations of the other references, and meshes, that the dycore refuses before it writes anything
-cppmpas_error_test(dycore_JW "config_horiz_mixing = '2d_smagorinsky' has no verified port" run ${INIT_JW} ${W}/x_dir
-  --namelist ${REF_JW}/steps/namelist.atmosphere --steps 1)
 cppmpas_error_test(dycore_SC "config_scalar_advection = true" run ${INIT_SC} ${W}/x_dir
   --namelist ${REF_SC}/steps/namelist.atmosphere --scalars qv,qc,qr --steps 1)
-cppmpas_error_test(dycore_fEdge "fEdge != 0" run ${INIT_JW} ${W}/x_dir --namelist ${REF_MW}/steps/namelist.atmosphere
-  --steps 1)
 cppmpas_error_test(dycore_odd_levels "nVertLevels = 3 (only an even nVertLevels >= 4 is verified)" run ${W}/sc_init.nc
   ${W}/x_dir --namelist ${REF_MW}/steps/namelist.atmosphere --steps 1)
 cppmpas_error_test(dycore_steps "--steps needs a whole number 0..1000000, not '1x'" run ${INIT_MW} ${W}/x_dir
@@ -320,6 +316,41 @@ foreach(f IN LISTS DYCORE_OUTPUT_FIELDS)
   add_test(NAME dycore_MW_output30_${f} COMMAND ${PY} ${T}/compare_arrays.py ${REF_MW}/forecast/output.nc
     ${W}/dycore_long_MW/state.0000-01-01_00.30.00.nc ${f} --record 1)
   set_tests_properties(dycore_MW_output30_${f} PROPERTIES FIXTURES_REQUIRED dycore_long_MW LABELS long)
+endforeach()
+# The JW baroclinic wave (x1.40962 sphere, 26 levels, dt = 450 s): ten steps against the every-step stream of
+# mpas842-dbl-jw-001, one test per step and field at tolerance 0, and the directory through tools/mpas_compare.py.
+# JW takes 2d_smagorinsky with the 4th-order filters, no vertical mixing, fEdge != 0 with u_init = v_init = 0, the
+# sphere path of mpas_reconstruct and qv (all zero) as its only scalar, not advected.
+set(DYCORE_JW_STAMPS 00.00.00 00.07.30 00.15.00 00.22.30 00.30.00 00.37.30 00.45.00 00.52.30 01.00.00 01.07.30 01.15.00)
+add_test(NAME dycore_run_JW COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/dycore_JW' && mkdir -p '${W}/dycore_JW' && '${EXE}' run '${INIT_JW}' '${W}/dycore_JW' --namelist '${REF_JW}/steps/namelist.atmosphere' --steps 10")
+set_tests_properties(dycore_run_JW PROPERTIES FIXTURES_SETUP dycore_JW TIMEOUT 900)
+set(step 0)
+foreach(stamp IN LISTS DYCORE_JW_STAMPS)
+  foreach(f IN LISTS DYCORE_MW_FIELDS)
+    add_test(NAME dycore_JW_step${step}_${f} COMMAND ${PY} ${T}/compare_arrays.py
+      ${REF_JW}/steps/step.0000-01-01_${stamp}.nc ${W}/dycore_JW/step.0000-01-01_${stamp}.nc ${f})
+    set_tests_properties(dycore_JW_step${step}_${f} PROPERTIES FIXTURES_REQUIRED dycore_JW)
+  endforeach()
+  math(EXPR step "${step} + 1")
+endforeach()
+add_test(NAME dycore_JW_mpas_compare COMMAND ${PY} ${T}/dycore_compare.py ${CPPMPAS_MPAS_COMPARE} ${REF_JW}/steps
+  ${W}/dycore_JW ${W}/dycore_JW_compare.json 110)
+set_tests_properties(dycore_JW_mpas_compare PROPERTIES FIXTURES_REQUIRED dycore_JW)
+# 193 steps (label "long", about 10 minutes): output.nc record 1 (24 h, after step 192) and
+# restart.0000-01-02_00.07.30.nc (after step 193) of the JW forecast run
+add_test(NAME dycore_run_long_JW COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/dycore_long_JW' && mkdir -p '${W}/dycore_long_JW' && '${EXE}' run '${INIT_JW}' '${W}/dycore_long_JW' --namelist '${REF_JW}/steps/namelist.atmosphere' --steps 193 --every 0 --write-at 192,193 --write-fields ${DYCORE_LONG_LIST}")
+set_tests_properties(dycore_run_long_JW PROPERTIES FIXTURES_SETUP dycore_long_JW LABELS long TIMEOUT 3600)
+foreach(f IN LISTS DYCORE_RESTART_FIELDS)
+  add_test(NAME dycore_JW_restart_${f} COMMAND ${PY} ${T}/compare_arrays.py ${RST_JW}
+    ${W}/dycore_long_JW/state.0000-01-02_00.07.30.nc ${f})
+  set_tests_properties(dycore_JW_restart_${f} PROPERTIES FIXTURES_REQUIRED dycore_long_JW LABELS long)
+endforeach()
+foreach(f IN LISTS DYCORE_OUTPUT_FIELDS)
+  add_test(NAME dycore_JW_output24h_${f} COMMAND ${PY} ${T}/compare_arrays.py ${REF_JW}/forecast/output.nc
+    ${W}/dycore_long_JW/state.0000-01-02_00.00.00.nc ${f} --record 1)
+  set_tests_properties(dycore_JW_output24h_${f} PROPERTIES FIXTURES_REQUIRED dycore_long_JW LABELS long)
 endforeach()
 cppmpas_error_test(dycore_write_at "--write-at 12 is after the last step" run ${INIT_MW} ${W}/x_dir
   --namelist ${REF_MW}/steps/namelist.atmosphere --steps 10 --write-at 12 --write-fields u)

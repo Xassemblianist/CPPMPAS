@@ -177,7 +177,8 @@ MUTATIONS = [
     (NL, "  r(\"config_len_disp\", c.config_len_disp);", "", ["init_run_MW", "init_run_SC", "init_run_JW"]),
     (NL, "  t(\"config_start_time\", c.config_start_time);", "",
      ["init_step0_MW", "init_step0_SC", "init_step0_JW"] + [f"dycore_MW_step{n}_xtime" for n in range(11)] +
-     ["dycore_MW_restart_xtime", "dycore_MW_output30_xtime"]),
+     ["dycore_MW_restart_xtime", "dycore_MW_output30_xtime"] + [f"dycore_JW_step{n}_xtime" for n in range(11)] +
+     ["dycore_JW_restart_xtime", "dycore_JW_output24h_xtime"]),
     ("tools/gen_namelist_table.py", "            if v not in acc:", "            if True:", ["namelist_table_current"]),
     # the reference init files already hold xtime = config_start_time: the init_step0_* comparison cannot see it
     (A, "  s.xtime = stamp;", "", ["unit_init_guards"]),
@@ -506,11 +507,19 @@ def ST(steps, fields="u w rho_zz theta_m rho theta pressure_p"):
     return [f"dycore_MW_step{n}_{f}" for n in steps for f in fields.split()]
 
 
+def JST(steps, fields="u w rho_zz theta_m rho theta pressure_p"):
+    """dycore_JW_step<n>_<field> tests (tests/CMakeLists.txt)"""
+    return [f"dycore_JW_step{n}_{f}" for n in steps for f in fields.split()]
+
+
 S1 = ST([1])
 ALLDYN = ST(range(1, 11)) + ["dycore_MW_mpas_compare"]
 LONG_R = "u w rho_zz theta_m pressure_p rho theta exner ru rw rtheta_p rho_p".split()
 LONG_O = "u w rho theta divergence vorticity ke uReconstructZonal uReconstructMeridional".split()
 LONG = [f"dycore_MW_restart_{f}" for f in LONG_R] + [f"dycore_MW_output30_{f}" for f in LONG_O]
+J1 = JST([1])
+JALLDYN = JST(range(1, 11)) + ["dycore_JW_mpas_compare"]
+JLONG = [f"dycore_JW_restart_{f}" for f in LONG_R] + [f"dycore_JW_output24h_{f}" for f in LONG_O]
 MUTATIONS += [
     # atm_rk_integration_setup, moist coefficients, physics_get_tend, atm_compute_vert_imp_coefs
     (DY, "      f.u2(k, iEdge) = s.u(k, iEdge);", "      f.u2(k, iEdge) = 0.999 * s.u(k, iEdge);", S1),
@@ -625,30 +634,95 @@ MUTATIONS += [
     (DY, "  number_sub_steps[3] = number_of_sub_steps;", "  number_sub_steps[3] = number_of_sub_steps - 1;", S1),
     (DY, "    if (f.scalars2.data()[i] < 0.0) f.scalars2.data()[i] = 0.0;",
      "    if (f.scalars2.data()[i] <= 0.0) f.scalars2.data()[i] = 1.0e-300;",
-     ST(range(1, 11), "qv") + ["dycore_MW_restart_qv", "dycore_MW_output30_qv"]),
+     ST(range(1, 11), "qv") + ["dycore_MW_restart_qv", "dycore_MW_output30_qv"] +
+     JST(range(1, 11), "qv") + ["dycore_JW_restart_qv", "dycore_JW_output24h_qv"]),
     # output diagnostics, Time, xtime, the step files
     (DY, "      s.rho(k, iCell) = s.rho_zz(k, iCell) * m.zz(k, iCell);", "      s.rho(k, iCell) = s.rho_zz(k, iCell);",
-     ST(range(11), "rho")),
+     ST(range(11), "rho") + JST(range(11), "rho")),
     (DY, "      s.theta(k, iCell) = s.theta_m(k, iCell) / (1. + rvord * s.scalars(index_qv, k, iCell));",
-     "      s.theta(k, iCell) = s.theta_m(k, iCell) / (1.5 + rvord * s.scalars(index_qv, k, iCell));", ST(range(11), "theta")),
-    (DY, "  f.Time2 = f.Time1 + dt;", "  f.Time2 = f.Time1 + dt + 1.0;", ST(range(1, 11), "Time") + ["dycore_MW_restart_Time"]),
+     "      s.theta(k, iCell) = s.theta_m(k, iCell) / (1.5 + rvord * s.scalars(index_qv, k, iCell));", ST(range(11), "theta") + JST(range(11), "theta")),
+    (DY, "  f.Time2 = f.Time1 + dt;", "  f.Time2 = f.Time1 + dt + 1.0;", ST(range(1, 11), "Time") + ["dycore_MW_restart_Time"] +
+     JST(range(1, 11), "Time") + ["dycore_JW_restart_Time"]),
     ("src/core_atmosphere/atm_dycore.hpp", "  real Time1 = 0.0, Time2 = 0.0;", "  real Time1 = 1.0, Time2 = 0.0;",
-     ST(range(11), "Time")),
+     ST(range(11), "Time") + JST(range(11), "Time")),
     (X, "      atm_timestep(dcfg, in.mesh, in.state, in.diag, f, dcfg.config_dt, add_seconds(start, n * dt_s));",
      "      atm_timestep(dcfg, in.mesh, in.state, in.diag, f, dcfg.config_dt, add_seconds(start, (n + 1) * dt_s));",
      ST([1], "xtime u w")),
-    (X, "    write_step(0);", "", ST([0], "xtime Time u w rho_zz theta_m rho theta pressure_p qv")),
-    (X, "    for (const auto& sn : in.state.scalar_names) fields.push_back(sn);", "", ST(range(11), "qv")),
+    (X, "    write_step(0);", "", ST([0], "xtime Time u w rho_zz theta_m rho theta pressure_p qv") +
+     JST([0], "xtime Time u w rho_zz theta_m rho theta pressure_p qv")),
+    (X, "    for (const auto& sn : in.state.scalar_names) fields.push_back(sn);", "",
+     ST(range(11), "qv") + JST(range(11), "qv")),
     ("src/io/mpas_writer.cpp", '          f.put_att_text(n, k, "seconds since " + t);', "          f.put_att_text(n, k, v);",
-     ST(range(11), "Time")),
+     ST(range(11), "Time") + JST(range(11), "Time")),
+    # JW: smagorinsky_2d (DM:119-204) and its call (TI:6346-6352)
+    (DS, "        dudx[k] = dudx[k] + c2 * u(k, e) - cs * v(k, e);", "        dudx[k] = dudx[k] + c2 * u(k, e) + cs * v(k, e);",
+     JALLDYN + JLONG),
+    (DS, "        dudy[k] = dudy[k] + cs * u(k, e) - s2 * v(k, e);", "        dudy[k] = dudy[k] + cs * u(k, e) - cs * v(k, e);", J1),
+    (DS, "        dvdx[k] = dvdx[k] + cs * u(k, e) + c2 * v(k, e);", "        dvdx[k] = dvdx[k] + cs * u(k, e) + c2 * u(k, e);", J1),
+    (DS, "        dvdy[k] = dvdy[k] + s2 * u(k, e) + cs * v(k, e);", "        dvdy[k] = dvdy[k] + s2 * u(k, e) - cs * v(k, e);", J1),
+    (DS, "      const real d_12 = dudy[k] + dvdx[k];", "      const real d_12 = dudy[k] - dvdx[k];", J1),
+    (DS, "      const real d_22 = 2 * dvdy[k];", "      const real d_22 = 2 * dudy[k];", J1),
+    (DS, "kfac * std::sqrt(0.25 * ((d_11 - d_22) * (d_11 - d_22)) + d_12 * d_12);",
+     "kfac * std::sqrt(0.5 * ((d_11 - d_22) * (d_11 - d_22)) + d_12 * d_12);", J1),
+    (DS, "  const real kfac = cl * cl;", "  const real kfac = cl;", J1),
+    (DS, "      const real c2 = m.deformation_coef_c2(iEdge, iCell), s2 = m.deformation_coef_s2(iEdge, iCell);",
+     "      const real c2 = m.deformation_coef_s2(iEdge, iCell), s2 = m.deformation_coef_s2(iEdge, iCell);", J1),
+    (DS, "      dudx[k] = 0.0;\n", "\n", J1),
+    (DS, "  h_mom_eddy_visc4 = config_visc4_2dsmag * (config_len_disp * config_len_disp * config_len_disp);",
+     "  h_mom_eddy_visc4 = config_visc4_2dsmag * (config_len_disp * config_len_disp);", J1),
+    (DS, "  h_theta_eddy_visc4 = h_mom_eddy_visc4;", "  h_theta_eddy_visc4 = 0.0;", JST([1], "theta_m rho_zz theta")),
+    (DY, "      smagorinsky_2d(m, eddy_visc_horz, u, d.v, cfg.config_smagorinsky_coef,",
+     "      smagorinsky_2d(m, eddy_visc_horz, u, u, cfg.config_smagorinsky_coef,", J1),
+    # JW: the 4th-order filters (DM:728-811, 1073-1100, 1306-1332)
+    (DS, "        const real edge_sign = m.invAreaTriangle(iVertex) * m.dcEdge(iEdge) * m.edgesOnVertex_sign(i, iVertex);",
+     "        const real edge_sign = m.invAreaTriangle(iVertex) * m.dvEdge(iEdge) * m.edgesOnVertex_sign(i, iVertex);", J1),
+    (DS, "      for (int k = 1; k <= nVertLevels; ++k) delsq_vorticity(k, iVertex) = 0.0;", "", JST([2])),
+    (DS, "      for (int k = 1; k <= nVertLevels; ++k) delsq_divergence(k, iCell) = 0.0;", "", JST([2])),
+    (DS, "        const real edge_sign = r * m.dvEdge(iEdge) * m.edgesOnCell_sign(i, iCell);",
+     "        const real edge_sign = r * m.dcEdge(iEdge) * m.edgesOnCell_sign(i, iCell);", J1),
+    (DS, "      const real r_dc = u_mix_scale * a.config_del4u_div_factor * m.invDcEdge(iEdge);",
+     "      const real r_dc = u_mix_scale * m.invDcEdge(iEdge);", J1),
+    (DS, "      const real r_dv = u_mix_scale * std::min(m.invDvEdge(iEdge), 4 * m.invDcEdge(iEdge));",
+     "      const real r_dv = u_mix_scale * std::min(m.invDvEdge(iEdge), 1 * m.invDcEdge(iEdge));", J1),
+    (DS, "        tend_u_euler(k, iEdge) = tend_u_euler(k, iEdge) - u_diffusion;  // DM:804",
+     "        tend_u_euler(k, iEdge) = tend_u_euler(k, iEdge) + u_diffusion;  // DM:804", J1),
+    (DS, "          tend_w_euler(k, iCell) = tend_w_euler(k, iCell) - edge_sign * (delsq_w(k, cell2) - delsq_w(k, cell1));",
+     "          tend_w_euler(k, iCell) = tend_w_euler(k, iCell) + edge_sign * (delsq_w(k, cell2) - delsq_w(k, cell1));",
+     JST([1], "w")),
+    (DS, "      const real r_areaCell = a.h_mom_eddy_visc4 * m.invAreaCell(iCell);",
+     "      const real r_areaCell = a.h_mom_eddy_visc4 * m.invAreaCell(iCell) * 0.5;", JST([1], "w")),
+    (DS, "              tend_theta_euler(k, iCell) - edge_sign * (delsq_theta(k, cell2) - delsq_theta(k, cell1));",
+     "              tend_theta_euler(k, iCell) - edge_sign * (delsq_theta(k, cell2) - delsq_theta(k, cell2));",
+     JST([1], "theta_m theta")),
+    (DS, "      const real r_areaCell = a.h_theta_eddy_visc4 * a.prandtl_inv * m.invAreaCell(iCell);",
+     "      const real r_areaCell = a.h_theta_eddy_visc4 * a.prandtl_inv * m.invAreaCell(iCell) * 0.5;",
+     JST([1], "theta_m theta")),
+    (DY, "  da.config_del4u_div_factor = cfg.config_del4u_div_factor;", "  da.config_del4u_div_factor = 1.0;", J1),
     # the configuration checks, the CLI
-    (DY, '  if (c.config_horiz_mixing != "2d_fixed") no(', '  if (c.config_horiz_mixing != "2d_smagorinsky") no(',
-     ["dycore_run_MW", "dycore_run_long_MW", "err_dycore_JW", "unit_dycore"]),
+    (DY, '  if (c.config_horiz_mixing != "2d_fixed" && c.config_horiz_mixing != "2d_smagorinsky")',
+     '  if (c.config_horiz_mixing != "2d_fixed")', ["dycore_run_JW", "dycore_run_long_JW", "unit_dycore"]),
+    (DY, '  if (c.config_horiz_mixing != "2d_fixed" && c.config_horiz_mixing != "2d_smagorinsky")',
+     '  if (c.config_horiz_mixing != "2d_smagorinsky")', ["dycore_run_MW", "dycore_run_long_MW", "unit_dycore"]),
+    (DY, '  if (c.config_horiz_mixing != "2d_fixed" && c.config_horiz_mixing != "2d_smagorinsky")',
+     '  if (c.config_horiz_mixing.rfind("2d_", 0) != 0)', ["unit_dycore"]),
     (DY, "  if (c.config_scalar_advection) no(", "  if (false) no(", ["err_dycore_SC", "unit_dycore"]),
-    (DY, "    if (m.fEdge(iEdge) != 0.0) no(", "    if (false) no(", ["err_dycore_fEdge", "unit_dycore"]),
+    (DY, "      if (m.fEdge(iEdge) != 0.0) no(", "      if (false) no(", ["unit_dycore"]),
+    (DY, "  if (!uv_init_zero)\n", "  if (true)\n", ["dycore_run_JW", "dycore_run_long_JW", "unit_dycore"]),
+    (DY, "    if (s.u_init(k) != 0.0 || s.v_init(k) != 0.0) uv_init_zero = false;",
+     "    if (s.u_init(k) != 0.0) uv_init_zero = false;", ["unit_dycore"]),
+    (DY, "  for (int k = 1; k <= m.nVertLevels; ++k)\n    if (s.u_init(k)", "  for (int k = 1; k < m.nVertLevels; ++k)\n    if (s.u_init(k)",
+     ["unit_dycore"]),
     (DY, "  if (m.nVertLevels < 4 || m.nVertLevels % 2 != 0) no(", "  if (false) no(", ["err_dycore_odd_levels", "unit_dycore"]),
     (DY, "  if (c.config_time_integration_order != 2)", "  if (c.config_time_integration_order > 3)", ["unit_dycore"]),
-    (DY, "  if (!(c.config_v_mom_eddy_visc2 > 0.0)) no(", "  if (false) no(", ["unit_dycore"]),
+    (DY, "  if (!(c.config_v_mom_eddy_visc2 >= 0.0)) no(", "  if (false) no(", ["unit_dycore"]),
+    (DY, "  if (!(c.config_v_mom_eddy_visc2 >= 0.0)) no(", "  if (!(c.config_v_mom_eddy_visc2 > 0.0)) no(",
+     ["dycore_run_JW", "dycore_run_long_JW", "unit_dycore"]),
+    (DY, "  if (!(c.config_v_mom_eddy_visc2 >= 0.0)) no(", "  if (c.config_v_mom_eddy_visc2 < 0.0) no(", ["unit_dycore"]),
+    (DY, "  if (!(c.config_v_theta_eddy_visc2 >= 0.0)) no(", "  if (false) no(", ["unit_dycore"]),
+    (DY, '  c.config_smagorinsky_coef = r("config_smagorinsky_coef");', '  c.config_smagorinsky_coef = r("config_visc4_2dsmag");',
+     J1 + ["unit_dycore"]),
+    (DY, '  c.config_visc4_2dsmag = r("config_visc4_2dsmag");', '  c.config_visc4_2dsmag = r("config_smagorinsky_coef");',
+     J1 + ["unit_dycore"]),
     (DY, "  if (!off(c.config_microp_scheme)) no(", "  if (false) no(", ["unit_dycore"]),
     (DY, "  if (!(c.config_dt > 0.0) || c.config_dt != std::floor(c.config_dt) || c.config_dt > 86400.0)",
      "  if (!(c.config_dt > 0.0) || c.config_dt > 86400.0)", ["unit_dycore"]),

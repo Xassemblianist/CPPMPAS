@@ -8,6 +8,7 @@
 //    config_apvm_upwinding / config_dt from the InitConfig that atm_core_init left.
 //
 // usage: test_dycore <MW init file> <MW namelist.atmosphere>
+#include <cmath>
 #include <cstdio>
 #include <functional>
 #include <string>
@@ -59,7 +60,8 @@ int main(int argc, char** argv) {
              mw.config_smdiv == 0.1 && mw.config_len_disp == 577.35 && mw.config_coef_3rd_order == 0.25 &&
              mw.config_apvm_upwinding == 0.5 && mw.config_IAU_option == "off" && mw.config_physics_suite == "none" &&
              mw.config_les_model == "none" && !mw.config_apply_lbcs && !mw.config_rayleigh_damp_u &&
-             mw.config_mpas_cam_coef == 0.0 && !mw.config_mix_scalars,
+             mw.config_mpas_cam_coef == 0.0 && !mw.config_mix_scalars && mw.config_smagorinsky_coef == 0.125 &&
+             mw.config_visc4_2dsmag == 0.05 && mw.config_del4u_div_factor == 10.0,
          "read_dycore_config: MW values");
   {  // config_len_disp comes from the InitConfig atm_core_init updated, not from the file
     InitConfig c2 = icfg;
@@ -82,7 +84,8 @@ int main(int argc, char** argv) {
       {"config_split_dynamics_transport = true", [](DycoreConfig& c) { c.config_split_dynamics_transport = true; }},
       {"config_scalar_advection = true", [](DycoreConfig& c) { c.config_scalar_advection = true; }},
       {"config_positive_definite = true", [](DycoreConfig& c) { c.config_positive_definite = true; }},
-      {"config_horiz_mixing = '2d_smagorinsky'", [](DycoreConfig& c) { c.config_horiz_mixing = "2d_smagorinsky"; }},
+      {"config_horiz_mixing = '2d_smag'", [](DycoreConfig& c) { c.config_horiz_mixing = "2d_smag"; }},
+      {"config_horiz_mixing = '2d_fixed '", [](DycoreConfig& c) { c.config_horiz_mixing = "2d_fixed "; }},
       {"config_les_model = '3d_smagorinsky'", [](DycoreConfig& c) { c.config_les_model = "3d_smagorinsky"; }},
       {"config_mpas_cam_coef > 0", [](DycoreConfig& c) { c.config_mpas_cam_coef = 0.2; }},
       {"config_rayleigh_damp_u = true", [](DycoreConfig& c) { c.config_rayleigh_damp_u = true; }},
@@ -90,8 +93,9 @@ int main(int argc, char** argv) {
       {"config_mix_full = false", [](DycoreConfig& c) { c.config_mix_full = false; }},
       {"config_h_mom_eddy_visc4 > 0", [](DycoreConfig& c) { c.config_h_mom_eddy_visc4 = 1.0; }},
       {"config_h_theta_eddy_visc4 > 0", [](DycoreConfig& c) { c.config_h_theta_eddy_visc4 = 1.0; }},
-      {"config_v_mom_eddy_visc2 <= 0", [](DycoreConfig& c) { c.config_v_mom_eddy_visc2 = 0.0; }},
-      {"config_v_theta_eddy_visc2 <= 0", [](DycoreConfig& c) { c.config_v_theta_eddy_visc2 = 0.0; }},
+      {"config_v_mom_eddy_visc2 < 0", [](DycoreConfig& c) { c.config_v_mom_eddy_visc2 = -1.0; }},
+      {"config_v_mom_eddy_visc2 < 0", [](DycoreConfig& c) { c.config_v_mom_eddy_visc2 = std::nan(""); }},
+      {"config_v_theta_eddy_visc2 < 0", [](DycoreConfig& c) { c.config_v_theta_eddy_visc2 = -1.0; }},
       {"config_apply_lbcs = true", [](DycoreConfig& c) { c.config_apply_lbcs = true; }},
       {"config_IAU_option = 'on'", [](DycoreConfig& c) { c.config_IAU_option = "on"; }},
       {"config_physics_suite = 'convection_permitting'",
@@ -111,6 +115,17 @@ int main(int argc, char** argv) {
     cs.change(c);
     expect(throws_with([&] { check_dycore_supported(c, in.mesh, in.state); }, cs.text), std::string("refuses ") + cs.text);
   }
+  // the JW options on the MW mesh: 2d_smagorinsky, no vertical mixing (v_*_eddy_visc2 = 0)
+  {
+    DycoreConfig c = mw;
+    c.config_horiz_mixing = "2d_smagorinsky";
+    c.config_v_mom_eddy_visc2 = c.config_v_theta_eddy_visc2 = 0.0;
+    try {
+      check_dycore_supported(c, in.mesh, in.state);
+    } catch (const Error& e) {
+      expect(false, std::string("JW mixing options refused: ") + e.what());
+    }
+  }
   // 'suite' means 'off' with the suite 'none' (mpas_atmphys_control.F:157-165)
   {
     DycoreConfig c = mw;
@@ -125,8 +140,21 @@ int main(int argc, char** argv) {
   // mesh and state properties
   {
     Mesh m = in.mesh;
-    m.fEdge(17) = 1.0e-4;
-    expect(throws_with([&] { check_dycore_supported(mw, m, in.state); }, "fEdge != 0"), "refuses fEdge != 0");
+    m.fEdge(17) = 1.0e-4;  // MW's u_init is not 0
+    expect(throws_with([&] { check_dycore_supported(mw, m, in.state); }, "fEdge != 0 with u_init or v_init != 0"),
+           "refuses fEdge != 0 with u_init != 0");
+    {  // u_init = v_init = 0 (JW): the reference_u term is +-0, fEdge != 0 is taken
+      State s0 = in.state;
+      for (int k = 1; k <= m.nVertLevels; ++k) s0.u_init(k) = s0.v_init(k) = 0.0;
+      try {
+        check_dycore_supported(mw, m, s0);
+      } catch (const Error& e) {
+        expect(false, std::string("fEdge != 0 with u_init = v_init = 0 refused: ") + e.what());
+      }
+      s0.v_init(m.nVertLevels) = 1.0;  // the last level of v_init alone
+      expect(throws_with([&] { check_dycore_supported(mw, m, s0); }, "fEdge != 0 with u_init or v_init != 0"),
+             "refuses fEdge != 0 with v_init != 0");
+    }
     m = in.mesh;
     m.nVertLevels = 69;
     expect(throws_with([&] { check_dycore_supported(mw, m, in.state); }, "nVertLevels = 69"), "refuses odd nVertLevels");
