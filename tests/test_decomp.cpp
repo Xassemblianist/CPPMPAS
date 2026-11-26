@@ -51,11 +51,22 @@ int main() {
   const int want[9] = {1, 2, 3, 3, 4, 5, 8, 8, 7};
   bool ok = true;
   for (int k = 0; k < 9; ++k) ok &= conn(k % 3 + 1, k / 3 + 1) == want[k];
-  ok &= conn(1, 4) == -5 && conn(3, 4) == -5;
+  ok &= conn(1, 4) == -5 && conn(2, 4) == -5 && conn(3, 4) == -5;
   expect(ok, "postread_reindex");
+
+  // only slots 1..nEdgesOnCell are walked (mpas_block_decomp.F:649, 664): cell 2 has 2 edges and junk in slot 3
+  const std::vector<int> nEdgesShort = {3, 2};
+  const std::vector<int> edgesJunk = {4, 1, 2, 2, 5, 99};
+  expect(block_decomp_all_edges_in_block(3, 2, nEdgesShort.data(), edgesJunk.data()) == std::vector<int>({4, 1, 2, 5}),
+         "unused slots are not walked");
 
   std::vector<std::pair<int, int>> sorted = {{2, 3}, {5, 1}, {9, 2}};
   expect(mpas_binary_search(sorted, 3, 5) == 2 && mpas_binary_search(sorted, 3, 4) == 4, "mpas_binary_search");
+  expect(mpas_binary_search(sorted, 3, 2) == 1 && mpas_binary_search(sorted, 3, 9) == 3, "binary search: first, last");
+  expect(mpas_binary_search(sorted, 3, 1) == 4 && mpas_binary_search(sorted, 3, 10) == 4, "binary search: below, above");
+  const std::vector<std::pair<int, int>> one = {{5, 1}}, none;
+  expect(mpas_binary_search(one, 1, 5) == 1 && mpas_binary_search(one, 1, 4) == 2 && mpas_binary_search(none, 0, 4) == 1,
+         "binary search: n = 1 and n = 0");
   if (fails == 0) std::printf("OK decomp unit test\n");
   return fails ? 1 : 0;
 }

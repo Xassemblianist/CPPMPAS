@@ -10,6 +10,8 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_executable(test_decomp test_decomp.cpp)
 target_link_libraries(test_decomp PRIVATE cppmpas)
 add_test(NAME unit_decomp COMMAND test_decomp)
+add_executable(test_io_core test_io_core.cpp)
+target_link_libraries(test_io_core PRIVATE cppmpas)
 
 set(PY ${Python3_EXECUTABLE} -I)
 set(T ${CMAKE_CURRENT_SOURCE_DIR})
@@ -22,6 +24,28 @@ set(JW ${C}/jw_baroclinic_wave/x1.40962.grid.nc)
 
 add_test(NAME make_inputs COMMAND ${PY} ${T}/make_inputs.py ${C} ${W})
 set_tests_properties(make_inputs PROPERTIES FIXTURES_SETUP inputs)
+add_test(NAME unit_io_core COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "mkdir -p '${W}' && '$<TARGET_FILE:test_io_core>' '${W}' '${MW}'")
+
+# tools/mpas_compare.py: its unit tests and its mutation check (tests/compare)
+add_test(NAME compare_unit COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${T}/compare)
+add_test(NAME compare_mutants COMMAND ${Python3_EXECUTABLE} ${T}/compare/mutate.py)
+set_tests_properties(compare_unit compare_mutants PROPERTIES ENVIRONMENT "MPAS_COMPARE_TMP=${W};PYTHONDONTWRITEBYTECODE=1"
+  FIXTURES_REQUIRED work_dir)
+add_test(NAME make_work_dir COMMAND ${CMAKE_COMMAND} -E make_directory ${W})
+set_tests_properties(make_work_dir PROPERTIES FIXTURES_SETUP work_dir)
+
+# src/io/registry_atm_table.inc is what tools/gen_registry_table.py makes of MPAS's Registry.xml
+add_test(NAME registry_table_current COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "${Python3_EXECUTABLE} -I '${CMAKE_SOURCE_DIR}/tools/gen_registry_table.py' '${CPPMPAS_MPAS_REGISTRY}' > '${W}/registry_atm_table.inc' && ${CMAKE_COMMAND} -E compare_files '${W}/registry_atm_table.inc' '${CMAKE_SOURCE_DIR}/src/io/registry_atm_table.inc'")
+set_tests_properties(registry_table_current PROPERTIES FIXTURES_REQUIRED work_dir)
+
+# flags that change floating-point results are refused at configure time, also in CMAKE_CXX_FLAGS_<CONFIG>
+foreach(flag Ofast ffast-math)
+  add_test(NAME cmake_rejects_${flag} COMMAND ${CMAKE_COMMAND} -E env sh -c
+    "rm -rf '${W}/cmake_${flag}'; out=$(${CMAKE_COMMAND} -S '${CMAKE_SOURCE_DIR}' -B '${W}/cmake_${flag}' -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS_RELEASE='-O2 -${flag}' 2>&1); rc=$?; rm -rf '${W}/cmake_${flag}'; echo \"$out\" | tail -5; [ $rc -ne 0 ] && echo \"$out\" | grep -q 'changes the floating-point results'")
+  set_tests_properties(cmake_rejects_${flag} PROPERTIES FIXTURES_REQUIRED work_dir)
+endforeach()
 
 # local edge / vertex order and in-memory arrays against an independent re-implementation
 foreach(case MW SC JW)
@@ -29,8 +53,14 @@ foreach(case MW SC JW)
     "'${EXE}' dump '${${case}}' '${W}/dump_${case}.nc' && ${Python3_EXECUTABLE} -I '${T}/check_order.py' '${${case}}' '${W}/dump_${case}.nc' ${case}")
 endforeach()
 add_test(NAME order_init_MW COMMAND ${CMAKE_COMMAND} -E env sh -c
-  "'${EXE}' dump '${W}/mw_init.nc' '${W}/dump_mw_init.nc' --init && ${Python3_EXECUTABLE} -I '${T}/check_order.py' '${W}/mw_init.nc' '${W}/dump_mw_init.nc' MW")
-set_tests_properties(order_init_MW PROPERTIES FIXTURES_REQUIRED inputs)
+  "'${EXE}' dump '${W}/mw_init.nc' '${W}/dump_mw_init.nc' --init && ${Python3_EXECUTABLE} -I '${T}/check_order.py' '${W}/mw_init.nc' '${W}/dump_mw_init.nc' MW --init qv")
+add_test(NAME order_init_SC COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "'${EXE}' dump '${W}/sc_init.nc' '${W}/dump_sc_init.nc' --init --scalars qv,qc,qr && ${Python3_EXECUTABLE} -I '${T}/check_order.py' '${W}/sc_init.nc' '${W}/dump_sc_init.nc' SC --init qv,qc,qr")
+set_tests_properties(order_init_MW order_init_SC PROPERTIES FIXTURES_REQUIRED inputs)
+# an init file read as a grid: its vertical fields (nVertLevels and nVertLevelsP1) are left out
+add_test(NAME grid_read_of_init COMMAND ${EXE} info ${W}/mw_init.nc)
+add_test(NAME global_atts COMMAND ${PY} ${T}/check_global_atts.py ${EXE} ${MW} ${W}/mw_init_long_parent.nc ${W})
+set_tests_properties(grid_read_of_init global_atts PROPERTIES FIXTURES_REQUIRED inputs)
 
 # read -> write -> tools/mpas_compare.py identical
 foreach(case MW SC JW)
@@ -41,8 +71,10 @@ add_test(NAME roundtrip_init_SC COMMAND ${PY} ${T}/roundtrip.py ${EXE} ${CPPMPAS
 set_tests_properties(roundtrip_init_MW roundtrip_init_SC PROPERTIES FIXTURES_REQUIRED inputs)
 
 # history writer layout and values
-set(HIST_FIELDS "latCell,lonCell,xCell,yCell,zCell,indexToCellID,latEdge,lonEdge,xEdge,yEdge,zEdge,indexToEdgeID,latVertex,lonVertex,xVertex,yVertex,zVertex,indexToVertexID,cellsOnEdge,nEdgesOnCell,nEdgesOnEdge,edgesOnCell,edgesOnEdge,weightsOnEdge,dvEdge,dcEdge,angleEdge,areaCell,areaTriangle,cellsOnCell,verticesOnCell,verticesOnEdge,edgesOnVertex,cellsOnVertex,kiteAreasOnVertex,meshDensity,zgrid,fzm,fzp,rdzw,cf1,cf2,cf3,zz,xtime,u,w,rho,theta,surface_pressure")
-add_test(NAME history_MW COMMAND ${PY} ${T}/check_history.py ${EXE} ${W}/mw_init.nc ${CPPMPAS_MPAS_REGISTRY} ${W} "${HIST_FIELDS},qv" qv)
+# every field the reader handles (fields of several ranks and kinds; the order mixes them so the dimension order
+# MPAS defines is exercised)
+set(HIST_FIELDS "xtime,u,latCell,lonCell,xCell,yCell,zCell,indexToCellID,latEdge,lonEdge,xEdge,yEdge,zEdge,indexToEdgeID,latVertex,lonVertex,xVertex,yVertex,zVertex,indexToVertexID,cellsOnEdge,nEdgesOnCell,nEdgesOnEdge,edgesOnCell,edgesOnEdge,weightsOnEdge,dvEdge,dcEdge,angleEdge,areaCell,areaTriangle,cellsOnCell,verticesOnCell,verticesOnEdge,edgesOnVertex,cellsOnVertex,kiteAreasOnVertex,meshDensity,fEdge,fVertex,edgeNormalVectors,localVerticalUnitVectors,cellTangentPlane,nominalMinDc,bdyMaskCell,bdyMaskEdge,bdyMaskVertex,cf1,cf2,cf3,zgrid,rdzw,dzu,rdzu,fzm,fzp,zxu,zz,zb,zb3,dss,deriv_two,coeffs_reconstruct,initial_time,u_init,v_init,t_init,w,rho,theta,rho_base,theta_base,surface_pressure")
+add_test(NAME history_MW COMMAND ${PY} ${T}/check_history.py ${EXE} ${W}/mw_init.nc ${CPPMPAS_MPAS_REGISTRY} ${W} "${HIST_FIELDS},qv" qv 0123456789)
 add_test(NAME history_SC COMMAND ${PY} ${T}/check_history.py ${EXE} ${W}/sc_init.nc ${CPPMPAS_MPAS_REGISTRY} ${W} "${HIST_FIELDS},qv,qc,qr" qv,qc,qr)
 set_tests_properties(history_MW history_SC PROPERTIES FIXTURES_REQUIRED inputs)
 
@@ -64,6 +96,28 @@ cppmpas_error_test(missing_scalar "active scalar qr is missing" info --init --sc
 cppmpas_error_test(bad_dims "variable u has dimensions (Time, nVertLevels, nEdges)" info --init ${W}/err_bad_dims_u.nc)
 cppmpas_error_test(unknown_scalar "scalar 'qz' is not a constituent" info --init --scalars qv,qz ${W}/mw_init.nc)
 cppmpas_error_test(unported_field "variable 'pressure' has no CPPMPAS port" history ${W}/mw_init.nc ${W}/x.nc --fields u,pressure)
+cppmpas_error_test(boundary_edge "edge 8 lies on the mesh boundary (cellsOnEdge = 0)" info ${W}/err_boundary_edge.nc)
+cppmpas_error_test(boundary_vertex "vertex 10 lies on the mesh boundary (cellsOnVertex = 0)" info ${W}/err_boundary_vertex.nc)
+cppmpas_error_test(cellsOnEdge_range "cellsOnEdge(2, 8) = 1601 outside 1..1600" info ${W}/err_cellsOnEdge_range.nc)
+cppmpas_error_test(cellsOnCell_neg "cellsOnCell(3, 6) = -3 outside 1..1600" info ${W}/err_cellsOnCell_neg.nc)
+cppmpas_error_test(verticesOnEdge_zero "verticesOnEdge(1, 5) = 0 outside 1..3200" info ${W}/err_verticesOnEdge_zero.nc)
+cppmpas_error_test(edgesOnVertex_range "edgesOnVertex(2, 4) = 4805 outside 1..4800" info ${W}/err_edgesOnVertex_range.nc)
+cppmpas_error_test(edgesOnEdge_range "edgesOnEdge(1, 7) = 4801 outside 1..4800" info ${W}/err_edgesOnEdge_range.nc)
+cppmpas_error_test(nEdgesOnEdge "nEdgesOnEdge(11) = 13 outside 0..maxEdges2" info ${W}/err_nEdgesOnEdge.nc)
+cppmpas_error_test(nEdgesOnCell "nEdgesOnCell(4) = 7 outside 1..maxEdges" info ${W}/err_nEdgesOnCell.nc)
+cppmpas_error_test(missing_nvl "dimension nVertLevels is missing" info --init ${W}/err_missing_nvl.nc)
+cppmpas_error_test(zero_dim "dimension nVertices = 0 outside 1..2147483646" info ${W}/err_zero_dim.nc)
+cppmpas_error_test(two "dimension TWO is not 2" info ${W}/err_two.nc)
+cppmpas_error_test(long_att "global attribute mesh_spec has 513 characters" info --init ${W}/err_long_mesh_spec.nc)
+cppmpas_error_test(strlen "StrLen = 32, MPAS writes 64" info --init ${W}/err_strlen.nc)
+cppmpas_error_test(nvlp1 "nVertLevelsP1 != nVertLevels + 1" info --init ${W}/err_nvlp1.nc)
+cppmpas_error_test(no_qv "qv is not among the active scalars" info --init --scalars qc ${W}/mw_init.nc)
+cppmpas_error_test(dup_scalar "scalar 'qv' is given twice" info --init --scalars qv,qv ${W}/mw_init.nc)
+cppmpas_error_test(empty_name "empty name in the list 'u,,w'" history ${W}/mw_init.nc ${W}/x.nc --fields u,,w)
+add_test(NAME err_empty_list COMMAND ${PY} ${T}/expect_error.py "empty name in the list ''" sh -c
+  "'${EXE}' roundtrip '${W}/mw_init.nc' '${W}/x.nc' --init --fields ''")
+set_tests_properties(err_empty_list PROPERTIES FIXTURES_REQUIRED inputs)
+cppmpas_error_test(trailing_comma "empty name in the list 'u,'" history ${W}/mw_init.nc ${W}/x.nc --fields u,)
 cppmpas_error_test(unknown_field "variable 'notavar' is not defined in MPAS-Atmosphere's Registry" history ${W}/mw_init.nc ${W}/x.nc --fields notavar)
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -94,11 +148,11 @@ set(SCAL_JW qv)
 set(INIT_RESTART_FIELDS edgeNormalVectors,localVerticalUnitVectors,cellTangentPlane,coeffs_reconstruct,dss,exner_base,rtheta_base,pressure_base)
 set(INIT_STEP0_FIELDS rho_zz,theta_m,pressure_p)
 foreach(case MW SC JW)
-  # OPM02 open item 1: the reader on the reference's own init files (round trip and in-memory order)
+  # the reader on the reference's own init files (round trip and in-memory order)
   add_test(NAME roundtrip_refinit_${case} COMMAND ${PY} ${T}/roundtrip.py ${EXE} ${CPPMPAS_MPAS_COMPARE} ${INIT_${case}}
     ${W}/ref_${case} init ${SCAL_${case}})
   add_test(NAME order_refinit_${case} COMMAND ${CMAKE_COMMAND} -E env sh -c
-    "mkdir -p '${W}' && '${EXE}' dump '${INIT_${case}}' '${W}/dump_refinit_${case}.nc' --init --scalars ${SCAL_${case}} && ${Python3_EXECUTABLE} -I '${T}/check_order.py' '${INIT_${case}}' '${W}/dump_refinit_${case}.nc' ${case}")
+    "mkdir -p '${W}' && '${EXE}' dump '${INIT_${case}}' '${W}/dump_refinit_${case}.nc' --init --scalars ${SCAL_${case}} && ${Python3_EXECUTABLE} -I '${T}/check_order.py' '${INIT_${case}}' '${W}/dump_refinit_${case}.nc' ${case} --init ${SCAL_${case}}")
   add_test(NAME readrestart_${case} COMMAND ${EXE} info ${RST_${case}} --init --scalars ${SCAL_${case}})
   # atm_mpas_init_block on the reference init file with the reference namelist
   add_test(NAME init_run_${case} COMMAND ${CMAKE_COMMAND} -E env sh -c
@@ -110,4 +164,6 @@ foreach(case MW SC JW)
     ${W}/init_${case}.nc ${INIT_STEP0_FIELDS})
   set_tests_properties(init_restart_${case} init_step0_${case} PROPERTIES FIXTURES_REQUIRED init_${case})
 endforeach()
+# the history writer on MPAS's own JW init file: a sphere (on_a_sphere = YES) with pentagons
+add_test(NAME history_JW COMMAND ${PY} ${T}/check_history.py ${EXE} ${INIT_JW} ${CPPMPAS_MPAS_REGISTRY} ${W}/ref_JW "${HIST_FIELDS},qv" qv)
 cppmpas_error_test(do_restart "config_do_restart = true: the restart start-up" init ${W}/mw_init.nc ${W}/x.nc --fields dss --namelist ${T}/data/namelist.do_restart)

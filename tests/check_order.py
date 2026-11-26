@@ -7,16 +7,20 @@ numbering, written differently on purpose (numpy, no loops shared with the C++):
   slots 1..nEdgesOnCell (mpas_block_decomp.F:633-685); cells = file order (mpas_block_decomp.F:303-315);
 * connectivity: every slot of elements 1..n holds the local index of the global ID, n+1 when absent
   (mpas_stream_manager.F:5619-5636); the garbage column keeps the Registry default 0;
-* other arrays: local element i holds file record indexTo*ID(i); garbage element = Registry default 0.
+* other arrays: local element i holds file record indexTo*ID(i); garbage element = Registry default 0;
+* var_array scalars (num_scalars, nVertLevels, nCells+1): the active constituents in Registry order
+  (Registry.xml:1701-1712), each from its own variable, garbage column 0; character fields = the file's characters;
+* completeness: the dump holds exactly the fields MPAS reads from such a file (grid: the horizontal mesh; init: the
+  input stream fields CPPMPAS handles, Registry.xml:499-648).
 
-usage: check_order.py <grid or init file> <dump.nc> [MW|SC|JW]
+usage: check_order.py <grid or init file> <dump.nc> [MW|SC|JW|-] [--init qv,qc,...]
 """
 import sys
 
 import netCDF4 as nc
 import numpy as np
 
-# sequences quoted from ncdump of the grid files in NEONM02_verdicts.md F2 / DYCORE_MAP.md §4.12
+# first local edge / vertex IDs worked out by hand from ncdump of the NCAR mountain-wave and supercell grid files
 QUOTED = {
     "MW": {"edges": [1, 2, 3, 4, 14, 24, 5, 6, 7, 17, 15], "vertices": [1, 2, 3193, 4, 3, 10]},
     "SC": {"edges": [1, 2, 3, 469, 5, 83775, 4], "vertices": [1, 2, 623, 314, 313, 4]},
@@ -24,6 +28,17 @@ QUOTED = {
 CONN = {"cellsOnCell": "c", "edgesOnCell": "e", "verticesOnCell": "v", "cellsOnEdge": "c", "verticesOnEdge": "v",
         "edgesOnEdge": "e", "cellsOnVertex": "c", "edgesOnVertex": "e"}
 OUTER = {"nCells": "c", "nEdges": "e", "nVertices": "v"}
+MESH = ["latCell", "lonCell", "xCell", "yCell", "zCell", "indexToCellID", "latEdge", "lonEdge", "xEdge", "yEdge",
+        "zEdge", "indexToEdgeID", "latVertex", "lonVertex", "xVertex", "yVertex", "zVertex", "indexToVertexID",
+        "cellsOnEdge", "nEdgesOnCell", "nEdgesOnEdge", "edgesOnCell", "edgesOnEdge", "weightsOnEdge", "dvEdge",
+        "dcEdge", "angleEdge", "areaCell", "areaTriangle", "cellsOnCell", "verticesOnCell", "verticesOnEdge",
+        "edgesOnVertex", "cellsOnVertex", "kiteAreasOnVertex", "meshDensity"]
+MESH_OPTIONAL = ["fEdge", "fVertex", "edgeNormalVectors", "localVerticalUnitVectors", "cellTangentPlane",
+                 "nominalMinDc", "bdyMaskCell", "bdyMaskEdge", "bdyMaskVertex", "cf1", "cf2", "cf3", "zgrid", "rdzw",
+                 "dzu", "rdzu", "fzm", "fzp", "zxu", "zz", "zb", "zb3", "dss", "deriv_two", "coeffs_reconstruct"]
+STATE = ["initial_time", "xtime", "u_init", "v_init", "t_init", "u", "w", "rho", "theta", "rho_base", "theta_base",
+         "surface_pressure"]
+MOIST = ["qv", "qc", "qr", "qi", "qs", "qg"]  # var_array scalars, Registry order
 
 
 def first_seen(on_cell, n_on_cell):
@@ -34,12 +49,19 @@ def first_seen(on_cell, n_on_cell):
 
 
 def main():
-    src_path, dump_path = sys.argv[1], sys.argv[2]
-    case = sys.argv[3] if len(sys.argv) > 3 else None
+    args = sys.argv[1:]
+    scalars = None
+    if "--init" in args:
+        i = args.index("--init")
+        scalars = args[i + 1].split(",")
+        del args[i:i + 2]
+    src_path, dump_path = args[0], args[1]
+    case = args[2] if len(args) > 2 else None
     failures = []
     with nc.Dataset(src_path) as s, nc.Dataset(dump_path) as d:
-        s.set_auto_mask(False)
-        d.set_auto_mask(False)
+        for ds in (s, d):
+            ds.set_auto_mask(False)
+            ds.set_auto_chartostring(False)
         n = {"c": len(s.dimensions["nCells"]), "e": len(s.dimensions["nEdges"]), "v": len(s.dimensions["nVertices"])}
         nEdgesOnCell = s["nEdgesOnCell"][:]
         order = {"c": np.arange(1, n["c"] + 1),
@@ -64,9 +86,31 @@ def main():
                 got = list(d["indexToEdgeID" if k == "e" else "indexToVertexID"][: len(q)])
                 if got != q:
                     failures.append(f"{case} {label}: first local IDs {got}, quoted {q}")
+        if scalars is None:
+            vertical = {"nVertLevels", "nVertLevelsP1"}
+            expected = set(MESH) | {x for x in MESH_OPTIONAL
+                                    if x in s.variables and not vertical & set(s[x].dimensions)}
+        else:
+            expected = set(MESH) | set(MESH_OPTIONAL) | set(STATE) | {"scalars"}
+        if set(d.variables) != expected:
+            failures.append(f"dump fields: missing {sorted(expected - set(d.variables))}, "
+                            f"extra {sorted(set(d.variables) - expected)}")
+        if scalars is not None and "scalars" in d.variables:
+            sv = d["scalars"]
+            active = [x for x in MOIST if x in scalars]
+            if sv.getncattr("constituents").split() != active:
+                failures.append(f"scalars: constituents {sv.getncattr('constituents')}, expected {active}")
+            mem = sv[:]  # (nCells+1, nVertLevels, num_scalars)
+            if mem.shape[2] != len(active):
+                failures.append(f"scalars: {mem.shape[2]} constituents in memory, expected {len(active)}")
+            for k, x in enumerate(active[:mem.shape[2]]):
+                if not np.array_equal(mem[:-1, :, k], s[x][0][order["c"] - 1]):
+                    failures.append(f"scalars: constituent {k + 1} ({x}) differs from the file")
+            if np.any(mem[-1] != 0):
+                failures.append("scalars: garbage column is not 0")
         checked = 0
         for name in d.variables:
-            if name.startswith("indexTo"):
+            if name.startswith("indexTo") or name == "scalars":
                 continue
             if name not in s.variables:
                 failures.append(f"{name}: in the dump but not in the source")
@@ -74,6 +118,11 @@ def main():
             mem = d[name][:]
             sv = s[name]
             src = sv[0] if sv.dimensions and sv.dimensions[0] == "Time" else sv[:]
+            if sv.dtype == np.dtype("S1"):
+                if np.asarray(mem).tobytes() != np.asarray(src).tobytes():
+                    failures.append(f"{name}: characters differ")
+                checked += 1
+                continue
             sdims = [x for x in sv.dimensions if x != "Time"]
             outer = OUTER.get(sdims[0]) if sdims else None
             if outer is None:
@@ -93,7 +142,7 @@ def main():
             if np.any(garbage != 0):
                 failures.append(f"{name}: garbage element is not the Registry default 0")
             checked += 1
-        if checked < 20:
+        if checked != len(expected) - 3 - (scalars is not None):
             failures.append(f"only {checked} arrays checked")
     for f in failures:
         print("FAIL", f)
