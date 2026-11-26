@@ -414,3 +414,14 @@ target_link_libraries(test_wsm6_column PRIVATE cppmpas)
 add_test(NAME wsm6_column COMMAND ${T}/wsm6_column/run_check.sh ${CPPMPAS_MPAS_SRC} ${CPPMPAS_MMM_PHYSICS}
   ${W}/wsm6_column $<TARGET_FILE:test_wsm6_column>)
 set_tests_properties(wsm6_column PROPERTIES FIXTURES_REQUIRED work_dir)
+
+# The Noah land surface (driver_lsm, driver_seaice, init_lsm and the tables, atmphys_sfc_diagnostics) against MPAS's
+# own code built with the reference compiler and flags (tests/noah_column/run_check.sh). Needs gfortran 14.2, the
+# MPAS v8.4.2 source tree and the reference build's tables (VEGPARM.TBL, SOILPARM.TBL, GENPARM.TBL: the mpas-build
+# asset's tables/); without them the test fails.
+set(CPPMPAS_NOAH_TABLES "" CACHE PATH "directory with the reference build's VEGPARM.TBL, SOILPARM.TBL, GENPARM.TBL")
+add_executable(test_noah_column noah_column/test_noah_column.cpp)
+target_link_libraries(test_noah_column PRIVATE cppmpas)
+add_test(NAME noah_column COMMAND ${T}/noah_column/run_check.sh ${CPPMPAS_MPAS_SRC} ${CPPMPAS_NOAH_TABLES}
+  ${W}/noah_column $<TARGET_FILE:test_noah_column>)
+set_tests_properties(noah_column PROPERTIES FIXTURES_REQUIRED work_dir)
