@@ -55,6 +55,7 @@ add_library(cppmpas STATIC
   src/core/decomp.cpp
   src/core/mesh.cpp
   src/core/namelist.cpp
+  src/core_atmosphere/atm_advance_scalars.cpp
   src/core_atmosphere/atm_dissipation.cpp
   src/core_atmosphere/atm_dissipation_perturbation.cpp
   src/core_atmosphere/atm_dycore.cpp
