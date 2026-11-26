@@ -54,13 +54,16 @@ def normalise(typ, text, where):
 def read_namelist(path):
     """{(record, option): (text, quoted)} of a namelist.atmosphere as MPAS's reference files write it: one
     'option = value' per line inside '&record' ... '/'."""
-    out, rec = {}, None
+    out, rec, seen = {}, None, set()
     for n, line in enumerate(Path(path).read_text().splitlines(), 1):
         t = re.match(r"(?:[^!'\"]|'[^']*'|\"[^\"]*\")*", line).group(0).strip()  # up to a '!' outside quotes
         if not t:
             continue
         if t.startswith("&"):
             rec = t[1:].strip().lower()
+            if rec in seen:  # MPAS reads only the first group of a name (gen_inc.c:855-857)
+                sys.exit(f"{path}:{n}: group &{rec} appears twice")
+            seen.add(rec)
             continue
         if t == "/":
             rec = None
