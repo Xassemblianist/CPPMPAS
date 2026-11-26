@@ -130,8 +130,10 @@ void u_dissipation_3d(const Mesh& m, const DissipationArgs& a, const FArray<real
     });
   }
   if (a.v_mom_eddy_visc2 > 0.0) {  // DM:816
-    if (!a.config_mix_full)
-      throw Error("u_dissipation_3d: vertical mixing of the perturbation state (DM:848-884) is not ported");
+    if (!a.config_mix_full) {  // DM:848-882
+      u_vertical_mixing_perturbation(m, a, u, rho_edge, tend_u_euler);
+      return;
+    }
     parallel_for(1, m.nEdgesSolve(), [=, m = view(m), u = view(u), rho_edge = view(rho_edge),
                                       tend_u_euler = view(tend_u_euler)] CPPMPAS_LAMBDA(int iEdge) {  // DM:823-844 (edgeSolveStart..edgeSolveEnd)
       const int cell1 = m.cellsOnEdge(1, iEdge);
@@ -252,8 +254,10 @@ void scalar_dissipation_3d_les(const Mesh& m, const DissipationArgs& a, FArray<r
     });
   }
   if (a.v_theta_eddy_visc2 > 0.0) {  // DM:1414
-    if (!a.config_mix_full)
-      throw Error("scalar_dissipation_3d_les: mixing of the perturbation from t_init (DM:1442-1466) is not ported");
+    if (!a.config_mix_full) {  // DM:1442-1466
+      theta_vertical_mixing_perturbation(m, a, theta_m, rho_zz, tend_theta_euler);
+      return;
+    }
     parallel_for(1, m.nCellsSolve(), [=, m = view(m), theta_m = view(theta_m), rho_zz = view(rho_zz),
                                       tend_theta_euler = view(tend_theta_euler)] CPPMPAS_LAMBDA(int iCell) {  // DM:1421-1438 (cellSolveStart..cellSolveEnd)
       for (int k = 2; k <= nVertLevels - 1; ++k) {

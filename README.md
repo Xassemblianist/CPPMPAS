@@ -28,8 +28,12 @@ checks against WRF, all at tolerance 0). CPPMPAS applies the same method to MPAS
   Smagorinsky (JW) eddy viscosity, the 4th-order filters (JW), the full vertical mixing (MW), Coriolis on the sphere
   and the per-step diagnostics. **Verified at tolerance 0** against `mpas842-dbl-mw-001` (steps 1-10 in every field
   of the step files, the restart at 30:06, the output at 30 and 60 min) and `mpas842-dbl-jw-001` (steps 1-10 in
-  every field, the output at 24 h and the restart at 24:07:30). Every other configuration (scalar advection,
-  physics, LES, LBCs, ...) is a hard error until it is ported and verified.
+  every field, the output at 24 h and the restart at 24:07:30).
+- The supercell configuration on top of it: monotonic scalar transport of qv, qc, qr (`atm_advance_scalars` /
+  `atm_advance_scalars_mono`), vertical mixing of the perturbation from the initial state, and Kessler
+  microphysics with MPAS's microphysics interface (the Kessler kernel is shared with CPPWRF). **Verified at
+  tolerance 0** against `mpas842-dbl-sc-001`: steps 1-10 in every field of the step files, and the output at
+  30 min and the restart at 30:03 (cloud and rain present) in every field the port holds.
 - Restart runs (`config_do_restart = true`): `cppmpas run` reads an MPAS restart file as MPAS reads its restart
   stream and continues from it. **Verified at tolerance 0** on MW: restarted from the reference's 00:30:06 restart
   file, the state at 01:00:00 is identical to the reference forecast's output in every field the port computes.
@@ -41,6 +45,8 @@ checks against WRF, all at tolerance 0). CPPMPAS applies the same method to MPAS
   references and against the CPU build: every initdump field of MW, SC and JW and the init block's restart-stream
   fields; MW steps 1-10, the 30:06 restart, the 30 and 60 min output and the restart run to 01:00:00; JW steps 1-10,
   the 24 h output and the 24:07:30 restart. Without a CUDA build or device the GPU tests are reported as skipped.
+- Every other configuration (LES, LBCs, other physics, a Kessler restart, ...) is
+  a hard error until it is ported and verified.
 - The namelist: every option of MPAS-Atmosphere's Registry is known; a value that no verified reference runs with is a
   hard error naming the option.
 - The MPAS reference itself is reproducible across machines: the MW reference built and run on an AMD EPYC and on an

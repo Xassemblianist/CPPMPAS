@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "core/error.hpp"
@@ -83,7 +84,14 @@ int main(int argc, char** argv) {
       {"config_time_integration = 'RK4'", [](DycoreConfig& c) { c.config_time_integration = "RK4"; }},
       {"config_time_integration_order = 3", [](DycoreConfig& c) { c.config_time_integration_order = 3; }},
       {"config_split_dynamics_transport = true", [](DycoreConfig& c) { c.config_split_dynamics_transport = true; }},
-      {"config_scalar_advection = true", [](DycoreConfig& c) { c.config_scalar_advection = true; }},
+      {"config_monotonic = false", [](DycoreConfig& c) {
+         c.config_scalar_advection = true;
+         c.config_monotonic = false;
+       }},
+      {"config_positive_definite = true", [](DycoreConfig& c) {
+         c.config_scalar_advection = true;
+         c.config_positive_definite = true;
+       }},
       {"config_positive_definite = true", [](DycoreConfig& c) { c.config_positive_definite = true; }},
       {"config_horiz_mixing = '2d_smag'", [](DycoreConfig& c) { c.config_horiz_mixing = "2d_smag"; }},
       {"config_horiz_mixing = '2d_fixed '", [](DycoreConfig& c) { c.config_horiz_mixing = "2d_fixed "; }},
@@ -102,7 +110,6 @@ int main(int argc, char** argv) {
       {"config_calendar_type = 'gregorian_noleap'", [](DycoreConfig& c) { c.config_calendar_type = "gregorian_noleap"; }},
       {"config_rayleigh_damp_u = true", [](DycoreConfig& c) { c.config_rayleigh_damp_u = true; }},
       {"config_mix_scalars = true", [](DycoreConfig& c) { c.config_mix_scalars = true; }},
-      {"config_mix_full = false", [](DycoreConfig& c) { c.config_mix_full = false; }},
       {"config_h_mom_eddy_visc4 != 0", [](DycoreConfig& c) { c.config_h_mom_eddy_visc4 = 1.0; }},
       {"config_h_mom_eddy_visc4 != 0", [](DycoreConfig& c) { c.config_h_mom_eddy_visc4 = std::nan(""); }},
       {"config_h_theta_eddy_visc4 != 0", [](DycoreConfig& c) { c.config_h_theta_eddy_visc4 = 1.0; }},
@@ -113,7 +120,8 @@ int main(int argc, char** argv) {
       {"config_IAU_option = 'on'", [](DycoreConfig& c) { c.config_IAU_option = "on"; }},
       {"config_physics_suite = 'convection_permitting'",
        [](DycoreConfig& c) { c.config_physics_suite = "convection_permitting"; }},
-      {"config_microp_scheme = 'mp_kessler'", [](DycoreConfig& c) { c.config_microp_scheme = "mp_kessler"; }},
+      {"config_microp_scheme = 'mp_thompson'", [](DycoreConfig& c) { c.config_microp_scheme = "mp_thompson"; }},
+      {"scalars other than qv, qc, qr with Kessler", [](DycoreConfig& c) { c.config_microp_scheme = "mp_kessler"; }},
       {"config_convection_scheme = 'cu_tiedtke'", [](DycoreConfig& c) { c.config_convection_scheme = "cu_tiedtke"; }},
       {"config_pbl_scheme = 'bl_ysu'", [](DycoreConfig& c) { c.config_pbl_scheme = "bl_ysu"; }},
       {"radiation schemes", [](DycoreConfig& c) { c.config_radt_lw_scheme = "rrtmg_lw"; }},
@@ -180,6 +188,67 @@ int main(int argc, char** argv) {
     s.scalar_names = {"qv", "qc", "qr"};
     expect(throws_with([&] { check_dycore_supported(mw, in.mesh, s); }, "scalars other than qv"),
            "refuses qv, qc, qr");
+    DycoreConfig k = mw;  // qv, qc, qr with Kessler need the scalar transport
+    k.config_microp_scheme = "mp_kessler";
+    expect(throws_with([&] { check_dycore_supported(k, in.mesh, s); }, "moist scalars without scalar advection"),
+           "refuses moist scalars without transport");
+    k.config_scalar_advection = true;
+    try {
+      check_dycore_supported(k, in.mesh, s);
+    } catch (const Error& e) {
+      expect(false, std::string("Kessler with qv, qc, qr and transport refused: ") + e.what());
+    }
+    // the scalar transport's hexagon-only paths (TI:4801-4821, 5394-5404, 5450-5463)
+    DycoreConfig a = mw;
+    a.config_scalar_advection = true;
+    m = in.mesh;
+    m.nAdvCellsForEdge(5) = 9;
+    expect(throws_with([&] { check_dycore_supported(a, m, in.state); }, "nAdvCellsForEdge != 10"),
+           "refuses nAdvCellsForEdge 9");
+    m = in.mesh;
+    m.nEdgesOnCell(7) = 5;
+    expect(throws_with([&] { check_dycore_supported(a, m, in.state); }, "nEdgesOnCell != 6"), "refuses a pentagon");
+    DycoreConfig p = mw;  // mixing of the perturbation from the initial state (SC) is ported
+    p.config_mix_full = false;
+    try {
+      check_dycore_supported(p, in.mesh, in.state);
+    } catch (const Error& e) {
+      expect(false, std::string("config_mix_full = false refused: ") + e.what());
+    }
+  }
+
+  // the scalars_2 < 0 clamp (TI:2799-2800): every element, the garbage column included; -0.0 and +0.0 stay
+  {
+    FArray<real> q({3, 2, 3}, 0.0);  // (num_scalars, nVertLevels, nCells+1) with nCells = 2
+    q(1, 1, 1) = -1.0e-300;
+    q(2, 2, 2) = -5.0;
+    q(3, 1, 3) = -2.0;  // garbage column
+    q(1, 2, 1) = -0.0;
+    q(2, 1, 1) = 3.5;
+    q(3, 2, 3) = -7.0;  // the last element of the array
+    q(1, 1, 2) = std::nan("");
+    clamp_negative_scalars(q);
+    expect(q(1, 1, 1) == 0.0 && !std::signbit(q(1, 1, 1)) && q(2, 2, 2) == 0.0 && q(3, 1, 3) == 0.0 &&
+               !std::signbit(q(3, 1, 3)) && q(3, 2, 3) == 0.0,
+           "clamp: negative values (garbage column included) become +0.0");
+    expect(q(1, 2, 1) == 0.0 && std::signbit(q(1, 2, 1)), "clamp: -0.0 is not < 0 and stays -0.0");
+    expect(q(2, 1, 1) == 3.5 && std::isnan(q(1, 1, 2)), "clamp: positive values and NaN unchanged");
+  }
+  // moist_start / moist_end: the active constituents of array_group moist (gen_inc.c:1364-1374)
+  {
+    auto range = [&](std::vector<std::string> names) {
+      State s = in.state;
+      s.scalar_names = names;
+      s.scalars.allocate({static_cast<int>(names.size()), in.mesh.nVertLevels, in.mesh.nCells + 1}, 0.0);
+      DycoreFields f;
+      allocate_dycore_fields(in.mesh, s, f);
+      return std::pair<int, int>{f.moist_start, f.moist_end};
+    };
+    expect(range({"qv"}) == std::pair<int, int>{1, 1}, "moist range qv");
+    expect(range({"qv", "qc", "qr"}) == std::pair<int, int>{1, 3}, "moist range qv qc qr");
+    expect(range({"qv", "qc", "qr", "qi", "qs", "qg", "ni", "nr"}) == std::pair<int, int>{1, 6},
+           "moist range excludes the number concentrations");
+    expect(range({"qv", "tke"}) == std::pair<int, int>{1, 1}, "moist range excludes tke");
   }
 
   // config_h_ScaleWithMesh with a meshDensity other than 1 (review F4): the mesh scaling pow is not verified

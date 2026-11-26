@@ -16,6 +16,7 @@ struct DissipationArgs {
   real config_del4u_div_factor = 10;  // Registry.xml:189
   real h_mom_eddy_visc4 = 0, v_mom_eddy_visc2 = 0;
   real h_theta_eddy_visc4 = 0, v_theta_eddy_visc2 = 0, prandtl_inv = 1;
+  const State* state_init = nullptr;  // u_init, v_init, t_init of the perturbation mixing (config_mix_full = .false.)
 };
 
 // DM:119-204, called at TI:6348-6352 for config_horiz_mixing = '2d_smagorinsky': kdiff (eddy_visc_horz) of every
@@ -37,5 +38,12 @@ void w_dissipation_3d(const Mesh& m, const DissipationArgs& a, FArray<real>& del
 void scalar_dissipation_3d_les(const Mesh& m, const DissipationArgs& a, FArray<real>& delsq_theta,
                                const FArray<real>& theta_m, const FArray<real>& rho_edge, const FArray<real>& rho_zz,
                                const FArray<real>& eddy_visc_horz, FArray<real>& tend_theta_euler);
+
+// The perturbation branches of the vertical mixing (config_mix_full = .false., the supercell reference), in
+// atm_dissipation_perturbation.cpp: DM:850-882 (u_dissipation_3d) and DM:1442-1466 (scalar_dissipation_3d_les).
+void u_vertical_mixing_perturbation(const Mesh& m, const DissipationArgs& a, const FArray<real>& u,
+                                    const FArray<real>& rho_edge, FArray<real>& tend_u_euler);
+void theta_vertical_mixing_perturbation(const Mesh& m, const DissipationArgs& a, const FArray<real>& theta_m,
+                                        const FArray<real>& rho_zz, FArray<real>& tend_theta_euler);
 
 }  // namespace cppmpas

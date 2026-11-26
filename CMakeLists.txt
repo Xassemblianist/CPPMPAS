@@ -92,8 +92,11 @@ set(CPPMPAS_SOURCES
   src/core/decomp.cpp
   src/core/mesh.cpp
   src/core/namelist.cpp
+  src/core_atmosphere/atm_advance_scalars.cpp
   src/core_atmosphere/atm_dissipation.cpp
+  src/core_atmosphere/atm_dissipation_perturbation.cpp
   src/core_atmosphere/atm_dycore.cpp
+  src/core_atmosphere/atm_microphysics.cpp
   src/core_atmosphere/atm_init.cpp
   src/core_atmosphere/atm_solve_diagnostics.cpp
   src/operators/geometry_utils.cpp

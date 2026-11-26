@@ -12,12 +12,16 @@
 // false), no scalar advection, horizontal mixing 2d_fixed (MW) or 2d_smagorinsky with the 4th-order filters it
 // switches on (JW), vertical mixing of the full state (MW) or none (JW, v_*_eddy_visc2 = 0), no LES, no Rayleigh
 // damping of u, no CAM top filter, physics suite 'none', no LBCs, no IAU, fEdge = 0 (MW) or u_init = v_init = 0 (JW),
-// an even nVertLevels >= 4. Every other configuration is refused by check_dycore_supported.
+// an even nVertLevels >= 4. Supercell (SC, mpas842-dbl-sc-001 steps 1-10, 600, 601) adds: coupled monotonic scalar
+// transport of qv, qc, qr (atm_advance_scalars.hpp), vertical mixing of the perturbation from the initial state
+// (config_mix_full = .false., atm_dissipation_perturbation.cpp) and Kessler microphysics at the end of the step
+// (atm_microphysics.hpp). Every other configuration is refused by check_dycore_supported.
 #include <string>
 #include <vector>
 
 #include "core/mesh.hpp"
 #include "core/namelist.hpp"
+#include "core_atmosphere/atm_microphysics.hpp"
 #include "core_atmosphere/atm_solve_diagnostics.hpp"
 
 namespace cppmpas {
@@ -83,6 +87,7 @@ struct DycoreFields {
   FArray<real> qtot, dpdz, delsq_theta, delsq_w, delsq_divergence, delsq_u, delsq_vorticity;
   SolveDiagWork sdw;
   int moist_start = 1, moist_end = 1, index_qv = 1;
+  MicrophysicsFields mp;  // the Kessler path (atm_microphysics.hpp); inactive unless microphysics_init set it
 };
 void allocate_dycore_fields(const Mesh& mesh, const State& state, DycoreFields& f);
 
@@ -108,6 +113,9 @@ void atm_recover_large_step_variables(const Mesh& m, State& s, Diag& d, DycoreFi
                                       int rk_step);
 void atm_rk_dynamics_substep_finish(const Mesh& m, State& s, Diag& d, DycoreFields& f, int dynamics_substep,
                                     int dynamics_split);
+
+// where (scalars_2 < 0.0) scalars_2 = 0.0 (TI:2799-2800), the whole array including the garbage column
+void clamp_negative_scalars(FArray<real>& scalars);
 
 // atm_srk3 (TI:1855-2882) for one step of length dt (the clock's time step).
 void atm_srk3(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreFields& f, real dt);

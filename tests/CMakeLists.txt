@@ -307,8 +307,30 @@ target_link_libraries(test_dycore PRIVATE cppmpas)
 add_test(NAME unit_dycore COMMAND test_dycore ${INIT_MW} ${REF_MW}/steps/namelist.atmosphere ${W})
 set_tests_properties(unit_dycore PROPERTIES FIXTURES_REQUIRED work_dir TIMEOUT 300)
 # configurations of the other references, and meshes, that the dycore refuses before it writes anything
-cppmpas_error_test(dycore_SC "config_scalar_advection = true" run ${INIT_SC} ${W}/x_dir
-  --namelist ${REF_SC}/steps/namelist.atmosphere --scalars qv,qc,qr --steps 1)
+# the supercell (src/core_atmosphere/atm_advance_scalars.cpp, atm_dissipation_perturbation.cpp, atm_microphysics.cpp,
+# src/physics/mp_kessler.hpp): ten 3-s steps with scalar transport, perturbation mixing and Kessler microphysics
+# against the reference's every-step history (mpas842-dbl-sc-001 steps/), every field at tolerance 0
+set(DYCORE_SC_FIELDS xtime Time u w rho_zz theta_m rho theta pressure_p qv qc qr)
+set(DYCORE_SC_STAMPS 00.00.00 00.00.03 00.00.06 00.00.09 00.00.12 00.00.15 00.00.18 00.00.21 00.00.24 00.00.27 00.00.30)
+add_test(NAME dycore_run_SC COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/dycore_SC' && mkdir -p '${W}/dycore_SC' && '${EXE}' run '${INIT_SC}' '${W}/dycore_SC' --namelist '${REF_SC}/steps/namelist.atmosphere' --scalars qv,qc,qr --steps 10")
+set_tests_properties(dycore_run_SC PROPERTIES FIXTURES_SETUP dycore_SC TIMEOUT 900)
+set(step 0)
+foreach(stamp IN LISTS DYCORE_SC_STAMPS)
+  foreach(f IN LISTS DYCORE_SC_FIELDS)
+    add_test(NAME dycore_SC_step${step}_${f} COMMAND ${PY} ${T}/compare_arrays.py
+      ${REF_SC}/steps/step.0000-01-01_${stamp}.nc ${W}/dycore_SC/step.0000-01-01_${stamp}.nc ${f})
+    set_tests_properties(dycore_SC_step${step}_${f} PROPERTIES FIXTURES_REQUIRED dycore_SC)
+  endforeach()
+  math(EXPR step "${step} + 1")
+endforeach()
+add_executable(test_microphysics test_microphysics.cpp)
+target_link_libraries(test_microphysics PRIVATE cppmpas)
+add_test(NAME unit_microphysics COMMAND test_microphysics ${INIT_SC} ${REF_SC}/steps/namelist.atmosphere
+  ${REF_MW}/steps/namelist.atmosphere)
+add_test(NAME dycore_SC_mpas_compare COMMAND ${PY} ${T}/dycore_compare.py ${CPPMPAS_MPAS_COMPARE} ${REF_SC}/steps
+  ${W}/dycore_SC ${W}/dycore_SC_compare.json 132)
+set_tests_properties(dycore_SC_mpas_compare PROPERTIES FIXTURES_REQUIRED dycore_SC)
 cppmpas_error_test(dycore_odd_levels "nVertLevels = 3 (only an even nVertLevels >= 4 is verified)" run ${W}/sc_init.nc
   ${W}/x_dir --namelist ${REF_MW}/steps/namelist.atmosphere --steps 1)
 cppmpas_error_test(dycore_steps "--steps needs a whole number 0..1000000, not '1x'" run ${INIT_MW} ${W}/x_dir
@@ -373,6 +395,31 @@ foreach(f IN LISTS DYCORE_OUTPUT_FIELDS)
   add_test(NAME dycore_JW_output24h_${f} COMMAND ${PY} ${T}/compare_arrays.py ${REF_JW}/forecast/output.nc
     ${W}/dycore_long_JW/state.0000-01-02_00.00.00.nc ${f} --record 1)
   set_tests_properties(dycore_JW_output24h_${f} PROPERTIES FIXTURES_REQUIRED dycore_long_JW LABELS long)
+endforeach()
+# SC, 601 steps (label "long", about 45 minutes): the forecast run writes output.nc at 30 min (record 1, after step
+# 600) and restart.0000-01-01_00.30.03.nc (after step 601); surface_pressure is microphysics_to_MPAS's (PI:950-964)
+# output.nc from mpas842-dbl-sc-002 (the same run of the same recipe; its fields are identical to sc-001's at
+# tolerance 0, and the workstation copy of sc-001 holds no output.nc)
+set(OUT_SC ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-002/SC/forecast/output.nc)
+set(DYCORE_SC_RESTART_FIELDS xtime Time u w rho_zz theta_m pressure_p rho theta exner ru rw rtheta_p rho_p qv qc qr
+  surface_pressure)
+set(DYCORE_SC_OUTPUT_FIELDS xtime u w rho theta divergence vorticity ke uReconstructZonal uReconstructMeridional
+  surface_pressure qv qc qr)
+set(DYCORE_SC_LONG_FIELDS ${DYCORE_SC_RESTART_FIELDS} ${DYCORE_SC_OUTPUT_FIELDS})
+list(REMOVE_DUPLICATES DYCORE_SC_LONG_FIELDS)
+string(REPLACE ";" "," DYCORE_SC_LONG_LIST "${DYCORE_SC_LONG_FIELDS}")
+add_test(NAME dycore_run_long_SC COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/dycore_long_SC' && mkdir -p '${W}/dycore_long_SC' && '${EXE}' run '${INIT_SC}' '${W}/dycore_long_SC' --namelist '${REF_SC}/steps/namelist.atmosphere' --scalars qv,qc,qr --steps 601 --every 0 --write-at 600,601 --write-fields ${DYCORE_SC_LONG_LIST}")
+set_tests_properties(dycore_run_long_SC PROPERTIES FIXTURES_SETUP dycore_long_SC LABELS long TIMEOUT 7200)
+foreach(f IN LISTS DYCORE_SC_RESTART_FIELDS)
+  add_test(NAME dycore_SC_restart_${f} COMMAND ${PY} ${T}/compare_arrays.py ${RST_SC}
+    ${W}/dycore_long_SC/state.0000-01-01_00.30.03.nc ${f})
+  set_tests_properties(dycore_SC_restart_${f} PROPERTIES FIXTURES_REQUIRED dycore_long_SC LABELS long)
+endforeach()
+foreach(f IN LISTS DYCORE_SC_OUTPUT_FIELDS)
+  add_test(NAME dycore_SC_output30_${f} COMMAND ${PY} ${T}/compare_arrays.py ${OUT_SC}
+    ${W}/dycore_long_SC/state.0000-01-01_00.30.00.nc ${f} --record 1)
+  set_tests_properties(dycore_SC_output30_${f} PROPERTIES FIXTURES_REQUIRED dycore_long_SC LABELS long)
 endforeach()
 # A restart run (config_do_restart = true; tests/namelists/MW_restart is the MW forecast namelist started at 00:30:06)
 # from the reference's restart.0000-01-01_00.30.06.nc. At step 0 the state written is what the restart stream holds

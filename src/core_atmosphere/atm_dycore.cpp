@@ -27,6 +27,7 @@
 
 #include "core/error.hpp"
 #include "core/libm.hpp"
+#include "core_atmosphere/atm_advance_scalars.hpp"
 #include "core_atmosphere/atm_dissipation.hpp"
 #include "core_atmosphere/atm_views.hpp"
 #include "operators/vector_reconstruct.hpp"
@@ -120,7 +121,7 @@ void check_dycore_supported(const DycoreConfig& c, const Mesh& m, const State& s
   if (c.config_time_integration_order != 2)  // TI:2066, 2210 (order 3 not verified)
     no("config_time_integration_order = " + std::to_string(c.config_time_integration_order));
   if (c.config_split_dynamics_transport) no("config_split_dynamics_transport = true");  // TI:2054, 2674
-  if (c.config_scalar_advection) no("config_scalar_advection = true (atm_advance_scalars, TI:2504-2507)");
+  if (c.config_scalar_advection) check_advance_scalars_supported(c, m);  // TI:2504-2507 (SC)
   if (c.config_positive_definite) no("config_positive_definite = true");
   if (c.config_horiz_mixing != "2d_fixed" && c.config_horiz_mixing != "2d_smagorinsky")  // TI:6346, 6354
     no("config_horiz_mixing = '" + c.config_horiz_mixing + "'");
@@ -129,7 +130,6 @@ void check_dycore_supported(const DycoreConfig& c, const Mesh& m, const State& s
   if (!(c.config_mpas_cam_coef == 0.0)) no("config_mpas_cam_coef != 0 (TI:6390)");
   if (c.config_rayleigh_damp_u) no("config_rayleigh_damp_u = true (TI:6608)");
   if (c.config_mix_scalars) no("config_mix_scalars = true (DM:1334)");
-  if (!c.config_mix_full) no("config_mix_full = false (DM:848, 1442)");
   if (!(c.config_h_mom_eddy_visc4 == 0.0)) no("config_h_mom_eddy_visc4 != 0 (DM:728, 1073)");
   if (!(c.config_h_theta_eddy_visc4 == 0.0)) no("config_h_theta_eddy_visc4 != 0 (DM:1306)");
   if (!(c.config_apvm_upwinding > 0.0)) no("config_apvm_upwinding <= 0 (TI:7372 not taken)");
@@ -145,7 +145,8 @@ void check_dycore_supported(const DycoreConfig& c, const Mesh& m, const State& s
   if (c.config_physics_suite != "none") no("config_physics_suite = '" + c.config_physics_suite + "'");
   // mpas_atmphys_control.F:157-165: with the suite 'none', 'suite' is 'off'
   const auto off = [](const std::string& x) { return x == "suite" || x == "off"; };
-  if (!off(c.config_microp_scheme)) no("config_microp_scheme = '" + c.config_microp_scheme + "' (TI:2806)");
+  const bool kessler = c.config_microp_scheme == "mp_kessler";  // TI:2806 (SC, atm_microphysics.cpp)
+  if (!off(c.config_microp_scheme) && !kessler) no("config_microp_scheme = '" + c.config_microp_scheme + "' (TI:2806)");
   if (!off(c.config_convection_scheme)) no("config_convection_scheme = '" + c.config_convection_scheme + "'");
   if (!off(c.config_pbl_scheme)) no("config_pbl_scheme = '" + c.config_pbl_scheme + "'");
   if (!off(c.config_radt_lw_scheme) || !off(c.config_radt_sw_scheme) || !off(c.config_radt_cld_scheme))
@@ -162,7 +163,9 @@ void check_dycore_supported(const DycoreConfig& c, const Mesh& m, const State& s
   if (!(c.config_dt > 0.0) || c.config_dt != std::floor(c.config_dt) || c.config_dt > 86400.0)
     no("config_dt that is not a whole number of seconds in 1..86400");
   if (c.config_number_of_sub_steps < 2) no("config_number_of_sub_steps < 2");
-  if (s.scalar_names.size() != 1 || s.scalar_names[0] != "qv") no("scalars other than qv alone");
+  const std::vector<std::string> want = kessler ? std::vector<std::string>{"qv", "qc", "qr"} : std::vector<std::string>{"qv"};
+  if (s.scalar_names != want) no(kessler ? "scalars other than qv, qc, qr with Kessler" : "scalars other than qv alone");
+  if (s.scalar_names.size() > 1 && !c.config_scalar_advection) no("moist scalars without scalar advection");
   // odd nVertLevels: the last level of the rk_step-3 Exner pow is scalar pow@plt (TI:4439), never exercised
   if (m.nVertLevels < 4 || m.nVertLevels % 2 != 0) no("nVertLevels = " + std::to_string(m.nVertLevels) +
                                                       " (only an even nVertLevels >= 4 is verified)");
@@ -226,9 +229,20 @@ void allocate_dycore_fields(const Mesh& m, const State& s, DycoreFields& f) {
   if (f.index_qv == 0) throw Error("allocate_dycore_fields: qv is not an active scalar");
   if (s.Time.rank() != 1 || s.Time.extent(0) != 1) throw Error("allocate_dycore_fields: the state Time was not read");
   f.Time2 = s.Time(1);  // mpas_pool_initialize_time_levels (mpas_atm_core.F:213-218): time level 2 = time level 1
-  // array_group "moist" (Registry.xml:1701-1748): qv, qc, qr, ... in Registry order, all of the active scalars
-  f.moist_start = 1;
-  f.moist_end = ns;
+  // moist_start / moist_end: the index range of the active constituents of array_group "moist" (Registry.xml:1702-1707:
+  // qv, qc, qr, qi, qs, qg; "number" ni, nr, nc, nifa, nwfa and "turbulence" tke follow), as the registry-generated
+  // code numbers them (src/tools/registry/gen_inc.c:1364-1374: index_counter over the active constituents in Registry
+  // order, <group>_start at the first of the group, <group>_end at its last)
+  static const std::vector<std::string> moist_group = {"qv", "qc", "qr", "qi", "qs", "qg"};
+  f.moist_start = 0;
+  f.moist_end = -1;
+  for (int k = 1; k <= ns; ++k) {
+    const bool moist = std::find(moist_group.begin(), moist_group.end(), s.scalar_names[k - 1]) != moist_group.end();
+    if (!moist) continue;
+    if (f.moist_start == 0) f.moist_start = k;
+    else if (k != f.moist_end + 1) throw Error("allocate_dycore_fields: the moist scalars are not contiguous");
+    f.moist_end = k;
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -638,6 +652,7 @@ void atm_compute_dyn_tend(const DycoreConfig& cfg, const Mesh& m, const State& s
   da.h_theta_eddy_visc4 = h_theta_eddy_visc4;
   da.v_theta_eddy_visc2 = v_theta_eddy_visc2;
   da.prandtl_inv = prandtl_inv;
+  da.state_init = &s;  // u_init, v_init, t_init (config_mix_full = .false., DM:850-882, 1442-1466)
   if (rk_step == 1)  // :6582-6601
     u_dissipation_3d(m, da, f.eddy_visc_horz, f.delsq_u, f.delsq_vorticity, f.delsq_divergence, f.u2, d.divergence,
                      d.vorticity, d.rho_edge, f.tend_u_euler);
@@ -1103,7 +1118,8 @@ void atm_srk3(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreF
         atm_divergence_damping_3d(cfg, m, s, f, rk_sub_timestep[rk_step]);              // :2401
       }
       atm_recover_large_step_variables(m, s, d, f, rk_timestep[rk_step], number_sub_steps[rk_step], rk_step);  // :2427
-      // :2504 scalar advection off (check_dycore_supported)
+      if (cfg.config_scalar_advection && !cfg.config_split_dynamics_transport)  // :2504-2507
+        advance_scalars(cfg, m, s, f, rk_step, rk_timestep);
       // :2543-2551 ke_vertex / ke_edge re-allocated, garbage column zeroed
       parallel_for(1, nVertLevels, [=, m = view(m), f = view(f)] CPPMPAS_LAMBDA(int k) {
         f.sdw.ke_vertex(k, m.nVertices + 1) = 0.0;
@@ -1117,12 +1133,21 @@ void atm_srk3(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreF
   // :2744 mpas_reconstruct of u at time level 2
   mpas_reconstruct_2d(m, f.u2, d.uReconstructX, d.uReconstructY, d.uReconstructZ, d.uReconstructZonal,
                       d.uReconstructMeridional);
-  // :2799-2800 where (scalars_2 < 0.0) scalars_2 = 0.0, the whole array (garbage column included)
-  const auto scalars_2 = f.scalars2.view();
-  parallel_for_n(f.scalars2.size(), [=] CPPMPAS_LAMBDA(std::size_t i) {
+  clamp_negative_scalars(f.scalars2);  // :2799-2800
+  // :2806-2817 microphysics (pre_ / post_microphysics are OpenACC-only) on time level 2
+  if (cfg.config_microp_scheme != "off" && cfg.config_microp_scheme != "suite") {
+    if (!f.mp.active) throw Error("atm_srk3: config_microp_scheme = '" + cfg.config_microp_scheme + "' without microphysics_init");
+    driver_microphysics(m, s, f.theta_m2, f.rho_zz2, f.scalars2, d, f.rt_diabatic_tend, f.mp);
+  }
+  // :2880 summarize_timestep writes only to the log
+}
+
+// TI:2799-2800: where (scalars_2 < 0.0) scalars_2 = 0.0, the whole array (garbage column included); -0.0 is not < 0
+void clamp_negative_scalars(FArray<real>& scalars) {
+  const auto scalars_2 = scalars.view();
+  parallel_for_n(scalars.size(), [=] CPPMPAS_LAMBDA(std::size_t i) {
     if (scalars_2[i] < 0.0) scalars_2[i] = 0.0;
   });
-  // :2806 microphysics off; :2880 summarize_timestep writes only to the log
 }
 
 void atm_timestep(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreFields& f, real dt,

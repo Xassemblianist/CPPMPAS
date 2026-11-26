@@ -285,6 +285,7 @@ int run(int argc, char** argv) {
     DycoreFields f;
     allocate_dycore_fields(in.mesh, in.state, f);
     if (cfg.config_do_restart) restart_dycore_fields(rst, f);
+    microphysics_init(a.namelist, in.mesh, dcfg.config_dt, f.mp);  // mpas_atm_core.F:565-597 (SC: Kessler)
     const std::string start = in.state.xtime.substr(0, 19);
     std::vector<std::string> fields = {"xtime", "Time", "u", "w", "rho_zz", "theta_m", "rho", "theta", "pressure_p"};
     for (const auto& sn : in.state.scalar_names) fields.push_back(sn);
