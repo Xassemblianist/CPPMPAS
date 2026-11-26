@@ -38,8 +38,10 @@ void u_dissipation_3d(const Mesh& m, const DissipationArgs& a, const FArray<real
   }
   if (a.h_mom_eddy_visc4 > 0.0) throw Error("u_dissipation_3d: the 4th-order filter (DM:728-811) is not ported");
   if (a.v_mom_eddy_visc2 > 0.0) {  // DM:816
-    if (!a.config_mix_full)
-      throw Error("u_dissipation_3d: vertical mixing of the perturbation state (DM:848-884) is not ported");
+    if (!a.config_mix_full) {  // DM:848-882
+      u_vertical_mixing_perturbation(m, a, u, rho_edge, tend_u_euler);
+      return;
+    }
     for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge) {  // DM:823-844
       const int cell1 = m.cellsOnEdge(1, iEdge);
       const int cell2 = m.cellsOnEdge(2, iEdge);
@@ -130,8 +132,10 @@ void scalar_dissipation_3d_les(const Mesh& m, const DissipationArgs& a, FArray<r
   if (a.h_theta_eddy_visc4 > 0.0)
     throw Error("scalar_dissipation_3d_les: the 4th-order filter (DM:1306-1332) is not ported");
   if (a.v_theta_eddy_visc2 > 0.0) {  // DM:1414
-    if (!a.config_mix_full)
-      throw Error("scalar_dissipation_3d_les: mixing of the perturbation from t_init (DM:1442-1466) is not ported");
+    if (!a.config_mix_full) {  // DM:1442-1466
+      theta_vertical_mixing_perturbation(m, a, theta_m, rho_zz, tend_theta_euler);
+      return;
+    }
     for (int iCell = 1; iCell <= m.nCells; ++iCell) {  // DM:1421-1438
       for (int k = 2; k <= nVertLevels - 1; ++k) {
         const real z1 = m.zgrid(k - 1, iCell);
