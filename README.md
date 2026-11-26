@@ -16,20 +16,22 @@ checks against WRF, all at tolerance 0). CPPMPAS applies the same method to MPAS
   memory on one MPI rank (MPAS's local edge and vertex numbering, local connectivity, garbage elements), and written
   back in MPAS's file order. Checked on the reference's own init files (round trip identical, numbering against an
   independent re-implementation) for the JW, SC and MW cases.
-- The init-time computations of `atm_mpas_init_block` before the first step (signs, inverses, deformation and
+- All of `atm_mpas_init_block` before the first step: the mesh coefficients (signs, inverses, deformation and
   advection coefficients, mesh scaling, damping coefficients, boundary masks, `mpas_initialize_vectors`, the RBF
-  reconstruction coefficients, `atm_init_coupled_diagnostics`), with ports of the exact glibc 2.41 libm / libmvec
-  entries the reference executable calls. **Verified at tolerance 0** against the MPAS v8.4.2 FP64 references
-  (cppmpas-data releases `mpas842-dbl-{jw,sc,mw}-001`) for every array MPAS writes: `edgeNormalVectors`,
-  `localVerticalUnitVectors`, `cellTangentPlane`, `coeffs_reconstruct`, `dss`, `exner_base`, `rtheta_base`,
-  `pressure_base` (restart file) and `rho_zz`, `theta_m`, `pressure_p` (initial record of the every-step history), in
-  all three cases. The other computed arrays are not written by MPAS and are **unverified** until the reference
-  writes them (an `initdump` stream is prepared for the reference pipeline).
+  reconstruction coefficients), `atm_init_coupled_diagnostics`, and the initial `atm_compute_solve_diagnostics` and
+  `mpas_reconstruct`, with ports of the exact glibc 2.41 libm / libmvec entries the reference executable calls.
+  **Verified at tolerance 0** against the MPAS v8.4.2 FP64 references in all three cases: every one of the 57 fields
+  the init block computes (cppmpas-data releases `mpas842-dbl-mw-003`, `-sc-002`, `-jw-002`, whose `initdump.nc` holds
+  them at the initial time), and the restart and first-step fields of `mpas842-dbl-{mw,sc,jw}-001`.
+- The namelist: every option of MPAS-Atmosphere's Registry is known; a value that no verified reference runs with is a
+  hard error naming the option.
+- The MPAS reference itself is reproducible across machines: the MW reference built and run on an AMD EPYC and on an
+  Intel Xeon runner is identical in every output file.
 
 Build: `cmake -S . -B build && cmake --build build` (C++20, NetCDF-C; FP64). Tests need
 `-DCPPMPAS_CASES_DIR=<extracted NCAR test-case tarballs>
 -DCPPMPAS_MPAS_REGISTRY=<MPAS v8.4.2 src/core_atmosphere/Registry.xml> -DCPPMPAS_REFS_DIR=<directory with the
-extracted mpas842-dbl-{mw,sc,jw}-001 releases>`; they compare with the in-tree `tools/mpas_compare.py`, whose own
+extracted mpas842-dbl-{mw,sc,jw}-001, mw-003, sc-002 and jw-002 releases>`; they compare with the in-tree `tools/mpas_compare.py`, whose own
 tests run as `compare_unit` and `compare_mutants`. `unit_libm` needs glibc 2.41 on an x86-64 CPU with FMA and AVX2.
 
 ## Goal
