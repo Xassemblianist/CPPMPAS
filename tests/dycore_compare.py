@@ -5,13 +5,15 @@ is identical: the report may hold no difference other than "global attributes", 
 compared. The global attributes are then checked file by file here: every attribute the candidate writes has the
 reference's value (file_id, a random identifier, excepted), and the reference's attributes the candidate lacks are
 only the namelist options (config_*) and the physics attributes MPAS writes (NOT_WRITTEN), which CPPMPAS's writer
-does not write yet.
+does not write yet. Only the reference's step.*.nc files are compared (a reference steps/ directory may also hold
+other files, such as initdump.nc).
 
 usage: dycore_compare.py <mpas_compare.py> <reference dir> <candidate dir> <report.json> <N>
 """
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import netCDF4
@@ -23,7 +25,7 @@ NOT_WRITTEN = {"input_soil_data", "input_soil_temperature_lag", "num_soil_layers
 
 def global_attribute_problems(ref_dir, cand_dir):
     out = []
-    names = sorted(p.name for p in Path(ref_dir).glob("*.nc"))
+    names = sorted(p.name for p in Path(ref_dir).glob("step.*.nc"))
     if not names:
         return ["no reference files"]
     for n in names:
@@ -45,7 +47,10 @@ def global_attribute_problems(ref_dir, cand_dir):
 
 def main():
     tool, ref, cand, report, n = sys.argv[1:6]
-    r = subprocess.run([sys.executable, "-I", tool, ref, cand, "--json", report], capture_output=True, text=True)
+    with tempfile.TemporaryDirectory(dir=Path(report).parent) as steps:  # the reference's step files only
+        for f in sorted(Path(ref).glob("step.*.nc")):
+            (Path(steps) / f.name).symlink_to(f.resolve())
+        r = subprocess.run([sys.executable, "-I", tool, steps, cand, "--json", report], capture_output=True, text=True)
     print(r.stdout[-4000:], r.stderr[-2000:])
     if r.returncode not in (0, 1):
         print(f"mpas_compare.py failed with status {r.returncode}")
