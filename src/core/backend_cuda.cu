@@ -3,8 +3,11 @@
 // launch and the kernel error slot. Launch checks and the local-memory reservation follow CPPWRF 7fac5bf
 // src/core/backend.cpp (gpu_check_launch, reserve_local_memory; SHARED_WITH_CPPWRF.md).
 #include <cuda_runtime.h>
+#include <cxxabi.h>
 
 #include <cstdio>
+#include <cstdlib>
+#include <map>
 #include <mutex>
 #include <string>
 
@@ -41,12 +44,24 @@ bool init(std::string& why_not) {
   ck(cudaSetDevice(0), "cudaSetDevice");
   void* p = nullptr;
   ck(cudaMallocManaged(&p, sizeof(KernelError)), "cudaMallocManaged (kernel error slot)");
-  g_err = static_cast<KernelError*>(p);
-  *g_err = KernelError{};
-  ck(cudaMemcpyToSymbol(detail::kernel_error_slot, &g_err, sizeof g_err), "cudaMemcpyToSymbol (kernel error slot)");
-  ck(cudaDeviceSynchronize(), "cudaDeviceSynchronize");
+  KernelError* slot = static_cast<KernelError*>(p);
+  *slot = KernelError{};
+  cudaError_t e2 = cudaMemcpyToSymbol(detail::kernel_error_slot, &slot, sizeof slot);
+  if (e2 == cudaSuccess) e2 = cudaDeviceSynchronize();
+  if (e2 != cudaSuccess) {  // the slot is not kept: a later init starts again
+    (void)cudaFree(p);
+    (void)cudaGetLastError();
+    fail("setting the kernel error slot", e2);
+  }
+  g_err = slot;
   g_ready = true;
   return true;
+}
+
+void ensure_ready() {
+  if (g_ready) return;
+  std::string why;
+  if (!init(why)) throw Error("CUDA build: no usable CUDA device (" + why + ")");
 }
 
 std::string describe() {
@@ -75,7 +90,10 @@ void* managed_alloc(std::size_t bytes) {
   if (e != cudaSuccess) {
     (void)cudaGetLastError();
     std::size_t free_b = 0, total_b = 0;
-    cudaMemGetInfo(&free_b, &total_b);
+    if (cudaMemGetInfo(&free_b, &total_b) != cudaSuccess) {
+      (void)cudaGetLastError();
+      free_b = total_b = 0;
+    }
     char msg[320];
     std::snprintf(msg, sizeof msg,
                   "device memory too small: a managed allocation of %.0f MiB failed (%s); %.0f MiB of %.0f MiB free",
@@ -86,7 +104,7 @@ void* managed_alloc(std::size_t bytes) {
   return p;
 }
 void managed_free(void* p) noexcept {
-  if (p) cudaFree(p);
+  if (p && cudaFree(p) != cudaSuccess) (void)cudaGetLastError();
 }
 
 void after_launch(const char* what) {
@@ -101,14 +119,49 @@ void after_launch(const char* what) {
   }
 }
 
-void reserve_local_memory(const void* /*kernel*/, std::size_t local_bytes) {
-  static std::mutex mu;
-  static std::size_t reserved = 0;
-  std::lock_guard<std::mutex> lock(mu);
-  if (local_bytes <= reserved) return;
+// CPPWRF 7fac5bf src/core/backend.cpp:384-428, without its stream capture (every launch here synchronises)
+void reserve_local_memory(const void* kernel, const char* kernel_type) {
+  cudaFuncAttributes a{};
+  ck(cudaFuncGetAttributes(&a, kernel), "cudaFuncGetAttributes");
+  static std::mutex m;
+  static std::map<int, std::size_t> reserved_on;  // per device: the largest frame of the process's launches
+  int cur = 0;
+  ck(cudaGetDevice(&cur), "cudaGetDevice");
+  std::lock_guard<std::mutex> lk(m);
+  std::size_t& reserved = reserved_on[cur];
+  if (a.localSizeBytes <= reserved) return;
+  std::size_t limit = 0;
+  ck(cudaDeviceGetLimit(&limit, cudaLimitStackSize), "cudaDeviceGetLimit");
+  if (a.localSizeBytes <= limit) {  // the limit is never lowered
+    reserved = a.localSizeBytes;
+    return;
+  }
+  int sms = 0, tpsm = 0;
+  ck(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, cur), "cudaDeviceGetAttribute");
+  ck(cudaDeviceGetAttribute(&tpsm, cudaDevAttrMaxThreadsPerMultiProcessor, cur), "cudaDeviceGetAttribute");
   ck(cudaDeviceSynchronize(), "cudaDeviceSynchronize");
-  ck(cudaDeviceSetLimit(cudaLimitStackSize, local_bytes), "cudaDeviceSetLimit (stack for a kernel's local memory)");
-  reserved = local_bytes;
+  std::size_t free_b = 0, total_b = 0;
+  const cudaError_t mi = cudaMemGetInfo(&free_b, &total_b);
+  if (mi != cudaSuccess) (void)cudaGetLastError();
+  const cudaError_t e = cudaDeviceSetLimit(cudaLimitStackSize, a.localSizeBytes);
+  if (e != cudaSuccess) {
+    (void)cudaGetLastError();
+    int st = 0;
+    char* dm = abi::__cxa_demangle(kernel_type, nullptr, nullptr, &st);
+    const std::string name = (st == 0 && dm) ? dm : kernel_type;
+    std::free(dm);
+    const double mib = 1024. * 1024.;
+    char msg[640];
+    std::snprintf(msg, sizeof msg,
+                  "device memory too small: the kernel %.200s keeps %zu bytes per thread in local memory, which the GPU "
+                  "reserves for each of its %d x %d resident threads (%.0f MiB in all, %.0f MiB of it reserved so far); "
+                  "%.0f MiB of %.0f MiB are free (%s)",
+                  name.c_str(), std::size_t(a.localSizeBytes), sms, tpsm, double(a.localSizeBytes) * sms * tpsm / mib,
+                  double(limit) * sms * tpsm / mib, mi == cudaSuccess ? double(free_b) / mib : 0.,
+                  mi == cudaSuccess ? double(total_b) / mib : 0., cudaGetErrorString(e));
+    throw Error(msg);
+  }
+  reserved = a.localSizeBytes;
 }
 
 }  // namespace gpu

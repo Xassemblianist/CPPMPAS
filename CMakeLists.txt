@@ -49,23 +49,28 @@ if(CPPMPAS_ENABLE_CUDA)
   set(CMAKE_CUDA_STANDARD 20)
   set(CMAKE_CUDA_STANDARD_REQUIRED ON)
   find_package(CUDAToolkit REQUIRED)
-  # kernels capture views of the whole mesh / state / dycore fields (core/views.hpp): parameters above 4 KB (12.1);
-  # CUDA 12.4's front end rejects the host code's range-for over braced std::pair lists (atm_solve_diagnostics.cpp);
-  # the build is verified with CUDA 13.1
-  if(CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 13.0)
-    message(FATAL_ERROR "the CUDA build needs CUDA 13.0 or later (verified with 13.1); found ${CMAKE_CUDA_COMPILER_VERSION}")
+  # kernels capture views of the whole mesh / state / dycore fields (core/views.hpp): kernel parameters above 4 KB
+  # need CUDA 12.1
+  if(CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 12.1)
+    message(FATAL_ERROR "the CUDA build needs CUDA 12.1 or later (kernel parameters above 4 KB); found ${CMAKE_CUDA_COMPILER_VERSION}")
   endif()
   # CUDA FP64 as the reference's arithmetic, bit for bit (CPPWRF 7fac5bf CMakeLists.txt:53-122): no fused
   # multiply-add contraction (--fmad=false; gfortran without -march emits none), IEEE division and square root,
   # no flush to zero, the host code of nvcc's sources without contraction either; glibc's libm / libmvec on the
-  # device (src/core/glibc_math.hpp through src/core/libm.hpp), never CUDA's math library or intrinsics.
-  set(CMAKE_CUDA_FLAGS_RELEASE "-O3")
-  string(APPEND CMAKE_CUDA_FLAGS " --fmad=false --ftz=false --prec-div=true --prec-sqrt=true -Xcompiler=-ffp-contract=off")
-  string(APPEND CMAKE_CUDA_FLAGS " --extended-lambda --expt-relaxed-constexpr")
+  # device (src/core/glibc_math.hpp through src/core/libm.hpp), never CUDA's math library or intrinsics. These are
+  # compile options of every CUDA source: they follow CMAKE_CUDA_FLAGS and CMAKE_CUDA_FLAGS_<CONFIG> on nvcc's
+  # command line, so a flag the user gives cannot override them. Release keeps CMake's -O3 -DNDEBUG and the user's
+  # CMAKE_CUDA_FLAGS_<CONFIG>, which are checked below.
+  add_compile_options("$<$<COMPILE_LANGUAGE:CUDA>:--fmad=false;--ftz=false;--prec-div=true;--prec-sqrt=true;-Xcompiler=-ffp-contract=off>")
+  add_compile_options("$<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda;--expt-relaxed-constexpr>")
+  # flags that change results, in any form nvcc takes them (--use_fast_math / -use_fast_math, --fmad / -fmad,
+  # --ftz, --prec-div, --prec-sqrt, with '=' or a blank) and every host-compiler flag the CXX check refuses, however
+  # it reaches the host compiler (-Xcompiler, --compiler-options, with '=', a blank or a comma list): nvcc has no
+  # option of its own with these names, so any occurrence is refused
   foreach(_cfg IN LISTS _cppmpas_configs)
     string(TOUPPER "${_cfg}" _bt)
     if("${CMAKE_CUDA_FLAGS} ${CMAKE_CUDA_FLAGS_${_bt}}" MATCHES
-       "(use_fast_math|fmad[= ]*true|ftz[= ]*true|prec-div[= ]*false|prec-sqrt[= ]*false|-Xcompiler=?[^ ]*(-Ofast|-ffast-math|-ffp-contract=(fast|on)))")
+       "(use_fast_math|fmad[= ]*(true|1)|ftz[= ]*(true|1)|prec-div[= ]*(false|0)|prec-sqrt[= ]*(false|0)|-Ofast|-f(fast-math|unsafe-math-optimizations|associative-math|reciprocal-math|finite-math-only)|-ffp-contract=(fast|on)|${_cppmpas_x87})")
       message(FATAL_ERROR "CMAKE_CUDA_FLAGS: '${CMAKE_MATCH_1}' changes the floating-point results (CPPMPAS needs strict IEEE)")
     endif()
   endforeach()

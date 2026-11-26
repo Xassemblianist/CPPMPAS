@@ -48,6 +48,11 @@ foreach(flag Ofast ffast-math)
   set_tests_properties(cmake_rejects_${flag} PROPERTIES FIXTURES_REQUIRED work_dir)
 endforeach()
 
+# the CPU build has none of the GPU's capacity limits (work arrays, columns, RBF points)
+add_executable(test_backend test_backend.cpp)
+target_link_libraries(test_backend PRIVATE cppmpas)
+add_test(NAME unit_backend COMMAND test_backend)
+
 # local edge / vertex order and in-memory arrays against an independent re-implementation
 foreach(case MW SC JW)
   add_test(NAME order_${case} COMMAND ${CMAKE_COMMAND} -E env sh -c
@@ -441,6 +446,35 @@ else()
   add_test(NAME gpu_libm COMMAND ${GPU} device)
 endif()
 cppmpas_gpu_props(gpu_libm)
+# the launch wrappers on the device: element ranges, kernel_fail (message, the thread ends at the call, the first
+# launch of a process), work-array capacity, the next launch after a failure, the stack limit never lowered
+if(CPPMPAS_ENABLE_CUDA)
+  add_executable(test_gpu_backend test_gpu_backend.cu)
+  target_link_libraries(test_gpu_backend PRIVATE cppmpas_cuda)
+  set_target_properties(test_gpu_backend PROPERTIES CUDA_SEPARABLE_COMPILATION ON CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+  add_test(NAME gpu_backend COMMAND test_gpu_backend)
+  # the CUDA flags that change results are refused at configure time, in CMAKE_CUDA_FLAGS and
+  # CMAKE_CUDA_FLAGS_RELEASE, in nvcc's spellings and as host-compiler flags in any form
+  set(_cuda_bad "--use_fast_math" "-fmad=true" "--fmad true" "--ftz=true" "--prec-div=false" "--prec-sqrt=false"
+      "-Xcompiler -ffast-math" "--compiler-options=-O2,-ffp-contract=fast" "-Xcompiler=-funsafe-math-optimizations"
+      "-Xcompiler -mfpmath=387")
+  set(_i 0)
+  foreach(_flag IN LISTS _cuda_bad)
+    foreach(_var CMAKE_CUDA_FLAGS CMAKE_CUDA_FLAGS_RELEASE)
+      add_test(NAME cmake_rejects_cuda_${_i}_${_var} COMMAND ${CMAKE_COMMAND} -E env sh -c
+        "rm -rf '${W}/cmake_cuda_${_i}_${_var}'; out=$(${CMAKE_COMMAND} -S '${CMAKE_SOURCE_DIR}' -B '${W}/cmake_cuda_${_i}_${_var}' -DCMAKE_BUILD_TYPE=Release -DCPPMPAS_ENABLE_CUDA=ON -DCMAKE_CUDA_COMPILER='${CMAKE_CUDA_COMPILER}' -DCMAKE_CUDA_HOST_COMPILER='${CMAKE_CUDA_HOST_COMPILER}' -DCMAKE_CUDA_ARCHITECTURES='${CMAKE_CUDA_ARCHITECTURES}' '-D${_var}=${_flag}' 2>&1); rc=$?; rm -rf '${W}/cmake_cuda_${_i}_${_var}'; echo \"$out\" | tail -5; [ $rc -ne 0 ] && echo \"$out\" | grep -q 'changes the floating-point results'")
+      set_tests_properties(cmake_rejects_cuda_${_i}_${_var} PROPERTIES FIXTURES_REQUIRED work_dir LABELS gpu)
+    endforeach()
+    math(EXPR _i "${_i} + 1")
+  endforeach()
+  # and the strict flags follow the user's: a CUDA source compiles with them last on nvcc's command line
+  add_test(NAME cmake_cuda_strict_flags_last COMMAND ${CMAKE_COMMAND} -E env sh -c
+    "grep -h -- '--fmad=false' '${CMAKE_BINARY_DIR}/CMakeFiles/cppmpas_cuda.dir/flags.make' | grep -q -- '-O3 -DNDEBUG.*--fmad=false --ftz=false --prec-div=true --prec-sqrt=true -Xcompiler=-ffp-contract=off'")
+  set_tests_properties(cmake_cuda_strict_flags_last PROPERTIES LABELS gpu)
+else()
+  add_test(NAME gpu_backend COMMAND ${GPU} device)
+endif()
+cppmpas_gpu_props(gpu_backend)
 # atm_mpas_init_block on the GPU: every initdump field of MW, SC and JW against MPAS, and against the CPU build
 foreach(case MW SC JW)
   add_test(NAME gpu_initdump_run_${case} COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c

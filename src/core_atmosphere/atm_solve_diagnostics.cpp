@@ -9,6 +9,7 @@
 // and 1. - ke_fact = 0.375 are exact.
 #include "core_atmosphere/atm_solve_diagnostics.hpp"
 
+#include <initializer_list>
 #include <string>
 #include <utility>
 
@@ -16,6 +17,10 @@
 #include "core_atmosphere/atm_views.hpp"
 
 namespace cppmpas {
+
+// an array and its name, for the extent checks (explicit type: nvcc 12 cannot deduce a braced list of std::pair)
+using RealArrayName = std::pair<const FArray<real>*, const char*>;
+using Arrays = std::initializer_list<RealArrayName>;
 
 void allocate_solve_diag_work(const Mesh& m, SolveDiagWork& w) {
   const int nL = m.nVertLevels;
@@ -69,20 +74,20 @@ void atm_compute_solve_diagnostics(real dt, real config_apvm_upwinding, const Me
   const int nC1 = m.nCells + 1, nE1 = m.nEdges + 1, nV1 = m.nVertices + 1;
   need_exact(h, nVertLevels, nC1, "rho_zz");
   need_exact(u, nVertLevels, nE1, "u");
-  for (auto [a, n] : {std::pair{&d.v, "v"}, {&d.rho_edge, "rho_edge"}, {&d.pv_edge, "pv_edge"},
+  for (auto [a, n] : Arrays{{&d.v, "v"}, {&d.rho_edge, "rho_edge"}, {&d.pv_edge, "pv_edge"},
                       {&d.gradPVt, "gradPVt"}, {&d.gradPVn, "gradPVn"}, {&w.ke_edge, "ke_edge"}})
     need_exact(*a, nVertLevels, nE1, n);
-  for (auto [a, n] : {std::pair{&d.vorticity, "vorticity"}, {&d.pv_vertex, "pv_vertex"}, {&w.ke_vertex, "ke_vertex"}})
+  for (auto [a, n] : Arrays{{&d.vorticity, "vorticity"}, {&d.pv_vertex, "pv_vertex"}, {&w.ke_vertex, "ke_vertex"}})
     need_exact(*a, nVertLevels, nV1, n);
-  for (auto [a, n] : {std::pair{&d.divergence, "divergence"}, {&d.ke, "ke"}, {&d.pv_cell, "pv_cell"}})
+  for (auto [a, n] : Arrays{{&d.divergence, "divergence"}, {&d.ke, "ke"}, {&d.pv_cell, "pv_cell"}})
     need_exact(*a, nVertLevels, nC1, n);
   need_mesh(m.nEdgesOnCell, 0, m.nCells, "nEdgesOnCell");
   need_mesh(m.nEdgesOnEdge, 0, m.nEdges, "nEdgesOnEdge");
-  for (auto [a, n] : {std::pair{&m.invAreaCell, "invAreaCell"}}) need_mesh(*a, 0, m.nCells, n);
-  for (auto [a, n] : {std::pair{&m.dcEdge, "dcEdge"}, {&m.dvEdge, "dvEdge"}, {&m.invDvEdge, "invDvEdge"},
+  for (auto [a, n] : Arrays{{&m.invAreaCell, "invAreaCell"}}) need_mesh(*a, 0, m.nCells, n);
+  for (auto [a, n] : Arrays{{&m.dcEdge, "dcEdge"}, {&m.dvEdge, "dvEdge"}, {&m.invDvEdge, "invDvEdge"},
                       {&m.invDcEdge, "invDcEdge"}})
     need_mesh(*a, 0, m.nEdges, n);
-  for (auto [a, n] : {std::pair{&m.invAreaTriangle, "invAreaTriangle"}, {&m.fVertex, "fVertex"}})
+  for (auto [a, n] : Arrays{{&m.invAreaTriangle, "invAreaTriangle"}, {&m.fVertex, "fVertex"}})
     need_mesh(*a, 0, m.nVertices, n);
   need_mesh(m.cellsOnEdge, 2, m.nEdges, "cellsOnEdge");
   need_mesh(m.verticesOnEdge, 2, m.nEdges, "verticesOnEdge");

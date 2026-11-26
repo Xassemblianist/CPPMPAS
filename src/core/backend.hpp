@@ -14,10 +14,13 @@
 // The init-captures make the names the body uses (m.cellsOnEdge, f.u2, ...) views of the same arrays; CPPMPAS_LAMBDA
 // is __device__ in the CUDA build (CUDA allows init-captures only in device lambdas) and empty in the CPU build.
 // A kernel never throws: kernel_fail(msg) throws Error(msg) on the CPU and, on the GPU, records msg for the launch,
-// which throws the same Error when it returns.
+// which throws the same Error when it returns; the thread ends at the call (PTX exit), so no statement after a
+// kernel_fail runs on either side.
 #include <cstddef>
 #include <exception>
+#include <typeinfo>
 #include <string>
+#include <vector>
 
 #include "core/error.hpp"
 
@@ -98,10 +101,18 @@ __device__ inline void record_kernel_error(const char* head, bool has_value, lon
 #endif
 }  // namespace detail
 
-// Error(msg) on the CPU; on the GPU the launch throws it (the kernel returns right after the call).
+// Error(msg) on the CPU; on the GPU the message is recorded, the thread ends here (PTX exit: like the CPU's throw,
+// nothing after the call runs, at any call depth) and the launch throws the Error.
+#if defined(CPPMPAS_DEVICE_CODE)
+__device__ inline void end_thread() {
+  asm volatile("exit;");
+  __builtin_unreachable();
+}
+#endif
 CPPMPAS_HD inline void kernel_fail(const char* msg) {
 #if defined(CPPMPAS_DEVICE_CODE)
   detail::record_kernel_error(msg, false, 0, "");
+  end_thread();
 #else
   detail::throw_kernel_error(msg, false, 0, "");
 #endif
@@ -109,6 +120,7 @@ CPPMPAS_HD inline void kernel_fail(const char* msg) {
 CPPMPAS_HD inline void kernel_fail(const char* head, long value, const char* tail) {
 #if defined(CPPMPAS_DEVICE_CODE)
   detail::record_kernel_error(head, true, value, tail);
+  end_thread();
 #else
   detail::throw_kernel_error(head, true, value, tail);
 #endif
@@ -121,6 +133,8 @@ namespace gpu {
 inline constexpr int kNoDeviceExit = 77;
 // Selects device 0 and sets the kernel error slot. false, with the reason, when there is no usable device.
 bool init(std::string& why_not);
+// init() before a launch: every launch has the kernel error slot (Error when there is no usable device)
+void ensure_ready();
 // "NVIDIA GeForce ..., compute capability 12.0, driver 13.x (CUDA driver API), runtime 13.1, ..."
 std::string describe();
 void* managed_alloc(std::size_t bytes);  // cudaMallocManaged; Error when the device memory is short
@@ -128,9 +142,10 @@ void managed_free(void* p) noexcept;
 // After every launch: wait for the device (managed memory is then the host's again: the GPUs this build targets
 // may have no concurrent managed access), and throw Error for a launch failure or a kernel_fail.
 void after_launch(const char* what);
-// Before the first launch of a kernel: raise the stack limit to its local memory (CPPWRF backend.cpp
-// reserve_local_memory), so a kernel with column work arrays does not fail at launch.
-void reserve_local_memory(const void* kernel, std::size_t local_bytes);
+// Before the first launch of a kernel: raise the device's stack limit to the kernel's local memory when it is larger,
+// never lowering it (CPPWRF 7fac5bf backend.cpp:384-428 reserve_local_memory), so a kernel with column work arrays
+// does not fail at launch; Error when the device cannot reserve it.
+void reserve_local_memory(const void* kernel, const char* kernel_type);
 }  // namespace gpu
 #endif
 
@@ -145,13 +160,11 @@ template <class K> __global__ void kfor_n(K k, std::size_t n) {
   if (i < n) k(i);
 }
 template <class K> __global__ void kserial(K k) { k(); }
+// once per kernel and process; an Error leaves it to the next launch
 template <class Kern> void reserve_once(Kern* kernel) {
-  static const bool done = [&] {
-    cudaFuncAttributes a{};
-    if (cudaFuncGetAttributes(&a, reinterpret_cast<const void*>(kernel)) == cudaSuccess)
-      gpu::reserve_local_memory(reinterpret_cast<const void*>(kernel), a.localSizeBytes);
-    return true;
-  }();
+  gpu::ensure_ready();
+  static const bool done =
+      (gpu::reserve_local_memory(reinterpret_cast<const void*>(kernel), typeid(Kern).name()), true);
   (void)done;
 }
 inline constexpr int kBlock = 128;
@@ -205,17 +218,18 @@ template <class K> void parallel_for_n(std::size_t n, const K& k) { cpu_for<std:
 template <class K> void serial(const K& k) { k(); }
 #endif
 
-// Fixed-capacity work array of a kernel, in place of MPAS's automatic arrays (std::vector on the CPU before):
-// a[0..n-1] zero-filled as std::vector<T>(n) is, capacity N. The caller checks n <= N on the host first
-// (fits_column); a larger n is a kernel_fail (the kernel's results are then not used: the launch throws).
+// Work array of a kernel, in place of MPAS's automatic arrays (std::vector on the CPU before): a[0..n-1] zero-filled
+// as std::vector<T>(n) is.
+// - CUDA build: the thread's own, capacity N (local memory). The host checks n <= N first (fits_column, the RBF's
+//   maxEdges); a larger n is a kernel_fail, which ends the thread before the array is used.
+// - CPU build: no capacity limit (the GPU's limits never restrict a CPU run): up to N elements in place, a larger n
+//   on the heap.
+#if defined(CPPMPAS_USE_CUDA)
 template <class T, int N> struct LocalArray {
   T v[N];
   int n_;
   CPPMPAS_HD explicit LocalArray(int n) : n_(n < 0 ? 0 : n) {
-    if (n_ > N) {
-      kernel_fail("a kernel work array is larger than its capacity");
-      n_ = N;
-    }
+    if (n_ > N) kernel_fail("a kernel work array is larger than its capacity");
     for (int i = 0; i < n_; ++i) v[i] = T{};
   }
   CPPMPAS_HD T& operator[](int i) { return v[i]; }
@@ -225,10 +239,43 @@ template <class T, int N> struct LocalArray {
   CPPMPAS_HD T* end() { return v + n_; }
   CPPMPAS_HD int size() const { return n_; }
 };
-// the capacity of the vertical work arrays: nVertLevels + 2 elements (index 0 unused, 1..nVertLevels+1)
+#else
+template <class T, int N> struct LocalArray {
+  T small_[N];
+  std::vector<T> big_;
+  T* v;
+  int n_;
+  explicit LocalArray(int n) : n_(n < 0 ? 0 : n) {
+    if (n_ > N) {
+      big_.assign(static_cast<std::size_t>(n_), T{});
+      v = big_.data();
+    } else {
+      v = small_;
+      for (int i = 0; i < n_; ++i) v[i] = T{};
+    }
+  }
+  LocalArray(const LocalArray& o) : big_(o.big_), n_(o.n_) {
+    if (n_ > N) {
+      v = big_.data();
+    } else {
+      v = small_;
+      for (int i = 0; i < n_; ++i) v[i] = o.v[i];
+    }
+  }
+  LocalArray& operator=(const LocalArray&) = delete;
+  T& operator[](int i) { return v[i]; }
+  const T& operator[](int i) const { return v[i]; }
+  T* data() { return v; }
+  T* begin() { return v; }
+  T* end() { return v + n_; }
+  int size() const { return n_; }
+};
+#endif
+// the capacity of the GPU's vertical work arrays: nVertLevels + 2 elements (index 0 unused, 1..nVertLevels+1)
 inline constexpr int kMaxColumn = 258;
 template <class T> using Column = LocalArray<T, kMaxColumn>;
-// Error naming the routine unless a column of nVertLevels levels (nVertLevels + 2 elements) fits a Column
+// CUDA build: Error naming the routine unless a column of nVertLevels levels (nVertLevels + 2 elements) fits a Column.
+// CPU build: no limit.
 void fits_column(int nVertLevels, const char* routine);
 
 }  // namespace cppmpas

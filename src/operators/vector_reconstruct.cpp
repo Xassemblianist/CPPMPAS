@@ -3,6 +3,7 @@
 // (core/backend.hpp), the k loop and the edgesOnCell loop inside the thread in MPAS's order.
 #include "operators/vector_reconstruct.hpp"
 
+#include <initializer_list>
 #include <string>
 #include <utility>
 
@@ -11,6 +12,10 @@
 #include "core/views.hpp"
 
 namespace cppmpas {
+
+// an array and its name, for the extent checks (explicit type: nvcc 12 cannot deduce a braced list of std::pair)
+using RealArrayName = std::pair<const FArray<real>*, const char*>;
+using Arrays = std::initializer_list<RealArrayName>;
 
 namespace {
 // u is (nVertLevels, nEdges+1) and every output (nVertLevels, nCells+1), as MPAS allocates them
@@ -29,7 +34,7 @@ void mpas_reconstruct_2d(const Mesh& m, const FArray<real>& u, FArray<real>& uRe
   const auto& coeffs_reconstruct = m.coeffs_reconstruct;
   if (nVertLevels < 1) throw Error("mpas_reconstruct_2d: nVertLevels < 1 (no vertical mesh)");
   need_exact(u, nVertLevels, m.nEdges + 1, "u");
-  for (auto [a, n] : {std::pair{&uReconstructX, "uReconstructX"}, {&uReconstructY, "uReconstructY"},
+  for (auto [a, n] : Arrays{{&uReconstructX, "uReconstructX"}, {&uReconstructY, "uReconstructY"},
                       {&uReconstructZ, "uReconstructZ"}, {&uReconstructZonal, "uReconstructZonal"},
                       {&uReconstructMeridional, "uReconstructMeridional"}})
     need_exact(*a, nVertLevels, nCells + 1, n);

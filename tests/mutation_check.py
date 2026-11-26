@@ -970,6 +970,15 @@ MUTATIONS += [
      ["dycore_restart0_MW_qv", "dycore_MW_step0_qv"]),
     ("src/core/namelist_table.inc", r'"config_do_restart", "logical", "false", "false\ntrue")',
      r'"config_do_restart", "logical", "false", "false")', ["dycore_restart0_run_MW", "namelist_MW"]),
+    # the CPU build has none of the GPU's capacity limits (core/backend.hpp, operators/vector_operations.cpp)
+    ("src/core/backend.cpp", "#if !defined(CPPMPAS_USE_CUDA)\n  (void)nVertLevels;", "#if 0\n  (void)nVertLevels;",
+     ["unit_backend"]),
+    ("src/core/backend.hpp", "    if (n_ > N) {\n      big_.assign", "    if (n_ > N) {\n      n_ = N;\n      big_.assign",
+     ["unit_backend"]),
+    (V, "#if defined(CPPMPAS_USE_CUDA)\n  if (N > kMaxRbfPoints + 2)", "#if 1\n  if (N > kMaxRbfPoints + 2)",
+     ["unit_backend"]),
+    (V, "#if defined(CPPMPAS_USE_CUDA)\n  if (pointCount > kMaxRbfPoints)", "#if 1\n  if (pointCount > kMaxRbfPoints)",
+     ["unit_backend"]),
 ]
 
 

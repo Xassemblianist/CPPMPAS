@@ -177,7 +177,9 @@ CPPMPAS_HD void elgs(real* A, int N, int* INDX) {
 CPPMPAS_HD void mpas_legs(real* A, int N, real* B, real* X, int* INDX) {
   // MPAS's only caller passes pointCount + 2 >= 3; N < 1 would index X(0) (public routine: checked)
   if (N < 1) return kernel_fail("mpas_legs: N < 1");
-  if (N > kMaxRbfPoints + 2) return kernel_fail("mpas_legs: N > kMaxRbfPoints + 2 (the work array of elgs)");
+#if defined(CPPMPAS_USE_CUDA)
+  if (N > kMaxRbfPoints + 2) return kernel_fail("mpas_legs: N > kMaxRbfPoints + 2 (the GPU work array of elgs)");
+#endif
   auto a = [&](int i, int j) { return A[(i - 1) + N * (j - 1)]; };
   elgs(A, N, INDX);
   for (int I = 1; I <= N - 1; ++I)
@@ -196,8 +198,10 @@ CPPMPAS_HD void mpas_rbf_interp_func_3D_plane_vec_const_dir_comp_coeffs(int poin
                                                                        const real destinationPoint[3], real alpha,
                                                                        const real* planeBasisVectors,
                                                                        real* coefficients) {
+#if defined(CPPMPAS_USE_CUDA)
   if (pointCount > kMaxRbfPoints)
     return kernel_fail("mpas_rbf_interp_func_3D_plane_vec_const_dir_comp_coeffs: pointCount > kMaxRbfPoints");
+#endif
   constexpr int kMs = kMaxRbfPoints + 2;  // the capacity of the (matrixSize, ...) work arrays
   const int pc = pointCount;
   const int matrixSize = pc + 2;  // :1104
@@ -260,9 +264,11 @@ CPPMPAS_HD void mpas_rbf_interp_func_3D_plane_vec_const_dir_comp_coeffs(int poin
 void mpas_init_reconstruct(Mesh& m) {
   if (m.is_periodic)
     throw Error("mpas_init_reconstruct: the is_periodic branch (mpas_vector_reconstruction.F:141-144) is not ported");
+#if defined(CPPMPAS_USE_CUDA)
   if (m.maxEdges > kMaxRbfPoints)
     throw Error("mpas_init_reconstruct: maxEdges = " + std::to_string(m.maxEdges) + " is more than the " +
-                std::to_string(kMaxRbfPoints) + " points of the RBF work arrays (kMaxRbfPoints)");
+                std::to_string(kMaxRbfPoints) + " points of the GPU's RBF work arrays (kMaxRbfPoints)");
+#endif
   auto& cr = m.coeffs_reconstruct;
   fill_all(cr, 0.0);                   // :124
   const int nCells = m.nCellsSolve();  // :117-121

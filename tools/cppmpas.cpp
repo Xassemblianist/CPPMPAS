@@ -28,6 +28,7 @@
 // constituents; character fields as their StrLen characters.
 #include <algorithm>
 #include <cstdio>
+#include <initializer_list>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -201,7 +202,10 @@ int run(int argc, char** argv) {
               << m.nVertLevels << "\n"
               << "on_a_sphere " << m.on_a_sphere << " sphere_radius " << m.sphere_radius << " is_periodic "
               << m.is_periodic << "\n";
-    for (auto [label, o] : {std::pair{"cells", &m.cell_order}, {"edges", &m.edge_order}, {"vertices", &m.vertex_order}}) {
+    // explicit element type: nvcc 12 cannot deduce a braced list of std::pair
+    using Order = std::pair<const char*, decltype(&m.cell_order)>;
+    for (auto [label, o] : std::initializer_list<Order>{{"cells", &m.cell_order}, {"edges", &m.edge_order},
+                                                        {"vertices", &m.vertex_order}}) {
       std::cout << label << " local order " << (o->identity() ? "= file order" : "!= file order") << ", first:";
       for (int i = 1; i <= std::min(12, o->n()); ++i) std::cout << " " << o->local_to_file[i];
       std::cout << "\n";
