@@ -132,8 +132,6 @@ void write_values(NcFile& f, MpasInput& in, const std::string& name) {
   const Mesh& m = in.mesh;
   const long record = rv.has_time() ? 0 : -1;
   if (ref.c) {
-    // a character field MPAS writes always holds a value (xtime from the clock, initial_time from the init file)
-    if (ref.c->empty()) throw Error("write " + name + ": the field was not read");
     if (ref.c->size() > kStrLen) throw Error("write " + name + ": value longer than StrLen = 64");
     std::vector<char> v(ref.c->begin(), ref.c->end());
     v.resize(kStrLen, ' ');
@@ -206,19 +204,25 @@ void write_history(MpasInput& in, const std::string& path, const std::vector<std
                    const HistoryOptions& opt) {
   if (fields.empty()) throw Error("history: no fields to write");
   const Mesh& m = in.mesh;
+  // every field is checked before the file is created: no partial file is left behind
+  for (const auto& n : fields) {
+    const RegistryVar& rv = registry_var(n);
+    const FieldRef ref = field_ref(in, n);  // a field without a port is an error
+    // a character field MPAS writes always holds a value (xtime from the clock, initial_time from the init file)
+    const bool held = ref.c ? !ref.c->empty() : ref.i ? ref.i->allocated() : ref.r->allocated();
+    if (!held) throw Error("write " + n + ": the field was neither read nor computed");
+    for (const auto& kv : rv.attrs)
+      if (kv.first == "_FillValue") throw Error("history: numeric _FillValue attributes are not handled (" + n + ")");
+  }
   NcFile f = NcFile::create(path, NC_64BIT_DATA);
   std::vector<std::string> defined;
   for (const auto& n : fields) {
     const RegistryVar& rv = registry_var(n);
-    (void)field_ref(in, n);  // a field without a port is an error here, before anything is written
     const auto dims = file_dims(rv);
     define_dims(f, dims, defined,
                 [&](const std::string& d) { return d == "Time" ? NC_UNLIMITED : file_dim(m, d); });
     f.def_var(n, nc_type_of(rv), dims);
-    for (const auto& [k, v] : rv.attrs) {
-      if (k == "_FillValue") throw Error("history: numeric _FillValue attributes are not handled (" + n + ")");
-      f.put_att_text(n, k, v);
-    }
+    for (const auto& [k, v] : rv.attrs) f.put_att_text(n, k, v);
   }
   // mpas_subdriver.F:497-530 (character values are written trimmed, mpas_io.F:6036, 6208-6210)
   f.put_att_text("", "model_name", "mpas");
