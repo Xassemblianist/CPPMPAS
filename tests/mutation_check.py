@@ -498,7 +498,7 @@ MUTATIONS = [
      "      if (false)", ["err_unverified"]),
     (A, "  const std::vector<std::string> pow_tail = {\"exner\", \"exner_base\", \"pressure_p\", \"pressure_base\"};",
      "  const std::vector<std::string> pow_tail = {\"exner\", \"pressure_p\", \"pressure_base\"};", ["unit_init_guards"]),
-    # --- hardening of the NEONM07 findings: guards, refusals before the file is created, the separators gfortran
+    # --- hardening: guards, refusals before the file is created, the separators gfortran
     # fails on, the C locale, the libm barrier of every port
     ("src/core/decomp.cpp", "  const auto ext = [](const FArray<int>& a, int d) { return a.allocated() ? a.extent(d) : 0; };",
      "  const auto ext = [](const FArray<int>& a, int d) { return a.extent(d); };", ["unit_decomp"]),
