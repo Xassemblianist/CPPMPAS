@@ -39,8 +39,8 @@ MUTATIONS = [
       "history_MW", "history_SC"]),
     (W, "  NcFile f = NcFile::create(path, NC_64BIT_DATA);", "  NcFile f = NcFile::create(path, NC_64BIT_OFFSET);",
      ["history_MW", "history_SC"]),
-    (W, "    for (const auto& [k, v] : rv.attrs) f.put_att_text(n, k, v);",
-     "    for (const auto& [k, v] : rv.attrs) f.put_att_text(n, k == \"long_name\" ? \"description\" : k, v);",
+    (W, "          f.put_att_text(n, k, v);\n        }",
+     "          f.put_att_text(n, k == \"long_name\" ? \"description\" : k, v);\n        }",
      ["history_MW", "history_SC"]),
     (R, "  if (m.is_periodic)\n", "  if (false && m.is_periodic)\n", ["err_periodic"]),
     (R, "    if (!f.has_var(n)) throw Error(f.path() + \": required mesh variable \"",
@@ -175,7 +175,9 @@ MUTATIONS = [
     (NL, "  if (!record.empty()) throw", "  if (false) throw", ["namelist_MW"]),
     (NL, "  if (l == \"f\" || l == \".f.\" ||", "  if (l == \"f\" ||", ["namelist_MW"]),
     (NL, "  r(\"config_len_disp\", c.config_len_disp);", "", ["init_run_MW", "init_run_SC", "init_run_JW"]),
-    (NL, "  t(\"config_start_time\", c.config_start_time);", "", ["init_step0_MW", "init_step0_SC", "init_step0_JW"]),
+    (NL, "  t(\"config_start_time\", c.config_start_time);", "",
+     ["init_step0_MW", "init_step0_SC", "init_step0_JW"] + [f"dycore_MW_step{n}_xtime" for n in range(11)] +
+     ["dycore_MW_restart_xtime", "dycore_MW_output30_xtime"]),
     ("tools/gen_namelist_table.py", "            if v not in acc:", "            if True:", ["namelist_table_current"]),
     # the reference init files already hold xtime = config_start_time: the init_step0_* comparison cannot see it
     (A, "  s.xtime = stamp;", "", ["unit_init_guards"]),
@@ -493,6 +495,178 @@ MUTATIONS = [
 ]
 
 
+# ---------------------------------------------------------------------------------------------------------------
+# the dycore (src/core_atmosphere/atm_dycore.cpp, atm_dissipation.cpp) against the MW step files, its checks and the
+# run command
+DY, DS = "src/core_atmosphere/atm_dycore.cpp", "src/core_atmosphere/atm_dissipation.cpp"
+
+
+def ST(steps, fields="u w rho_zz theta_m rho theta pressure_p"):
+    """dycore_MW_step<n>_<field> tests (tests/CMakeLists.txt)"""
+    return [f"dycore_MW_step{n}_{f}" for n in steps for f in fields.split()]
+
+
+S1 = ST([1])
+ALLDYN = ST(range(1, 11)) + ["dycore_MW_mpas_compare"]
+LONG_R = "u w rho_zz theta_m pressure_p rho theta exner ru rw rtheta_p rho_p".split()
+LONG_O = "u w rho theta divergence vorticity ke uReconstructZonal uReconstructMeridional".split()
+LONG = [f"dycore_MW_restart_{f}" for f in LONG_R] + [f"dycore_MW_output30_{f}" for f in LONG_O]
+MUTATIONS += [
+    # atm_rk_integration_setup, moist coefficients, physics_get_tend, atm_compute_vert_imp_coefs
+    (DY, "      f.u2(k, iEdge) = s.u(k, iEdge);", "      f.u2(k, iEdge) = 0.999 * s.u(k, iEdge);", S1),
+    (DY, "      f.rw_save(k, iCell) = d.rw(k, iCell);", "      f.rw_save(k, iCell) = 0.0;", S1),
+    (DY, "      f.cqu(k, iEdge) = 1.0 / (1.0 + qtotal);", "      f.cqu(k, iEdge) = 1.0 / (1.01 + qtotal);", S1),
+    (DY, "      f.cqw(k, iCell) = 1.0 / (1.0 + qtotal);", "      f.cqw(k, iCell) = 1.0 / (1.01 + qtotal);", S1),
+    (DY, "      f.tend_rtheta_physics(k, i) = f.tend_rtheta_physics(k, i) + tend_th;",
+     "      f.tend_rtheta_physics(k, i) = f.tend_rtheta_physics(k, i) + tend_th + 1.0e-9;", S1),
+    (DY, "      alpha_tri(k, iCell) = 1. / (1.0 + (dts * dts) *", "      alpha_tri(k, iCell) = 1. / (1.0 + (dts * 2.0) *", S1),
+    (DY, "      gamma_tri(k, iCell) = (dts * dts) * c_tri[k] * alpha_tri(k, iCell);",
+     "      gamma_tri(k, iCell) = (dts * dts) * c_tri[k] * alpha_tri(k - 1, iCell);", S1),
+    # (etp and ewp are 0.5 * (1 + epssm) on every level of MW: a mutant of their level index is exact there)
+    (DY, "etp(k - 1) * rdzw(k - 1) * zz(k - 1, iCell))", "etp(k - 1) * rdzw(k - 1) * zz(k, iCell))", S1),
+    (DY, "cofwt(k, iCell) * coftz(k + 1, iCell) * rdzw(k);", "cofwt(k, iCell) * coftz(k, iCell) * rdzw(k);", S1),
+    (DY, "cofwr(k, iCell) * cofrz(k - 1) - cofwt(k - 1, iCell) * coftz(k - 1, iCell) * rdzw(k - 1);",
+     "cofwr(k, iCell) * cofrz(k - 1) - cofwt(k, iCell) * coftz(k - 1, iCell) * rdzw(k - 1);", S1),
+    (DY, "* rb(k, iCell) / (1. + qtotal) * p(k, iCell) /", "* rb(k, iCell) / (1.1 + qtotal) * p(k, iCell) /", S1),
+    (DY, "      coftz(k, iCell) = (fzm(k) * t(k, iCell) + fzp(k) * t(k - 1, iCell));",
+     "      coftz(k, iCell) = (fzm(k) * t(k, iCell) + fzp(k) * t(k, iCell));", S1),
+    (DY, "cofwr(k, iCell) = .5 * gravity *", "cofwr(k, iCell) = .25 * gravity *", S1),
+    # atm_compute_dyn_tend
+    (DY, "      for (int k = 1; k <= nVertLevels; ++k) h_divergence(k, iCell) = h_divergence(k, iCell) + edge_sign * ru(k, iEdge);",
+     "      for (int k = 1; k <= nVertLevels; ++k) h_divergence(k, iCell) = h_divergence(k, iCell) + edge_sign * u(k, iEdge);", S1),
+    (DY, "        tend_rho(k, iCell) = -h_divergence(k, iCell) - rdzw(k) * (rw(k + 1, iCell) - rw(k, iCell)) +",
+     "        tend_rho(k, iCell) = -h_divergence(k, iCell) - rdzw(k) * (rw(k + 1, iCell) + rw(k, iCell)) +", S1),
+    (DY, "rr_save(k, iCell) * (1. + f.qtot(k, iCell))", "rr_save(k, iCell) * (1.5 + f.qtot(k, iCell))", S1),
+    (DY, "                                 0.5 * m.zxu(k, iEdge) * (dpdz(k, cell1) + dpdz(k, cell2))));",
+     "                                 0.25 * m.zxu(k, iEdge) * (dpdz(k, cell1) + dpdz(k, cell2))));", S1),
+    (DY, "    int k = 2;\n    wduz[k] = 0.5 *", "    int k = 2;\n    wduz[k] = 0.25 *", S1),
+    (DY, "    for (k = 1; k <= nVertLevels; ++k) tend_u(k, iEdge) = -(rdzw(k) * (wduz[k + 1] - wduz[k]));",
+     "    for (k = 1; k <= nVertLevels; ++k) tend_u(k, iEdge) = -(rdzw(k) * (wduz[k + 1] + wduz[k]));", S1),
+    (DY, "        const real workpv = 0.5 * (pv_edge(k, iEdge) + pv_edge(k, eoe));",
+     "        const real workpv = 0.5 * (pv_edge(k, iEdge) + pv_edge(k, iEdge));", S1),
+    (DY, "(q[k] - (ke(k, cell2) - ke(k, cell1)) * m.invDcEdge(iEdge))", "(q[k] - (ke(k, cell2) + ke(k, cell1)) * m.invDcEdge(iEdge))", S1),
+    (DY, "      tend_u(k, iEdge) = tend_u(k, iEdge) + tend_u_euler(k, iEdge) + f.tend_ru_physics(k, iEdge);",
+     "      tend_u(k, iEdge) = tend_u(k, iEdge) + f.tend_ru_physics(k, iEdge);", S1),
+    (DY, "          const real scalar_weight = m.adv_coefs(j, iEdge) + sign1(ru_edge_w[k]) * m.adv_coefs_3rd(j, iEdge);",
+     "          const real scalar_weight = m.adv_coefs(j, iEdge) - sign1(ru_edge_w[k]) * m.adv_coefs_3rd(j, iEdge);", S1),
+    (DY, "      tend_w(k, iCell) = tend_w(k, iCell) * m.invAreaCell(iCell) - rdzu(k) * (wdwz[k + 1] - wdwz[k]);",
+     "      tend_w(k, iCell) = tend_w(k, iCell) * m.invAreaCell(iCell) + rdzu(k) * (wdwz[k + 1] - wdwz[k]);", S1),
+    (DY, "            tend_w_euler(k, iCell) - f.cqw(k, iCell) * (rdzu(k) * (pp(k, iCell) - pp(k - 1, iCell)) -",
+     "            tend_w_euler(k, iCell) - f.cqw(k, iCell) * (rdzu(k) * (pp(k, iCell) - pp(k, iCell)) -", S1),
+    (DY, "    for (int k = 2; k <= nVertLevels; ++k) tend_w(k, iCell) = tend_w(k, iCell) + tend_w_euler(k, iCell);",
+     "    for (int k = 2; k <= nVertLevels; ++k) tend_w(k, iCell) = tend_w(k, iCell);", S1),
+    (DY, "          const real scalar_weight = m.adv_coefs(j, iEdge) + sign1(ru(k, iEdge)) * m.adv_coefs_3rd(j, iEdge);",
+     "          const real scalar_weight = m.adv_coefs(j, iEdge) - sign1(ru(k, iEdge)) * m.adv_coefs_3rd(j, iEdge);", S1),
+    (DY, "(ru_save(k, iEdge) - ru(k, iEdge)) * 0.5 *", "(ru_save(k, iEdge) - ru(k, iEdge)) * 0.25 *", S1),
+    (DY, "                      coef_3rd_order);", "                      2.0 * coef_3rd_order);", S1),
+    (DY, "    wdtz[k] = rw_save(k, iCell) * (fzm(k) * theta_m(k, iCell) + fzp(k) * theta_m(k - 1, iCell));",
+     "    wdtz[k] = rw(k, iCell) * (fzm(k) * theta_m(k, iCell) + fzp(k) * theta_m(k - 1, iCell));", S1),
+    (DY, "      tend_theta(k, iCell) = tend_theta(k, iCell) + tend_theta_euler(k, iCell) + f.tend_rtheta_physics(k, iCell);",
+     "      tend_theta(k, iCell) = tend_theta(k, iCell) + f.tend_rtheta_physics(k, iCell);", S1),
+    # dissipation
+    (DS, "      const real kdiffu = 0.5 * (eddy_visc_horz(k, cell1) + eddy_visc_horz(k, cell2));",
+     "      const real kdiffu = 0.25 * (eddy_visc_horz(k, cell1) + eddy_visc_horz(k, cell2));", S1),
+    (DS, "                                      (u(k, iEdge) - u(k - 1, iEdge)) / (z0 - zm)) /",
+     "                                      (u(k, iEdge) - u(k - 1, iEdge)) / (z0 - zp)) /", ST([2])),
+    (DS, "        w_turb_flux = w_turb_flux * m.meshScalingDel2(iEdge) * 0.25 *",
+     "        w_turb_flux = w_turb_flux * m.meshScalingDel2(iEdge) * 0.5 *", S1),
+    (DS, "                                                               (w(k, iCell) - w(k - 1, iCell)) * m.rdzw(k - 1)) *",
+     "                                                               (w(k, iCell) - w(k - 1, iCell)) * m.rdzw(k)) *", S1),
+    (DS, "            theta_turb_flux * 0.5 * (eddy_visc_horz(k, cell1) + eddy_visc_horz(k, cell2)) * pr_scale;  // DM:1295",
+     "            theta_turb_flux * 0.25 * (eddy_visc_horz(k, cell1) + eddy_visc_horz(k, cell2)) * pr_scale;  // DM:1295", S1),
+    (DS, "                                          (theta_m(k, iCell) - theta_m(k - 1, iCell)) / (z0 - zm)) /",
+     "                                          (theta_m(k, iCell) - theta_m(k - 1, iCell)) / (z0 - zp)) /", S1),
+    # atm_set_smlstep_pert_variables: the sign is that of u_tend(k), not of the flux (TI:3629)
+    (DY, "                           (m.zb_cell(k, i, iCell) + sign1(u_tend(k, iEdge)) * m.zb3_cell(k, i, iCell)) * flux;",
+     "                           (m.zb_cell(k, i, iCell) + sign1(flux) * m.zb3_cell(k, i, iCell)) * flux;", S1),
+    (DY, "      w_tend(k, iCell) = (m.fzm(k) * m.zz(k, iCell) + m.fzp(k) * m.zz(k - 1, iCell)) * w_tend(k, iCell);",
+     "      w_tend(k, iCell) = (m.fzm(k) * m.zz(k, iCell) + m.fzp(k) * m.zz(k, iCell)) * w_tend(k, iCell);", S1),
+    # atm_advance_acoustic_step, atm_divergence_damping_3d
+    (DY, "        pgrad = cqu(k, iEdge) * 0.5 * c2 *", "        pgrad = cqu(k, iEdge) * 0.25 * c2 *", S1),
+    (DY, "        pgrad = pgrad + 0.5 * m.zxu(k, iEdge) * gravity", "        pgrad = pgrad + 0.25 * m.zxu(k, iEdge) * gravity", S1),
+    (DY, "      for (int k = 1; k <= nVertLevels; ++k) rtheta_pp_old(k, iCell) = rtheta_pp(k, iCell);",
+     "      for (int k = 1; k <= nVertLevels; ++k) rtheta_pp_old(k, iCell) = 0.0;", S1),
+    (DY, "      rs[k] = rho_pp(k, iCell) + dts * tend_rho(k, iCell) + rs[k] -", "      rs[k] = rho_pp(k, iCell) + rs[k] -",
+     ALLDYN + LONG),
+    (DY, "        ts[k] = ts[k] - flux * 0.5 * (theta_m(k, cell2) + theta_m(k, cell1));",
+     "        ts[k] = ts[k] - flux * 0.5 * (theta_m(k, cell2) + theta_m(k, cell2));", S1),
+    (DY, "                 cofwt(k - 1, iCell) * (etp(k - 1) * ts[k - 1]", "                 cofwt(k, iCell) * (etp(k - 1) * ts[k - 1]", S1),
+    (DY, "      rw_p(k, iCell) = rw_p(k, iCell) - gamma_tri(k, iCell) * rw_p(k + 1, iCell);",
+     "      rw_p(k, iCell) = rw_p(k, iCell) + gamma_tri(k, iCell) * rw_p(k + 1, iCell);", S1),
+    (DY, "                           (1.0 + dts * dss(k, iCell)) -", "                           (1.0 + 2.0 * dts * dss(k, iCell)) -", S1),
+    (DY, "      rho_pp(k, iCell) = rs[k] - dts * cofrz(k) * (ewp(k + 1) * rw_p(k + 1, iCell) - ewp(k) * rw_p(k, iCell));",
+     "      rho_pp(k, iCell) = rs[k] - dts * cofrz(k) * (ewm(k + 1) * rw_p(k + 1, iCell) - ewm(k) * rw_p(k, iCell));", S1),
+    (DY, "  const real coef_divdamp = 2.0 * cfg.config_smdiv * cfg.config_len_disp * rdts;",
+     "  const real coef_divdamp = 4.0 * cfg.config_smdiv * cfg.config_len_disp * rdts;", S1),
+    # atm_recover_large_step_variables
+    (DY, "      rho_zz(k, iCell) = rho_p(k, iCell) + rho_base(k, iCell);", "      rho_zz(k, iCell) = rho_p(k, iCell) + 1.000001 * rho_base(k, iCell);", S1),
+    (DY, "      w(k, iCell) = rw(k, iCell) / (fzm(k) * zz(k, iCell) + fzp(k) * zz(k - 1, iCell));",
+     "      w(k, iCell) = rw(k, iCell) / (fzm(k) * zz(k, iCell) + fzp(k) * zz(k, iCell));", S1),
+    (DY, "        exner(k, iCell) = vector ? libm::mvec_pow(x, rcv) : libm::pow(x, rcv);",
+     "        exner(k, iCell) = vector ? libm::mvec_pow(x, 1.0001 * rcv) : libm::pow(x, rcv);",
+     ["dycore_MW_step1_pressure_p"] + ST([2])),
+    # the rk_step 3 loop's level pairs call libmvec's pow: scalar pow on every level differs from step 1's pressure_p
+    (DY, "        exner(k, iCell) = vector ? libm::mvec_pow(x, rcv) : libm::pow(x, rcv);",
+     "        exner(k, iCell) = libm::pow(x, rcv);", ["dycore_MW_step1_pressure_p"] + ST(range(2, 11))),
+    (DY, "(exner(k, iCell) * rtheta_p(k, iCell) + rtheta_base(k, iCell) * (exner(k, iCell) - exner_base(k, iCell)));",
+     "(exner(k, iCell) * rtheta_p(k, iCell) + rtheta_base(k, iCell) * (exner(k, iCell) - exner(k, iCell)));",
+     ["dycore_MW_step1_pressure_p"] + ST([2])),
+    (DY, "      u(k, iEdge) = 2. * ru(k, iEdge) / (rho_zz(k, cell1) + rho_zz(k, cell2));",
+     "      u(k, iEdge) = 2. * ru(k, iEdge) / (rho_zz(k, cell1) + rho_zz(k, cell1));", S1),
+    (DY, "      real flux = (cf1 * ru(1, iEdge) + cf2 * ru(2, iEdge) + cf3 * ru(3, iEdge));",
+     "      real flux = (cf1 * ru(1, iEdge) + cf2 * ru(2, iEdge));", S1),
+    (DY, "    w(1, iCell) = w(1, iCell) / (cf1 * rho_zz(1, iCell) + cf2 * rho_zz(2, iCell) + cf3 * rho_zz(3, iCell));",
+     "    w(1, iCell) = w(1, iCell) / (cf1 * rho_zz(1, iCell) + cf2 * rho_zz(2, iCell));", S1),
+    (DY, "      theta_m(k, iCell) = (rtheta_p(k, iCell) + rtheta_base(k, iCell)) / rho_zz(k, iCell);\n      }",
+     "      theta_m(k, iCell) = (rtheta_p(k, iCell) + rtheta_base(k, iCell)) / rho_zz(k, iCell) * 1.000001;\n      }", S1),
+    # atm_srk3: step constants, solve diagnostics per rk_step, the scalar clamp
+    (DY, "  rk_sub_timestep[1] = dt_dynamics / static_cast<real>(number_of_sub_steps);",
+     "  rk_sub_timestep[1] = dt_dynamics / static_cast<real>(number_of_sub_steps + 1);", S1),
+    (DY, "  number_sub_steps[3] = number_of_sub_steps;", "  number_sub_steps[3] = number_of_sub_steps - 1;", S1),
+    (DY, "    if (f.scalars2.data()[i] < 0.0) f.scalars2.data()[i] = 0.0;",
+     "    if (f.scalars2.data()[i] <= 0.0) f.scalars2.data()[i] = 1.0e-300;",
+     ST(range(1, 11), "qv") + ["dycore_MW_restart_qv", "dycore_MW_output30_qv"]),
+    # output diagnostics, Time, xtime, the step files
+    (DY, "      s.rho(k, iCell) = s.rho_zz(k, iCell) * m.zz(k, iCell);", "      s.rho(k, iCell) = s.rho_zz(k, iCell);",
+     ST(range(11), "rho")),
+    (DY, "      s.theta(k, iCell) = s.theta_m(k, iCell) / (1. + rvord * s.scalars(index_qv, k, iCell));",
+     "      s.theta(k, iCell) = s.theta_m(k, iCell) / (1.5 + rvord * s.scalars(index_qv, k, iCell));", ST(range(11), "theta")),
+    (DY, "  f.Time2 = f.Time1 + dt;", "  f.Time2 = f.Time1 + dt + 1.0;", ST(range(1, 11), "Time") + ["dycore_MW_restart_Time"]),
+    ("src/core_atmosphere/atm_dycore.hpp", "  real Time1 = 0.0, Time2 = 0.0;", "  real Time1 = 1.0, Time2 = 0.0;",
+     ST(range(11), "Time")),
+    (X, "      atm_timestep(dcfg, in.mesh, in.state, in.diag, f, dcfg.config_dt, add_seconds(start, n * dt_s));",
+     "      atm_timestep(dcfg, in.mesh, in.state, in.diag, f, dcfg.config_dt, add_seconds(start, (n + 1) * dt_s));",
+     ST([1], "xtime u w")),
+    (X, "    write_step(0);", "", ST([0], "xtime Time u w rho_zz theta_m rho theta pressure_p qv")),
+    (X, "    for (const auto& sn : in.state.scalar_names) fields.push_back(sn);", "", ST(range(11), "qv")),
+    ("src/io/mpas_writer.cpp", '          f.put_att_text(n, k, "seconds since " + t);', "          f.put_att_text(n, k, v);",
+     ST(range(11), "Time")),
+    # the configuration checks, the CLI
+    (DY, '  if (c.config_horiz_mixing != "2d_fixed") no(', '  if (c.config_horiz_mixing != "2d_smagorinsky") no(',
+     ["dycore_run_MW", "dycore_run_long_MW", "err_dycore_JW", "unit_dycore"]),
+    (DY, "  if (c.config_scalar_advection) no(", "  if (false) no(", ["err_dycore_SC", "unit_dycore"]),
+    (DY, "    if (m.fEdge(iEdge) != 0.0) no(", "    if (false) no(", ["err_dycore_fEdge", "unit_dycore"]),
+    (DY, "  if (m.nVertLevels < 4 || m.nVertLevels % 2 != 0) no(", "  if (false) no(", ["err_dycore_odd_levels", "unit_dycore"]),
+    (DY, "  if (c.config_time_integration_order != 2)", "  if (c.config_time_integration_order > 3)", ["unit_dycore"]),
+    (DY, "  if (!(c.config_v_mom_eddy_visc2 > 0.0)) no(", "  if (false) no(", ["unit_dycore"]),
+    (DY, "  if (!off(c.config_microp_scheme)) no(", "  if (false) no(", ["unit_dycore"]),
+    (DY, "  if (!(c.config_dt > 0.0) || c.config_dt != std::floor(c.config_dt) || c.config_dt > 86400.0)",
+     "  if (!(c.config_dt > 0.0) || c.config_dt > 86400.0)", ["unit_dycore"]),
+    (DY, "  c.config_len_disp = init_cfg.config_len_disp;", '  c.config_len_disp = r("config_len_disp");', ["unit_dycore"]),
+    (DY, "  auto leap = [](int y) { return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0; };",
+     "  auto leap = [](int y) { return y % 4 == 0; };", ["unit_dycore"]),
+    (DY, "    if (++D > mdays(Y, M)) {", "    if (++D >= mdays(Y, M)) {", ["unit_dycore"]),
+    (X, "  if (used != v.size() || n < 0 || n > 1000000) throw Error(opt +", "  if (n < 0 || n > 1000000) throw Error(opt +",
+     ["err_dycore_steps"]),
+    (DY, "  mpas_reconstruct_2d(m, f.u2, d.uReconstructX,", "  if (false) mpas_reconstruct_2d(m, f.u2, d.uReconstructX,",
+     ["dycore_MW_output30_uReconstructZonal", "dycore_MW_output30_uReconstructMeridional"]),
+    (X, "      if (n > a.steps) throw Error(\"--write-at \"", "      if (false) throw Error(\"--write-at \"", ["err_dycore_write_at"]),
+    (X, "    for (const auto& w : a.write_fields) (void)field_ref(in, w);", "", ["err_dycore_write_fields"]),
+    (X, "    if (a.pos.size() != 2 || a.steps < 0 || a.namelist.empty() || !a.fields.empty())",
+     "    if (a.pos.size() != 2 || a.namelist.empty() || !a.fields.empty())", ["err_dycore_no_steps"]),
+]
+
+
 # SC is planar without terrain (zb = zb3 = 0), has zz = 1, a uniform hexagonal mesh (one dcEdge, one areaTriangle),
 # config_h_ScaleWithMesh = false and a horizontally uniform initial state for these terms: the mutants below are exact
 # on SC (shown by mutation_check runs), so their SC tests are not required to fail; the other cases kill them.
@@ -569,9 +743,10 @@ def main():
             if b.returncode != 0:
                 bad.append(f"{path}: mutant does not build")
                 continue
+            # one CTest run for all the tests the mutant must break: a fixture they share runs once
+            r = subprocess.run(["ctest", "--test-dir", str(build), "-R", "^(" + "|".join(map(re.escape, tests)) + ")$",
+                                "-FA", "inputs"], capture_output=True, text=True) if tests else None
             for t in tests:
-                r = subprocess.run(["ctest", "--test-dir", str(build), "-R", f"^{t}$", "-FA", "inputs"],
-                                   capture_output=True, text=True)
                 status = test_status(r.stdout, t)
                 failed = r.returncode != 0 and killed(status)
                 print(f"{'KILLED' if failed else 'SURVIVED'} {t:22s} by {path}: {new.strip()[:70]}")
