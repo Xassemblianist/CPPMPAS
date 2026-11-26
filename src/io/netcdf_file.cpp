@@ -18,10 +18,11 @@ NcFile NcFile::create(const std::string& path, int cmode) {
   int id = -1;
   const int st = nc_create(path.c_str(), NC_CLOBBER | cmode, &id);
   if (st != NC_NOERR) throw Error(path + ": cannot create: " + nc_strerror(st));
+  NcFile f(id, path);  // owns the handle from here (closed if the next call throws)
   // values are always written in full: no fill pass (the bytes written are the bytes of the data)
   int old = 0;
-  nc_set_fill(id, NC_NOFILL, &old);
-  return NcFile(id, path);
+  f.check(nc_set_fill(id, NC_NOFILL, &old), "set_fill");
+  return f;
 }
 
 NcFile::NcFile(NcFile&& o) noexcept : ncid_(o.ncid_), path_(std::move(o.path_)) { o.ncid_ = -1; }
@@ -53,9 +54,13 @@ const char* NcFile::format_name(int f) {
   return "unknown";
 }
 
+// The has_* queries answer "absent" only for the "not found" status; any other failure is an error.
 bool NcFile::has_dim(const std::string& name) const {
   int id = -1;
-  return nc_inq_dimid(ncid_, name.c_str(), &id) == NC_NOERR;
+  const int st = nc_inq_dimid(ncid_, name.c_str(), &id);
+  if (st == NC_EBADDIM) return false;
+  check(st, "dimension " + name);
+  return true;
 }
 
 std::size_t NcFile::dim_len(const std::string& name) const {
@@ -80,7 +85,10 @@ bool NcFile::dim_unlimited(const std::string& name) const {
 
 bool NcFile::has_var(const std::string& name) const {
   int id = -1;
-  return nc_inq_varid(ncid_, name.c_str(), &id) == NC_NOERR;
+  const int st = nc_inq_varid(ncid_, name.c_str(), &id);
+  if (st == NC_ENOTVAR) return false;
+  check(st, "variable " + name);
+  return true;
 }
 
 int NcFile::varid(const std::string& name) const {
@@ -121,9 +129,15 @@ std::vector<std::string> NcFile::var_names() const {
 
 bool NcFile::has_att(const std::string& varname, const std::string& att) const {
   int vid = NC_GLOBAL;
-  if (!varname.empty() && nc_inq_varid(ncid_, varname.c_str(), &vid) != NC_NOERR) return false;
+  if (!varname.empty()) {
+    if (!has_var(varname)) return false;
+    vid = varid(varname);
+  }
   int aid = -1;
-  return nc_inq_attid(ncid_, vid, att.c_str(), &aid) == NC_NOERR;
+  const int st = nc_inq_attid(ncid_, vid, att.c_str(), &aid);
+  if (st == NC_ENOTATT) return false;
+  check(st, (varname.empty() ? "global" : varname) + " attribute " + att);
+  return true;
 }
 
 RawAttribute NcFile::att(const std::string& varname, const std::string& name) const {
@@ -234,31 +248,19 @@ void NcFile::enddef() { check(nc_enddef(ncid_), "enddef"); }
 
 void NcFile::put_double(const std::string& name, const std::vector<double>& v, long record) {
   std::vector<std::size_t> s, c;
-  record_range(name, -1, s, c);
-  if (record >= 0) {
-    s[0] = static_cast<std::size_t>(record);
-    c[0] = 1;
-  }
+  record_range(name, record, s, c);  // record >= 0 needs a variable whose first dimension is the record dimension
   if (product(c) != v.size()) throw Error(path_ + ": write " + name + ": size mismatch");
   check(nc_put_vara_double(ncid_, varid(name), s.data(), c.data(), v.data()), "write " + name);
 }
 void NcFile::put_int(const std::string& name, const std::vector<int>& v, long record) {
   std::vector<std::size_t> s, c;
-  record_range(name, -1, s, c);
-  if (record >= 0) {
-    s[0] = static_cast<std::size_t>(record);
-    c[0] = 1;
-  }
+  record_range(name, record, s, c);  // record >= 0 needs a variable whose first dimension is the record dimension
   if (product(c) != v.size()) throw Error(path_ + ": write " + name + ": size mismatch");
   check(nc_put_vara_int(ncid_, varid(name), s.data(), c.data(), v.data()), "write " + name);
 }
 void NcFile::put_char(const std::string& name, const std::vector<char>& v, long record) {
   std::vector<std::size_t> s, c;
-  record_range(name, -1, s, c);
-  if (record >= 0) {
-    s[0] = static_cast<std::size_t>(record);
-    c[0] = 1;
-  }
+  record_range(name, record, s, c);  // record >= 0 needs a variable whose first dimension is the record dimension
   if (product(c) != v.size()) throw Error(path_ + ": write " + name + ": size mismatch");
   check(nc_put_vara_text(ncid_, varid(name), s.data(), c.data(), v.data()), "write " + name);
 }
