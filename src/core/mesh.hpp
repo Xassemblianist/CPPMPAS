@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 // MPAS-Atmosphere's mesh pool (var_struct "mesh", src/core_atmosphere/Registry.xml:1356-1670) and the initial state
-// the dycore reads (DYCORE_MAP.md §5.1), held as MPAS holds them on one MPI rank with one block:
+// of the input stream (Registry.xml:602-623), held as MPAS holds them on one MPI rank with one block:
 //  * cells in file order (src/framework/mpas_block_decomp.F:303-315);
 //  * edges and vertices in MPAS's local order: first seen while walking edgesOnCell / verticesOnCell cell by cell
 //    (mpas_bootstrapping.F:261-266 -> mpas_block_creator.F:318 -> mpas_block_decomp.F:633-685, then
@@ -24,12 +24,12 @@ const char* element_dim_name(Element e);  // "nCells", "nEdges", "nVertices"
 struct ElementOrder {
   std::vector<int> local_to_file;  // local index i (1..n) -> global ID = 1-based record in the file
   std::vector<int> file_to_local;  // global ID g (1..n) -> local index
-  int n() const { return static_cast<int>(local_to_file.size()) - 1; }
+  int n() const { return local_to_file.empty() ? 0 : static_cast<int>(local_to_file.size()) - 1; }
   bool identity() const;
 };
 
 struct Mesh {
-  // dimensions (nCellsSolve == nCells etc.: one rank, no halo elements, DYCORE_MAP.md §0.2)
+  // dimensions (nCellsSolve == nCells etc.: one rank, one block, no halo elements)
   int nCells = 0, nEdges = 0, nVertices = 0, maxEdges = 0, maxEdges2 = 0, vertexDegree = 0;
   int nVertLevels = 0;  // 0 when only a grid (no vertical mesh) was read
   int nCellsSolve() const { return nCells; }
