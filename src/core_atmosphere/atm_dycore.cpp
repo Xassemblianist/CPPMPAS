@@ -174,9 +174,20 @@ void allocate_dycore_fields(const Mesh& m, const State& s, DycoreFields& f) {
   for (std::size_t k = 0; k < s.scalar_names.size(); ++k)
     if (s.scalar_names[k] == "qv") f.index_qv = static_cast<int>(k) + 1;
   if (f.index_qv == 0) throw Error("allocate_dycore_fields: qv is not an active scalar");
-  // array_group "moist" (Registry.xml:1701-1748): qv, qc, qr, ... in Registry order, all of the active scalars
-  f.moist_start = 1;
-  f.moist_end = ns;
+  // moist_start / moist_end: the index range of the active constituents of array_group "moist" (Registry.xml:1702-1707:
+  // qv, qc, qr, qi, qs, qg; "number" ni, nr, nc, nifa, nwfa and "turbulence" tke follow), as the registry-generated
+  // code numbers them (src/tools/registry/gen_inc.c:1364-1374: index_counter over the active constituents in Registry
+  // order, <group>_start at the first of the group, <group>_end at its last)
+  static const std::vector<std::string> moist_group = {"qv", "qc", "qr", "qi", "qs", "qg"};
+  f.moist_start = 0;
+  f.moist_end = -1;
+  for (int k = 1; k <= ns; ++k) {
+    const bool moist = std::find(moist_group.begin(), moist_group.end(), s.scalar_names[k - 1]) != moist_group.end();
+    if (!moist) continue;
+    if (f.moist_start == 0) f.moist_start = k;
+    else if (k != f.moist_end + 1) throw Error("allocate_dycore_fields: the moist scalars are not contiguous");
+    f.moist_end = k;
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
