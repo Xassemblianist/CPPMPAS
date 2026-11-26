@@ -325,3 +325,100 @@ cppmpas_error_test(dycore_write_at "--write-at 12 is after the last step" run ${
   --namelist ${REF_MW}/steps/namelist.atmosphere --steps 10 --write-at 12 --write-fields u)
 cppmpas_error_test(dycore_write_fields "variable 'pressure' has no CPPMPAS port" run ${INIT_MW} ${W}/x_dir
   --namelist ${REF_MW}/steps/namelist.atmosphere --steps 10 --write-at 1 --write-fields u,pressure)
+
+# ---------------------------------------------------------------------------------------------------------------
+# GPU proof: the CUDA build of the same sources (cppmpas_gpu, CMake option CPPMPAS_ENABLE_CUDA; every kernel on the
+# GPU, core/backend.hpp) against the same references at tolerance 0, and against the CPU build's own output
+# (cppmpas, the tests above). Each test runs through tests/gpu_test.py: without a CUDA build or without a usable
+# device it exits 77 and CTest reports it as "Skipped" (label gpu), never as passed.
+if(CPPMPAS_ENABLE_CUDA)
+  set(GEXE $<TARGET_FILE:cppmpas_gpu>)
+else()
+  set(GEXE NONE)  # tests/gpu_test.py: no CUDA build, every GPU test is skipped
+endif()
+set(GPU ${PY} ${T}/gpu_test.py ${GEXE})
+function(cppmpas_gpu_props)  # cppmpas_gpu_props(test... [FIXTURES_REQUIRED f] [FIXTURES_SETUP f] [LABELS l])
+  cmake_parse_arguments(G "" "" "FIXTURES_REQUIRED;FIXTURES_SETUP;LABELS" ${ARGN})
+  set_tests_properties(${G_UNPARSED_ARGUMENTS} PROPERTIES SKIP_RETURN_CODE 77 LABELS "gpu;${G_LABELS}")
+  if(G_FIXTURES_REQUIRED)
+    set_tests_properties(${G_UNPARSED_ARGUMENTS} PROPERTIES FIXTURES_REQUIRED "${G_FIXTURES_REQUIRED}")
+  endif()
+  if(G_FIXTURES_SETUP)
+    set_tests_properties(${G_UNPARSED_ARGUMENTS} PROPERTIES FIXTURES_SETUP "${G_FIXTURES_SETUP}")
+  endif()
+endfunction()
+# the device and that the kernels run on it (backend, compute capability, driver and runtime are printed)
+add_test(NAME gpu_device COMMAND ${GPU} device)
+# no visible device: cppmpas_gpu exits 77 with a SKIP message (a skip, not a pass)
+add_test(NAME gpu_skip_without_device COMMAND ${GPU} no-device)
+cppmpas_gpu_props(gpu_device gpu_skip_without_device)
+# the libm / libmvec wrappers on the device against the host, plain and negated arguments, special values
+# included: non-NaN results bit-identical, NaN-ness identical, NaN signs / payloads as recorded for the card
+if(CPPMPAS_ENABLE_CUDA)
+  add_executable(test_gpu_libm test_gpu_libm.cu)
+  target_link_libraries(test_gpu_libm PRIVATE cppmpas_cuda)
+  set_target_properties(test_gpu_libm PROPERTIES CUDA_SEPARABLE_COMPILATION ON CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+  add_test(NAME gpu_libm COMMAND test_gpu_libm 200000)
+else()
+  add_test(NAME gpu_libm COMMAND ${GPU} device)
+endif()
+cppmpas_gpu_props(gpu_libm)
+# atm_mpas_init_block on the GPU: every initdump field of MW, SC and JW against MPAS, and against the CPU build
+foreach(case MW SC JW)
+  add_test(NAME gpu_initdump_run_${case} COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+    "mkdir -p '${W}' && rm -f '${W}/gpu_initdump_${case}.nc' && '${GEXE}' init '${DUMPINIT_${case}}' '${W}/gpu_initdump_${case}.nc' --namelist '${DUMPREF_${case}}/steps/namelist.atmosphere' --scalars ${SCAL_${case}} --fields ${INITDUMP_LIST}")
+  cppmpas_gpu_props(gpu_initdump_run_${case} FIXTURES_SETUP gpu_initdump_${case})
+  foreach(f IN LISTS INITDUMP_FIELDS)
+    add_test(NAME gpu_initdump_${case}_${f} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py
+      ${DUMPREF_${case}}/steps/initdump.nc ${W}/gpu_initdump_${case}.nc ${f})
+    cppmpas_gpu_props(gpu_initdump_${case}_${f} FIXTURES_REQUIRED gpu_initdump_${case})
+  endforeach()
+  add_test(NAME gpu_initdump_vs_cpu_${case} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py
+    ${W}/initdump_${case}.nc ${W}/gpu_initdump_${case}.nc ${INITDUMP_LIST})
+  cppmpas_gpu_props(gpu_initdump_vs_cpu_${case} FIXTURES_REQUIRED "gpu_initdump_${case};initdump_${case}")
+endforeach()
+# the dycore on the GPU: ten MW steps, every step file against MPAS (per field, and the whole directory through
+# tools/mpas_compare.py) and the whole directory against the CPU build's
+add_test(NAME gpu_dycore_run_MW COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/gpu_dycore_MW' && mkdir -p '${W}/gpu_dycore_MW' && '${GEXE}' run '${INIT_MW}' '${W}/gpu_dycore_MW' --namelist '${REF_MW}/steps/namelist.atmosphere' --steps 10")
+cppmpas_gpu_props(gpu_dycore_run_MW FIXTURES_SETUP gpu_dycore_MW)
+set(step 0)
+foreach(stamp IN LISTS DYCORE_MW_STAMPS)
+  foreach(f IN LISTS DYCORE_MW_FIELDS)
+    add_test(NAME gpu_dycore_MW_step${step}_${f} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py
+      ${REF_MW}/steps/step.0000-01-01_${stamp}.nc ${W}/gpu_dycore_MW/step.0000-01-01_${stamp}.nc ${f})
+    cppmpas_gpu_props(gpu_dycore_MW_step${step}_${f} FIXTURES_REQUIRED gpu_dycore_MW)
+  endforeach()
+  math(EXPR step "${step} + 1")
+endforeach()
+add_test(NAME gpu_dycore_MW_mpas_compare COMMAND ${GPU} -- ${PY} ${T}/dycore_compare.py ${CPPMPAS_MPAS_COMPARE}
+  ${REF_MW}/steps ${W}/gpu_dycore_MW ${W}/gpu_dycore_MW_compare.json 110)
+add_test(NAME gpu_dycore_MW_vs_cpu COMMAND ${GPU} -- ${PY} ${T}/dycore_compare.py ${CPPMPAS_MPAS_COMPARE}
+  ${W}/dycore_MW ${W}/gpu_dycore_MW ${W}/gpu_dycore_MW_vs_cpu.json 110)
+cppmpas_gpu_props(gpu_dycore_MW_mpas_compare FIXTURES_REQUIRED gpu_dycore_MW)
+cppmpas_gpu_props(gpu_dycore_MW_vs_cpu FIXTURES_REQUIRED "gpu_dycore_MW;dycore_MW")
+# 301 steps (labels gpu, long): the 30-min output record and the 30:06 restart of the forecast run, as on the CPU
+add_test(NAME gpu_dycore_run_long_MW COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/gpu_dycore_long_MW' && mkdir -p '${W}/gpu_dycore_long_MW' && '${GEXE}' run '${INIT_MW}' '${W}/gpu_dycore_long_MW' --namelist '${REF_MW}/steps/namelist.atmosphere' --steps 301 --every 0 --write-at 300,301 --write-fields ${DYCORE_LONG_LIST}")
+cppmpas_gpu_props(gpu_dycore_run_long_MW FIXTURES_SETUP gpu_dycore_long_MW LABELS long)
+set_tests_properties(gpu_dycore_run_long_MW PROPERTIES TIMEOUT 1800)
+foreach(f IN LISTS DYCORE_RESTART_FIELDS)
+  add_test(NAME gpu_dycore_MW_restart_${f} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py ${RST_MW}
+    ${W}/gpu_dycore_long_MW/state.0000-01-01_00.30.06.nc ${f})
+  cppmpas_gpu_props(gpu_dycore_MW_restart_${f} FIXTURES_REQUIRED gpu_dycore_long_MW LABELS long)
+endforeach()
+foreach(f IN LISTS DYCORE_OUTPUT_FIELDS)
+  add_test(NAME gpu_dycore_MW_output30_${f} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py ${REF_MW}/forecast/output.nc
+    ${W}/gpu_dycore_long_MW/state.0000-01-01_00.30.00.nc ${f} --record 1)
+  cppmpas_gpu_props(gpu_dycore_MW_output30_${f} FIXTURES_REQUIRED gpu_dycore_long_MW LABELS long)
+endforeach()
+# 600 steps (labels gpu, long): the 60-min output record (record 2 of the forecast run's output.nc)
+add_test(NAME gpu_dycore_run_60min_MW COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/gpu_dycore_60min_MW' && mkdir -p '${W}/gpu_dycore_60min_MW' && '${GEXE}' run '${INIT_MW}' '${W}/gpu_dycore_60min_MW' --namelist '${REF_MW}/steps/namelist.atmosphere' --steps 600 --every 0 --write-at 600 --write-fields ${DYCORE_LONG_LIST}")
+cppmpas_gpu_props(gpu_dycore_run_60min_MW FIXTURES_SETUP gpu_dycore_60min_MW LABELS long)
+set_tests_properties(gpu_dycore_run_60min_MW PROPERTIES TIMEOUT 3600)
+foreach(f IN LISTS DYCORE_OUTPUT_FIELDS)
+  add_test(NAME gpu_dycore_MW_output60_${f} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py ${REF_MW}/forecast/output.nc
+    ${W}/gpu_dycore_60min_MW/state.0000-01-01_01.00.00.nc ${f} --record 2)
+  cppmpas_gpu_props(gpu_dycore_MW_output60_${f} FIXTURES_REQUIRED gpu_dycore_60min_MW LABELS long)
+endforeach()
