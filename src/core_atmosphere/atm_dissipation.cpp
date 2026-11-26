@@ -122,7 +122,7 @@ void u_dissipation_3d(const Mesh& m, const DissipationArgs& a, const FArray<real
   if (a.v_mom_eddy_visc2 > 0.0) {  // DM:816
     if (!a.config_mix_full)
       throw Error("u_dissipation_3d: vertical mixing of the perturbation state (DM:848-884) is not ported");
-    for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge) {  // DM:823-844
+    for (int iEdge = 1; iEdge <= m.nEdgesSolve(); ++iEdge) {  // DM:823-844 (edgeSolveStart..edgeSolveEnd)
       const int cell1 = m.cellsOnEdge(1, iEdge);
       const int cell2 = m.cellsOnEdge(2, iEdge);
       for (int k = 2; k <= nVertLevels - 1; ++k) {
@@ -181,7 +181,7 @@ void w_dissipation_3d(const Mesh& m, const DissipationArgs& a, FArray<real>& del
     }
   }
   if (a.v_mom_eddy_visc2 > 0.0) {  // DM:1102-1119
-    for (int iCell = 1; iCell <= m.nCells; ++iCell) {
+    for (int iCell = 1; iCell <= m.nCellsSolve(); ++iCell) {  // DM:1107 (cellSolveStart..cellSolveEnd)
       for (int k = 2; k <= nVertLevels; ++k) {
         tend_w_euler(k, iCell) = tend_w_euler(k, iCell) + a.v_mom_eddy_visc2 * 0.5 *
                                                               (rho_zz(k, iCell) + rho_zz(k - 1, iCell)) *
@@ -236,7 +236,7 @@ void scalar_dissipation_3d_les(const Mesh& m, const DissipationArgs& a, FArray<r
   if (a.v_theta_eddy_visc2 > 0.0) {  // DM:1414
     if (!a.config_mix_full)
       throw Error("scalar_dissipation_3d_les: mixing of the perturbation from t_init (DM:1442-1466) is not ported");
-    for (int iCell = 1; iCell <= m.nCells; ++iCell) {  // DM:1421-1438
+    for (int iCell = 1; iCell <= m.nCellsSolve(); ++iCell) {  // DM:1421-1438 (cellSolveStart..cellSolveEnd)
       for (int k = 2; k <= nVertLevels - 1; ++k) {
         const real z1 = m.zgrid(k - 1, iCell);
         const real z2 = m.zgrid(k, iCell);

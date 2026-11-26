@@ -227,14 +227,16 @@ void atm_compute_moist_coefficients(const Mesh& m, DycoreFields& f) {
       const real qtotal = 0.5 * (f.qtot(k, iCell) + f.qtot(k - 1, iCell));
       f.cqw(k, iCell) = 1.0 / (1.0 + qtotal);
     }
-  for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge) {  // :3265-3279 (cell1 <= nCellsSolve always true, one rank)
+  for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge) {  // :3265-3279
     const int cell1 = m.cellsOnEdge(1, iEdge);
     const int cell2 = m.cellsOnEdge(2, iEdge);
-    for (int k = 1; k <= nVertLevels; ++k) {
-      real qtotal = 0.0;
-      for (int iq = f.moist_start; iq <= f.moist_end; ++iq)
-        qtotal = qtotal + 0.5 * (scalars(iq, k, cell1) + scalars(iq, k, cell2));
-      f.cqu(k, iEdge) = 1.0 / (1.0 + qtotal);
+    if (cell1 <= m.nCellsSolve() || cell2 <= m.nCellsSolve()) {  // :3268 (always true on one rank)
+      for (int k = 1; k <= nVertLevels; ++k) {
+        real qtotal = 0.0;
+        for (int iq = f.moist_start; iq <= f.moist_end; ++iq)
+          qtotal = qtotal + 0.5 * (scalars(iq, k, cell1) + scalars(iq, k, cell2));
+        f.cqu(k, iEdge) = 1.0 / (1.0 + qtotal);
+      }
     }
   }
 }
@@ -604,6 +606,7 @@ void atm_advance_acoustic_step(const Mesh& m, const State& s, const Diag& d, Dyc
     for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge) {
       const int cell1 = m.cellsOnEdge(1, iEdge);
       const int cell2 = m.cellsOnEdge(2, iEdge);
+      if (!(cell1 <= m.nCellsSolve() || cell2 <= m.nCellsSolve())) continue;  // :3901 (always true on one rank)
       for (int k = 1; k <= nVertLevels; ++k) {
         real pgrad = ((rtheta_pp(k, cell2) - rtheta_pp(k, cell1)) * m.invDcEdge(iEdge)) / (.5 * (zz(k, cell2) + zz(k, cell1)));
         pgrad = cqu(k, iEdge) * 0.5 * c2 * (exner(k, cell1) + exner(k, cell2)) * pgrad;
@@ -614,6 +617,9 @@ void atm_advance_acoustic_step(const Mesh& m, const State& s, const Diag& d, Dyc
     }
   } else {  // :3924-3950
     for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge) {
+      const int cell1 = m.cellsOnEdge(1, iEdge);
+      const int cell2 = m.cellsOnEdge(2, iEdge);
+      if (!(cell1 <= m.nCellsSolve() || cell2 <= m.nCellsSolve())) continue;  // :3934 (always true on one rank)
       for (int k = 1; k <= nVertLevels; ++k) ru_p(k, iEdge) = dts * tend_ru(k, iEdge);
       for (int k = 1; k <= nVertLevels; ++k) ruAvg(k, iEdge) = ru_p(k, iEdge);
     }
@@ -701,6 +707,7 @@ void atm_divergence_damping_3d(const DycoreConfig& cfg, const Mesh& m, const Sta
   for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge) {  // :4162-4188
     const int cell1 = m.cellsOnEdge(1, iEdge);
     const int cell2 = m.cellsOnEdge(2, iEdge);
+    if (!(cell1 <= m.nCellsSolve() || cell2 <= m.nCellsSolve())) continue;  // :4168 (always true on one rank)
     for (int k = 1; k <= nVertLevels; ++k) {
       const real divCell1 = -(f.rtheta_pp(k, cell1) - f.rtheta_pp_old(k, cell1));
       const real divCell2 = -(f.rtheta_pp(k, cell2) - f.rtheta_pp_old(k, cell2));
