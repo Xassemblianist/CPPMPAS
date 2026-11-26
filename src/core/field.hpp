@@ -60,12 +60,13 @@ template <class T> class FArray {
     std::size_t n = 1;
     for (int e : extents) {
       if (e < 0) throw Error("FArray: negative extent");
-      if (e != 0 && n > std::numeric_limits<std::size_t>::max() / static_cast<std::size_t>(e))
+      // the bytes, not only the elements: a vector holds at most max_size() elements (PTRDIFF_MAX / sizeof(T))
+      if (e != 0 && n > data_.max_size() / static_cast<std::size_t>(e))
         throw Error("FArray: the number of elements overflows");
       n *= static_cast<std::size_t>(e);
     }
+    data_.assign(n, fill);  // first: if it throws (std::bad_alloc), the array keeps its old extents and data
     ext_ = std::move(extents);
-    data_.assign(n, fill);
   }
   int rank() const { return static_cast<int>(ext_.size()); }
   int extent(int d) const {  // d is 0-based

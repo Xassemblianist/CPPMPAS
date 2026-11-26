@@ -36,7 +36,7 @@ constexpr real kPi = 0x1.921fb54442d18p+1;
 
 }  // namespace
 
-void allocate_init_fields(Mesh& m, State& s, Diag& d) {
+void allocate_init_fields(Mesh& m, State& s, Diag& d, bool restart) {
   if (m.nVertLevels <= 0) throw Error("atm_mpas_init_block: the mesh has no vertical levels (not an init file)");
   const int nC = m.nCells + 1, nE = m.nEdges + 1, nV = m.nVertices + 1, nL = m.nVertLevels, nL1 = m.nVertLevels + 1;
   // Registry default value 0 / 0.0 for all of them (no default_value, gen_inc.c:615-630; specZoneMask* "0.0")
@@ -68,6 +68,21 @@ void allocate_init_fields(Mesh& m, State& s, Diag& d) {
   m.specZoneMaskEdge.allocate({nE}, 0.0);
   m.specZoneMaskVertex.allocate({nV}, 0.0);
   m.nearestRelaxationCell.allocate({nC}, 0);
+  // a restart run read these from the restart stream (Registry.xml:670-690) into the arrays MPAS allocated
+  if (restart) {
+    struct Read { const char* name; const FArray<real>* a; std::vector<int> ext; };
+    const Read read[] = {{"theta_m", &s.theta_m, {nL, nC}},         {"rho_zz", &s.rho_zz, {nL, nC}},
+                         {"ru", &d.ru, {nL, nE}},                   {"rw", &d.rw, {nL1, nC}},
+                         {"rho_p", &d.rho_p, {nL, nC}},             {"rtheta_base", &d.rtheta_base, {nL, nC}},
+                         {"rtheta_p", &d.rtheta_p, {nL, nC}},       {"exner", &d.exner, {nL, nC}},
+                         {"exner_base", &d.exner_base, {nL, nC}},   {"pressure_p", &d.pressure_p, {nL, nC}},
+                         {"pressure_base", &d.pressure_base, {nL, nC}}};
+    for (const auto& r : read)
+      if (r.a->extents() != r.ext)
+        throw Error(std::string("atm_mpas_init_block: config_do_restart = true, but ") + r.name +
+                    " was not read from the restart stream");
+    return;
+  }
   s.theta_m.allocate({nL, nC}, 0.0);
   s.rho_zz.allocate({nL, nC}, 0.0);
   d.ru.allocate({nL, nE}, 0.0);
@@ -164,9 +179,13 @@ void atm_initialize_deformation_weights(Mesh& m, int nCells, bool on_a_sphere, r
 
   parallel_for(1, nCells, [=, m = view(m)] CPPMPAS_LAMBDA(int iCell) {
     real xc[26], yc[26], zc[26], thetav[26], thetat[26], dl_sphere[26], xp[26], yp[26];  // dimension(25), 1-based
-    std::array<int, 26> cell_list{};
-    // :1702-1706; MPAS's dimension(25) holds the cell and at most 24 neighbours: checked before the copy
-    const int n = m.nEdgesOnCell(iCell) + 1;
+    int cell_list[26] = {};
+    // :1702-1706; MPAS's dimension(25) holds the cell and at most 24 neighbours: checked before the copy. The
+    // (maxEdges, nCells+1) arrays hold nEdgesOnCell in 1..maxEdges (checked by the reader; this routine is public)
+    const int ne = m.nEdgesOnCell(iCell);
+    if (ne < 1 || ne > m.maxEdges)
+      return kernel_fail("atm_initialize_deformation_weights: nEdgesOnCell(", iCell, ") outside 1..maxEdges");
+    const int n = ne + 1;
     if (n > 25) return kernel_fail("atm_initialize_deformation_weights: nEdgesOnCell > 24 overflows MPAS's dimension(25)");
     cell_list[1] = iCell;
     for (int i = 2; i <= n; ++i) cell_list[i] = m.cellsOnCell(i - 1, iCell);
@@ -523,8 +542,9 @@ void mpas_atm_setup_bdy_masks(Mesh& m) {
 // src/core_atmosphere/dynamics/mpas_atm_time_integration.F:7440-7665, cellStart..cellEnd = 1..nCells,
 // edgeStart..edgeEnd = 1..nEdges (one thread). The exner / exner_base loop (:7633-7638) is vectorised over k:
 // levels (1,2), (3,4), ... call _ZGVbN2vv_pow (one lane each), an odd last level pow@plt (reference executable,
-// atm_init_coupled_diagnostics +0x41b0 ... +0x43af; the scalar loop +0x4a37 is taken only for nVertLevels = 1 or
-// overlapping arrays).
+// atm_init_coupled_diagnostics +0x41b0 ... +0x43af). The scalar loop +0x4a37 (pow@plt on every level) is taken for
+// nVertLevels <= 2 (+0x3ff0: cmpl $0x1 against nVertLevels - 1, jbe, so the vector loop needs at least 3 levels) or
+// overlapping arrays.
 void atm_init_coupled_diagnostics(const Mesh& m, State& s, Diag& d) {
   const int nVertLevels = m.nVertLevels;
   int index_qv = 0;
@@ -587,8 +607,8 @@ void atm_init_coupled_diagnostics(const Mesh& m, State& s, Diag& d) {
       d.exner(k, iCell) = vector ? libm::mvec_pow(xe, rcv) : libm::pow(xe, rcv);
       d.exner_base(k, iCell) = vector ? libm::mvec_pow(xb, rcv) : libm::pow(xb, rcv);
     };
-    if (nVertLevels == 1) {
-      lane(1, false);
+    if (nVertLevels <= 2) {
+      for (int k = 1; k <= nVertLevels; ++k) lane(k, false);
       return;
     }
     int k = 1;
@@ -610,8 +630,8 @@ void atm_init_coupled_diagnostics(const Mesh& m, State& s, Diag& d) {
 
 // mpas_atm_core.F:366-617, in MPAS's order
 void atm_mpas_init_block(Mesh& m, State& s, Diag& d, const InitConfig& cfg, std::vector<std::string>& log) {
-  if (cfg.config_do_restart) throw Error("atm_mpas_init_block: config_do_restart = true is not ported");
-  allocate_init_fields(m, s, d);
+  if (cfg.config_do_DAcycling) throw Error("atm_mpas_init_block: config_do_DAcycling = true is not ported");
+  allocate_init_fields(m, s, d, cfg.config_do_restart);
   allocate_solve_diag_fields(m, d);
   atm_compute_signs(m, log);                                                       // :427
   atm_compute_inverses(m);                                                         // :459-473
@@ -622,7 +642,9 @@ void atm_mpas_init_block(Mesh& m, State& s, Diag& d, const InitConfig& cfg, std:
   allocate_solve_diag_work(m, work);  // :492-499 module ke_vertex / ke_edge, garbage column zeroed
   // :502-517 thread ranges: one thread, cellThreadStart(1) = 1, cellThreadEnd(1) = nCells etc.
   // (mpas_atm_threading.F:114-125); :519 mpas_atm_pre_compute_solve_diagnostics only moves data for OpenACC
-  atm_init_coupled_diagnostics(m, s, d);  // :522-530 (cold start; the call at :523)
+  // :522-530: a cold start (or DA cycling) couples the state read from the input stream; a restart run keeps the
+  // coupled fields the restart stream holds
+  if (!cfg.config_do_restart || (cfg.config_do_restart && cfg.config_do_DAcycling)) atm_init_coupled_diagnostics(m, s, d);
   atm_compute_solve_diagnostics(cfg.config_dt, cfg.config_apvm_upwinding, m, s.rho_zz, s.u, d, work, 1, m.nCells, 1,
                                 m.nVertices, 1, m.nEdges);  // :532-535, time level 1, dt = config_dt, no rk_step
   // :538 mpas_atm_post_compute_solve_diagnostics (OpenACC data only); :540-541 deallocate ke_vertex / ke_edge
@@ -752,6 +774,8 @@ const std::vector<std::string>& init_block_computed_fields() {
 
 bool mesh_scaling_unverified(const Mesh& m, const InitConfig& cfg) {
   if (!cfg.config_h_ScaleWithMesh) return false;
+  if (!m.meshDensity.allocated() || m.meshDensity.extent(0) < m.nCells)
+    throw Error("mesh_scaling_unverified: meshDensity was not read");
   for (int iCell = 1; iCell <= m.nCells; ++iCell)
     if (m.meshDensity(iCell) != 1.0) return true;
   return false;
@@ -762,8 +786,8 @@ std::vector<std::string> init_block_verified_fields(int nVertLevels, bool scaled
   std::vector<std::string> v = {"edgeNormalVectors", "localVerticalUnitVectors", "cellTangentPlane",
                                 "coeffs_reconstruct", "dss", "nominalMinDc"};
   const std::vector<std::string>& all = init_block_computed_fields();
-  // exner and what uses it: the last level of an odd nVertLevels goes through the scalar pow
-  // (atm_init_coupled_diagnostics), which no reference exercises
+  // exner and what uses it: the last level of an odd nVertLevels, and every level of nVertLevels <= 2, go through the
+  // scalar pow (atm_init_coupled_diagnostics), which no reference exercises
   const std::vector<std::string> pow_tail = {"exner", "exner_base", "pressure_p", "pressure_base"};
   // the mesh scaling pows (atm_compute_mesh_scaling) only ever had the argument 1 in a reference (JW)
   const std::vector<std::string> scaling = {"meshScalingDel2", "meshScalingDel4", "meshScalingRegionalCell",
@@ -771,7 +795,7 @@ std::vector<std::string> init_block_verified_fields(int nVertLevels, bool scaled
   for (const auto& n : all) {
     if (std::find(v.begin(), v.end(), n) != v.end()) continue;
     if (scaled_mesh && std::find(scaling.begin(), scaling.end(), n) != scaling.end()) continue;
-    if (nVertLevels % 2 != 0 && std::find(pow_tail.begin(), pow_tail.end(), n) != pow_tail.end()) continue;
+    if ((nVertLevels % 2 != 0 || nVertLevels <= 2) && std::find(pow_tail.begin(), pow_tail.end(), n) != pow_tail.end()) continue;
     v.push_back(n);
   }
   return v;

@@ -14,6 +14,8 @@
 // init runs what atm_core_init does to the fields of a cold start (core_atmosphere/atm_init.hpp: len_disp, the
 // compatibility checks, atm_mpas_init_block, xtime) on an init file and writes the
 // given fields as MPAS writes them to a history / restart file (global order, Registry layout).
+// With config_do_restart = true in the namelist, run's <init> is a restart file, read as MPAS reads its restart stream
+// at config_start_time (io/mpas_restart.hpp), and the run continues from it.
 // run integrates N time steps of the dycore (core_atmosphere/atm_dycore.hpp: atm_core_init, then per step
 // atm_timestep, the time-level shift and atm_compute_output_diagnostics, as atm_core_run does) and writes, at the
 // start and after every step, the fields of the references' "bisection" stream (xtime, Time, u, w, rho_zz, theta_m,
@@ -37,6 +39,7 @@
 #include "core_atmosphere/atm_dycore.hpp"
 #include "core_atmosphere/atm_init.hpp"
 #include "io/mpas_reader.hpp"
+#include "io/mpas_restart.hpp"
 #include "io/mpas_writer.hpp"
 #include "io/registry.hpp"
 
@@ -224,6 +227,9 @@ int run(int argc, char** argv) {
                   "[--unverified]");
     a.init = true;
     InitConfig cfg = read_init_config(a.namelist);
+    if (cfg.config_do_restart)
+      throw Error("config_do_restart = true: init reads an input-stream file (a cold start); a restart run is "
+                  "'cppmpas run' on the restart file");
     // the scalars MPAS allocates are those the namelist's packages activate (Registry.xml:1701-1748)
     const std::vector<std::string> want = active_scalars(cfg);
     if (a.scalars != want) {
@@ -255,14 +261,26 @@ int run(int argc, char** argv) {
     InitConfig cfg = read_init_config(a.namelist);
     const std::vector<std::string> want = active_scalars(cfg);
     if (a.scalars != want) throw Error("--scalars must be the scalars the namelist activates");
-    MpasInput in = load(a, a.pos[0]);
+    // config_do_restart: <init> is the restart file, read as the restart stream (io/mpas_restart.hpp)
+    RestartInput rst;
+    if (cfg.config_do_restart) {
+      rst = read_mpas_restart(a.pos[0], a.scalars, atm_start_time_stamp(cfg));
+      for (const auto& w : rst.in.warnings) std::cerr << "MPAS warning: " << w << "\n";
+    } else {
+      rst.in = load(a, a.pos[0]);
+    }
+    MpasInput& in = rst.in;
+    const std::string xtime_read = in.state.xtime;
     std::vector<std::string> log;
     atm_core_init(in.mesh, in.state, in.diag, cfg, log);
     for (const auto& l : log) std::cerr << "MPAS log: " << l << "\n";
     const DycoreConfig dcfg = read_dycore_config(a.namelist, cfg);
     check_dycore_supported(dcfg, in.mesh, in.state);  // before any file is written
+    // the input stream, too, is read at the start time (the restart reader checks its own)
+    if (!cfg.config_do_restart) check_stream_time(a.pos[0], xtime_read, atm_start_time_stamp(cfg));
     DycoreFields f;
     allocate_dycore_fields(in.mesh, in.state, f);
+    if (cfg.config_do_restart) restart_dycore_fields(rst, f);
     const std::string start = in.state.xtime.substr(0, 19);
     std::vector<std::string> fields = {"xtime", "Time", "u", "w", "rho_zz", "theta_m", "rho", "theta", "pressure_p"};
     for (const auto& sn : in.state.scalar_names) fields.push_back(sn);
@@ -271,15 +289,18 @@ int run(int argc, char** argv) {
       if (n > a.steps) throw Error("--write-at " + std::to_string(n) + " is after the last step");
     for (const auto& w : a.write_fields) (void)field_ref(in, w);  // a field without a port: refused before the run
     auto write_step = [&](long n) {
-      atm_compute_output_diagnostics(in.mesh, in.state);  // mpas_atm_core.F:686 (t = 0) and :848
-      in.state.Time.allocate({1}, f.Time1);
+      const bool step_file = a.every > 0 && n % a.every == 0;
+      const bool state_file = std::find(a.write_at.begin(), a.write_at.end(), n) != a.write_at.end();
+      if (!step_file && !state_file) return;
+      // mpas_atm_core.F:686 (t = 0) and :848: only when an output stream writes
+      atm_compute_output_diagnostics(in.mesh, in.state, in.diag);
       std::string ts = in.state.xtime.substr(0, 19);
       for (auto& c : ts)
         if (c == ':') c = '.';
       HistoryOptions opt;
       opt.file_id = a.file_id;
-      if (a.every > 0 && n % a.every == 0) write_history(in, a.pos[1] + "/step." + ts + ".nc", fields, opt);
-      if (std::find(a.write_at.begin(), a.write_at.end(), n) != a.write_at.end())
+      if (step_file) write_history(in, a.pos[1] + "/step." + ts + ".nc", fields, opt);
+      if (state_file)
         write_history(in, a.pos[1] + "/state." + ts + ".nc", a.write_fields, opt);
     };
     write_step(0);

@@ -32,12 +32,13 @@ const std::vector<std::string> kMeshInitOnly = {
     "bdyMaskEdge", "bdyMaskVertex", "cf1", "cf2", "cf3", "zgrid", "rdzw", "dzu", "rdzu", "fzm", "fzp", "zxu", "zz",
     "zb", "zb3", "dss", "deriv_two", "coeffs_reconstruct"};
 const std::vector<std::string> kState = {"initial_time", "xtime", "u_init", "v_init", "t_init", "u", "w", "rho",
-                                         "theta", "rho_base", "theta_base", "surface_pressure"};
+                                         "theta", "rho_base", "theta_base", "surface_pressure", "Time"};
 // Variables of the atmosphere input stream that MPAS reads but the dycore does not use in the verified cases
 // (physics suite none, SC with Kessler microphysics only): the DO_PHYSICS fields of the invariant and
-// input streams (Registry.xml:567-597, 625-646), the CF time coordinate "Time" and the diagnostic "relhum".
+// input streams (Registry.xml:567-597, 625-646) and the diagnostic "relhum". (Time, Registry.xml:615, is read:
+// it is time level 1 of the state's CF time, mpas_atm_core.F:137.)
 const std::set<std::string> kInputNotUsed = {
-    "Time", "relhum", "isltyp", "ivgtyp", "mminlu", "isice_lu", "iswater_lu", "landmask", "shdmin", "shdmax",
+    "relhum", "isltyp", "ivgtyp", "mminlu", "isice_lu", "iswater_lu", "landmask", "shdmin", "shdmax",
     "snoalb", "albedo12m", "greenfrac", "var2d", "con", "oa1", "oa2", "oa3", "oa4", "ol1", "ol2", "ol3", "ol4",
     "soilcomp", "soilcl1", "soilcl2", "soilcl3", "soilcl4", "sfc_albbck", "skintemp", "snow", "snowc", "snowh",
     "sst", "tmn", "vegfra", "seaice", "xice", "xland", "u10", "v10", "q2", "t2m", "precipw", "dzs", "sh2o", "smois",
@@ -188,7 +189,7 @@ double real_att(const NcFile& f, const std::string& name) {
 }
 
 // Fortran's trim: trailing blanks only (SMIOLf_inquire_att copies every byte of the attribute, NULs included,
-// smiolf.F90:1630-1631)
+// smiolf.F90:1632-1633)
 std::string rtrim(std::string s) {
   while (!s.empty() && s.back() == ' ') s.pop_back();
   return s;
@@ -489,7 +490,7 @@ FieldRef field_ref(MpasInput& in, const std::string& name) {
   CPPMPAS_D(exner_base) CPPMPAS_D(pressure_p) CPPMPAS_D(pressure_base)
   CPPMPAS_D(v) CPPMPAS_D(rho_edge) CPPMPAS_D(vorticity) CPPMPAS_D(divergence) CPPMPAS_D(ke) CPPMPAS_D(pv_edge)
   CPPMPAS_D(pv_vertex) CPPMPAS_D(pv_cell) CPPMPAS_D(gradPVt) CPPMPAS_D(gradPVn) CPPMPAS_D(uReconstructX)
-  CPPMPAS_D(uReconstructY) CPPMPAS_D(uReconstructZ) CPPMPAS_D(uReconstructZonal) CPPMPAS_D(uReconstructMeridional)
+  CPPMPAS_D(uReconstructY) CPPMPAS_D(uReconstructZ) CPPMPAS_D(uReconstructZonal) CPPMPAS_D(uReconstructMeridional) CPPMPAS_D(pressure)
 #undef CPPMPAS_D
 #undef CPPMPAS_R
 #undef CPPMPAS_I
@@ -506,6 +507,12 @@ FieldRef field_ref(MpasInput& in, const std::string& name) {
   if (!find_registry_var(name)) throw Error("variable '" + name + "' is not defined in MPAS-Atmosphere's Registry");
   throw Error("variable '" + name + "' has no CPPMPAS port (not read or written)");
 }
+
+void read_registry_field(const NcFile& f, const Mesh& m, const std::string& name, FArray<real>& a) {
+  read_into(f, m, registry_var(name), a);
+}
+
+void read_field_ref(const NcFile& f, MpasInput& in, const std::string& name) { read_field(f, in, name); }
 
 MpasInput read_mpas_grid(const std::string& path) {
   const NcFile f = NcFile::open_read(path);

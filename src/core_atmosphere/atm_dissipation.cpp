@@ -1,21 +1,71 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// src/core_atmosphere/dynamics/mpas_atm_dissipation_models.F (DM), the branches the mountain-wave reference takes.
-// Reference object code (bin/atmosphere_model of the mpas-build asset 153c7206...): u_dissipation_3d (0x25bf50),
-// w_dissipation_3d (0x25a1d0) and scalar_dissipation_3d_les (0x256140) have no FMA and no libm call on these paths
-// (u_dissipation_3d's one sincos@plt is DM:860-861, the perturbation branch, not taken); every statement is the
-// Fortran one evaluated left to right. Each loop over edges / cells is a kernel, one thread per element
-// (core/backend.hpp), the k loop and the edgesOnCell loop inside the thread in MPAS's order.
+// src/core_atmosphere/dynamics/mpas_atm_dissipation_models.F (DM), the branches the mountain-wave and JW references
+// take. Reference object code (bin/atmosphere_model of the mpas-build asset 153c7206...): u_dissipation_3d
+// (0x25bf50-0x25eff0), w_dissipation_3d (0x25a1d0) and scalar_dissipation_3d_les (0x256140) have no FMA, no ymm
+// register and no libm call on these paths, the 4th-order filters included (u_dissipation_3d's one sincos@plt is
+// DM:860-861, the perturbation branch, not taken); every statement is the Fortran one evaluated left to right.
+// smagorinsky_2d (0x263480-0x264730) calls only malloc / memset / free; its k loop of DM:183-191 is 2-lane SSE2
+// (sqrtpd, then minpd with the bound as the source operand, 0x264447-0x26444f) with a scalar epilogue for an odd
+// nVertLevels (sqrtsd / minsd, 0x264507-0x26450f): the same per-element operations.
+// Each loop over cells / edges / vertices is a kernel, one thread per element (core/backend.hpp), the k loop and the
+// neighbour loops inside the thread in MPAS's order; smagorinsky_2d's work arrays dudx ... dvdy are the thread's own
+// columns (zeroed per cell at DM:159-164, as MPAS does).
 #include "core_atmosphere/atm_dissipation.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 #include "core/error.hpp"
 #include "core/views.hpp"
 
 namespace cppmpas {
 
+// DM:119-204 (cellStart..cellEnd = every cell on one thread)
+void smagorinsky_2d(const Mesh& m, FArray<real>& kdiff, const FArray<real>& u, const FArray<real>& v, real c_s,
+                    real config_len_disp, real invDt, real config_visc4_2dsmag, real& h_mom_eddy_visc4,
+                    real& h_theta_eddy_visc4) {
+  const int nVertLevels = m.nVertLevels;
+  fits_column(nVertLevels, "smagorinsky_2d");
+  // (c_s*config_len_disp)**2 and (0.01*config_len_disp**2)*invDt: integer powers as multiplies (0x26437a-0x26438e;
+  // the reference forms (len*len)*0.01, the same product)
+  const real cl = c_s * config_len_disp;
+  const real kfac = cl * cl;
+  const real kmax = (0.01 * (config_len_disp * config_len_disp)) * invDt;
+  parallel_for(1, m.nCells, [=, m = view(m), kdiff = view(kdiff), u = view(u), v = view(v)] CPPMPAS_LAMBDA(int iCell) {
+    Column<real> dudx(nVertLevels + 1), dudy(nVertLevels + 1), dvdx(nVertLevels + 1), dvdy(nVertLevels + 1);
+    for (int k = 1; k <= nVertLevels; ++k) {  // DM:159-164
+      dudx[k] = 0.0;
+      dudy[k] = 0.0;
+      dvdx[k] = 0.0;
+      dvdy[k] = 0.0;
+    }
+    for (int iEdge = 1; iEdge <= m.nEdgesOnCell(iCell); ++iEdge) {  // DM:167-179 (iEdge: the local edge number)
+      const int e = m.edgesOnCell(iEdge, iCell);
+      const real c2 = m.deformation_coef_c2(iEdge, iCell), s2 = m.deformation_coef_s2(iEdge, iCell);
+      const real cs = m.deformation_coef_cs(iEdge, iCell);
+      for (int k = 1; k <= nVertLevels; ++k) {
+        dudx[k] = dudx[k] + c2 * u(k, e) - cs * v(k, e);
+        dudy[k] = dudy[k] + cs * u(k, e) - s2 * v(k, e);
+        dvdx[k] = dvdx[k] + cs * u(k, e) + c2 * v(k, e);
+        dvdy[k] = dvdy[k] + s2 * u(k, e) + cs * v(k, e);
+      }
+    }
+    for (int k = 1; k <= nVertLevels; ++k) {  // DM:183-191
+      const real d_11 = 2 * dudx[k];
+      const real d_22 = 2 * dvdy[k];
+      const real d_12 = dudy[k] + dvdx[k];
+      const real kd = kfac * std::sqrt(0.25 * ((d_11 - d_22) * (d_11 - d_22)) + d_12 * d_12);
+      kdiff(k, iCell) = kd < kmax ? kd : kmax;  // min(kdiff, bound): minsd / minpd keep the bound for a NaN
+    }
+  });
+  // DM:199-200: config_len_disp**3 as (len*len)*len (0x264575-0x26458c)
+  h_mom_eddy_visc4 = config_visc4_2dsmag * (config_len_disp * config_len_disp * config_len_disp);
+  h_theta_eddy_visc4 = h_mom_eddy_visc4;
+}
+
 void u_dissipation_3d(const Mesh& m, const DissipationArgs& a, const FArray<real>& eddy_visc_horz,
-                      FArray<real>& delsq_u, const FArray<real>& u, const FArray<real>& divergence,
+                      FArray<real>& delsq_u, FArray<real>& delsq_vorticity, FArray<real>& delsq_divergence,
+                      const FArray<real>& u, const FArray<real>& divergence,
                       const FArray<real>& vorticity, const FArray<real>& rho_edge, FArray<real>& tend_u_euler) {
   const int nVertLevels = m.nVertLevels;
   const real tau_12_factor = 0.0;  // DM:686-687, les_model_opt = LES_MODEL_NONE
@@ -40,12 +90,50 @@ void u_dissipation_3d(const Mesh& m, const DissipationArgs& a, const FArray<real
           tend_u_euler(k, iEdge) + rho_edge(k, iEdge) * kdiffu * u_diffusion_les * m.meshScalingDel2(iEdge);
     }
   });
-  if (a.h_mom_eddy_visc4 > 0.0) throw Error("u_dissipation_3d: the 4th-order filter (DM:728-811) is not ported");
+  if (a.h_mom_eddy_visc4 > 0.0) {  // DM:728-811
+    parallel_for(1, m.nVertices, [=, m = view(m), delsq_vorticity = view(delsq_vorticity),
+                                  delsq_u = view(delsq_u)] CPPMPAS_LAMBDA(int iVertex) {  // DM:735-751
+      for (int k = 1; k <= nVertLevels; ++k) delsq_vorticity(k, iVertex) = 0.0;
+      for (int i = 1; i <= m.vertexDegree; ++i) {
+        const int iEdge = m.edgesOnVertex(i, iVertex);
+        const real edge_sign = m.invAreaTriangle(iVertex) * m.dcEdge(iEdge) * m.edgesOnVertex_sign(i, iVertex);
+        for (int k = 1; k <= nVertLevels; ++k)
+          delsq_vorticity(k, iVertex) = delsq_vorticity(k, iVertex) + edge_sign * delsq_u(k, iEdge);
+      }
+    });
+    parallel_for(1, m.nCells, [=, m = view(m), delsq_divergence = view(delsq_divergence),
+                               delsq_u = view(delsq_u)] CPPMPAS_LAMBDA(int iCell) {  // DM:754-772
+      for (int k = 1; k <= nVertLevels; ++k) delsq_divergence(k, iCell) = 0.0;
+      const real r = m.invAreaCell(iCell);
+      for (int i = 1; i <= m.nEdgesOnCell(iCell); ++i) {
+        const int iEdge = m.edgesOnCell(i, iCell);
+        const real edge_sign = r * m.dvEdge(iEdge) * m.edgesOnCell_sign(i, iCell);
+        for (int k = 1; k <= nVertLevels; ++k)
+          delsq_divergence(k, iCell) = delsq_divergence(k, iCell) + edge_sign * delsq_u(k, iEdge);
+      }
+    });
+    parallel_for(1, m.nEdgesSolve(), [=, m = view(m), delsq_divergence = view(delsq_divergence),
+                                      delsq_vorticity = view(delsq_vorticity), rho_edge = view(rho_edge),
+                                      tend_u_euler = view(tend_u_euler)] CPPMPAS_LAMBDA(int iEdge) {  // DM:781-807
+      const int cell1 = m.cellsOnEdge(1, iEdge);
+      const int cell2 = m.cellsOnEdge(2, iEdge);
+      const int vertex1 = m.verticesOnEdge(1, iEdge);
+      const int vertex2 = m.verticesOnEdge(2, iEdge);
+      const real u_mix_scale = m.meshScalingDel4(iEdge) * a.h_mom_eddy_visc4;
+      const real r_dc = u_mix_scale * a.config_del4u_div_factor * m.invDcEdge(iEdge);
+      const real r_dv = u_mix_scale * std::min(m.invDvEdge(iEdge), 4 * m.invDcEdge(iEdge));
+      for (int k = 1; k <= nVertLevels; ++k) {
+        const real u_diffusion = rho_edge(k, iEdge) * ((delsq_divergence(k, cell2) - delsq_divergence(k, cell1)) * r_dc -
+                                                       (delsq_vorticity(k, vertex2) - delsq_vorticity(k, vertex1)) * r_dv);
+        tend_u_euler(k, iEdge) = tend_u_euler(k, iEdge) - u_diffusion;  // DM:804
+      }
+    });
+  }
   if (a.v_mom_eddy_visc2 > 0.0) {  // DM:816
     if (!a.config_mix_full)
       throw Error("u_dissipation_3d: vertical mixing of the perturbation state (DM:848-884) is not ported");
-    parallel_for(1, m.nEdges, [=, m = view(m), u = view(u), rho_edge = view(rho_edge),
-                               tend_u_euler = view(tend_u_euler)] CPPMPAS_LAMBDA(int iEdge) {  // DM:823-844
+    parallel_for(1, m.nEdgesSolve(), [=, m = view(m), u = view(u), rho_edge = view(rho_edge),
+                                      tend_u_euler = view(tend_u_euler)] CPPMPAS_LAMBDA(int iEdge) {  // DM:823-844 (edgeSolveStart..edgeSolveEnd)
       const int cell1 = m.cellsOnEdge(1, iEdge);
       const int cell2 = m.cellsOnEdge(2, iEdge);
       for (int k = 2; k <= nVertLevels - 1; ++k) {
@@ -63,9 +151,7 @@ void u_dissipation_3d(const Mesh& m, const DissipationArgs& a, const FArray<real
                                      (0.5 * (zp - zm));  // DM:840-842
       }
     });
-  } else {
-    throw Error("u_dissipation_3d: v_mom_eddy_visc2 <= 0 (no vertical mixing, DM:816 not taken) is not verified");
-  }
+  }  // v_mom_eddy_visc2 <= 0: no vertical mixing (JW)
 }
 
 void w_dissipation_3d(const Mesh& m, const DissipationArgs& a, FArray<real>& delsq_w, const FArray<real>& w,
@@ -93,10 +179,24 @@ void w_dissipation_3d(const Mesh& m, const DissipationArgs& a, FArray<real>& del
       }
     }
   });
-  if (a.h_mom_eddy_visc4 > 0.0) throw Error("w_dissipation_3d: the 4th-order filter (DM:1073-1100) is not ported");
+  if (a.h_mom_eddy_visc4 > 0.0) {  // DM:1073-1100 (cellSolveStart..cellSolveEnd)
+    parallel_for(1, m.nCellsSolve(), [=, m = view(m), delsq_w = view(delsq_w),
+                                      tend_w_euler = view(tend_w_euler)] CPPMPAS_LAMBDA(int iCell) {
+      const real r_areaCell = a.h_mom_eddy_visc4 * m.invAreaCell(iCell);
+      for (int i = 1; i <= m.nEdgesOnCell(iCell); ++i) {
+        const int iEdge = m.edgesOnCell(i, iCell);
+        const int cell1 = m.cellsOnEdge(1, iEdge);
+        const int cell2 = m.cellsOnEdge(2, iEdge);
+        const real edge_sign =
+            m.meshScalingDel4(iEdge) * r_areaCell * m.dvEdge(iEdge) * m.edgesOnCell_sign(i, iCell) * m.invDcEdge(iEdge);
+        for (int k = 2; k <= nVertLevels; ++k)
+          tend_w_euler(k, iCell) = tend_w_euler(k, iCell) - edge_sign * (delsq_w(k, cell2) - delsq_w(k, cell1));
+      }
+    });
+  }
   if (a.v_mom_eddy_visc2 > 0.0) {  // DM:1102-1119
-    parallel_for(1, m.nCells, [=, m = view(m), w = view(w), rho_zz = view(rho_zz),
-                               tend_w_euler = view(tend_w_euler)] CPPMPAS_LAMBDA(int iCell) {
+    parallel_for(1, m.nCellsSolve(), [=, m = view(m), w = view(w), rho_zz = view(rho_zz),
+                                      tend_w_euler = view(tend_w_euler)] CPPMPAS_LAMBDA(int iCell) {  // DM:1107 (cellSolveStart..cellSolveEnd)
       for (int k = 2; k <= nVertLevels; ++k) {
         tend_w_euler(k, iCell) = tend_w_euler(k, iCell) + a.v_mom_eddy_visc2 * 0.5 *
                                                               (rho_zz(k, iCell) + rho_zz(k - 1, iCell)) *
@@ -105,9 +205,7 @@ void w_dissipation_3d(const Mesh& m, const DissipationArgs& a, FArray<real>& del
                                                               m.rdzu(k);  // DM:1111-1113
       }
     });
-  } else {
-    throw Error("w_dissipation_3d: v_mom_eddy_visc2 <= 0 (no vertical mixing, DM:1102 not taken) is not verified");
-  }
+  }  // v_mom_eddy_visc2 <= 0: no vertical mixing (JW)
 }
 
 void scalar_dissipation_3d_les(const Mesh& m, const DissipationArgs& a, FArray<real>& delsq_theta,
@@ -137,13 +235,27 @@ void scalar_dissipation_3d_les(const Mesh& m, const DissipationArgs& a, FArray<r
       }
     }
   });
-  if (a.h_theta_eddy_visc4 > 0.0)
-    throw Error("scalar_dissipation_3d_les: the 4th-order filter (DM:1306-1332) is not ported");
+  if (a.h_theta_eddy_visc4 > 0.0) {  // DM:1306-1332 (cellSolveStart..cellSolveEnd)
+    parallel_for(1, m.nCellsSolve(), [=, m = view(m), delsq_theta = view(delsq_theta),
+                                      tend_theta_euler = view(tend_theta_euler)] CPPMPAS_LAMBDA(int iCell) {
+      const real r_areaCell = a.h_theta_eddy_visc4 * a.prandtl_inv * m.invAreaCell(iCell);
+      for (int i = 1; i <= m.nEdgesOnCell(iCell); ++i) {
+        const int iEdge = m.edgesOnCell(i, iCell);
+        const real edge_sign =
+            m.meshScalingDel4(iEdge) * r_areaCell * m.dvEdge(iEdge) * m.edgesOnCell_sign(i, iCell) * m.invDcEdge(iEdge);
+        const int cell1 = m.cellsOnEdge(1, iEdge);
+        const int cell2 = m.cellsOnEdge(2, iEdge);
+        for (int k = 1; k <= nVertLevels; ++k)
+          tend_theta_euler(k, iCell) =
+              tend_theta_euler(k, iCell) - edge_sign * (delsq_theta(k, cell2) - delsq_theta(k, cell1));
+      }
+    });
+  }
   if (a.v_theta_eddy_visc2 > 0.0) {  // DM:1414
     if (!a.config_mix_full)
       throw Error("scalar_dissipation_3d_les: mixing of the perturbation from t_init (DM:1442-1466) is not ported");
-    parallel_for(1, m.nCells, [=, m = view(m), theta_m = view(theta_m), rho_zz = view(rho_zz),
-                               tend_theta_euler = view(tend_theta_euler)] CPPMPAS_LAMBDA(int iCell) {  // DM:1421-1438
+    parallel_for(1, m.nCellsSolve(), [=, m = view(m), theta_m = view(theta_m), rho_zz = view(rho_zz),
+                                      tend_theta_euler = view(tend_theta_euler)] CPPMPAS_LAMBDA(int iCell) {  // DM:1421-1438 (cellSolveStart..cellSolveEnd)
       for (int k = 2; k <= nVertLevels - 1; ++k) {
         const real z1 = m.zgrid(k - 1, iCell);
         const real z2 = m.zgrid(k, iCell);
@@ -159,9 +271,7 @@ void scalar_dissipation_3d_les(const Mesh& m, const DissipationArgs& a, FArray<r
                                          (0.5 * (zp - zm));  // DM:1434-1436
       }
     });
-  } else {
-    throw Error("scalar_dissipation_3d_les: v_theta_eddy_visc2 <= 0 (DM:1414 not taken) is not verified");
-  }
+  }  // v_theta_eddy_visc2 <= 0: no vertical mixing (JW)
 }
 
 }  // namespace cppmpas

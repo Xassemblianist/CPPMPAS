@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 """tools/gen_namelist_table.py on variants of a reference namelist.atmosphere: a value it cannot read as MPAS's
-namelist read does (set twice, a quoted number, a 32-bit integer overflow, a real that overflows) stops it with a
-message; a '!' inside a quoted value is part of the value, not a comment.
+namelist read does (set twice, a quoted number, a 32-bit integer overflow, a real that overflows, a second group of
+the same name) stops it with a message; a '!' inside a quoted value is part of the value, not a comment.
 
 usage: check_gen_namelist.py <gen_namelist_table.py> <Registry.xml> <reference namelist.atmosphere> <scratch dir>
 """
@@ -31,6 +31,7 @@ CASES = [
     ("int_range", sub(r"config_number_of_sub_steps = 6", "config_number_of_sub_steps = 2147483648"),
      "is outside a 32-bit integer", None),
     ("real_overflow", sub(r"config_xnutr = 0.1", "config_xnutr = 1e999"), "overflows a double", None),
+    ("group_twice", sub(r"^(\s*config_xnutr = 0.1)$", r"/\n&damping\n\1"), "group &damping appears twice", None),
 ]
 
 

@@ -32,7 +32,7 @@ template <bool C> struct DycoreFieldsViewT {
 #define CPPMPAS_X(n) FView<VElem<C, real>> n;
   CPPMPAS_DYCORE_REAL_ARRAYS(CPPMPAS_X)
 #undef CPPMPAS_X
-  real Time1, Time2;
+  real Time2;
   SolveDiagWorkViewT<C> sdw;
   int moist_start, moist_end, index_qv;
 };
@@ -41,7 +41,6 @@ template <class F> auto view_dycore(F& f) {
 #define CPPMPAS_X(n) v.n = f.n.view();
   CPPMPAS_DYCORE_REAL_ARRAYS(CPPMPAS_X)
 #undef CPPMPAS_X
-  v.Time1 = f.Time1;
   v.Time2 = f.Time2;
   v.sdw = view(f.sdw);
   v.moist_start = f.moist_start;
@@ -58,6 +57,7 @@ inline DycoreFieldsViewT<false> view(DycoreFields& f) { return view_dycore(f); }
   X(int, config_number_of_sub_steps) X(int, config_dynamics_split_steps) X(real, config_h_mom_eddy_visc2)            \
   X(real, config_h_mom_eddy_visc4) X(real, config_v_mom_eddy_visc2) X(real, config_h_theta_eddy_visc2)               \
   X(real, config_h_theta_eddy_visc4) X(real, config_v_theta_eddy_visc2) X(real, config_len_disp)                     \
+  X(real, config_visc4_2dsmag) X(real, config_smagorinsky_coef) X(bool, config_h_ScaleWithMesh)                      \
   X(bool, config_mix_scalars) X(real, config_del4u_div_factor) X(bool, config_scalar_advection)                      \
   X(bool, config_positive_definite) X(bool, config_monotonic) X(real, config_coef_3rd_order) X(bool, config_mix_full) \
   X(real, config_smdiv) X(real, config_apvm_upwinding) X(real, config_mpas_cam_coef) X(bool, config_rayleigh_damp_u)  \

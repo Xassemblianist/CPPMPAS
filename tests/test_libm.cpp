@@ -7,8 +7,9 @@
 // hp0 -+ (2m + 1) / 256 (table-bucket midpoints of y = hp0 - |x|, where do_cos(a, da) and do_cos(y, hp1) differ),
 // atan2 / pow on every pair of special values, and libmvec pow with distinct lanes. Results must have the same
 // bits, NaN results included: asin / acos of |x| > 1, and NaN inputs (quiet and signaling, either sign, with
-// payloads), whose result glibc defines as the input NaN quieted. The ports are called with -x written at the call
-// (unary below), as code calls them: a fold of that negation into the port must not change a NaN's sign.
+// payloads), whose result glibc defines as the input NaN quieted. Every port is also called with -x written at the
+// call (each argument in turn), as code calls them: a fold of that negation into the port must not change a NaN's
+// sign.
 //   test_libm [N]   N random inputs per function (default 2'000'000)
 #include <emmintrin.h>
 #include <gnu/libc-version.h>
@@ -101,6 +102,15 @@ int main(int argc, char** argv) {
     co.check(x, 0, cppmpas::libm::cos(x), c_cos(x));
     as.check(x, 0, cppmpas::libm::asin(x), c_asin(x));
     ac.check(x, 0, cppmpas::libm::acos(x), c_acos(x));
+    // -x written at the call of every port
+    c_sincos(-x, &gs, &gc);
+    cppmpas::libm::sincos(-x, &ps, &pc);
+    sc.check(-x, 0, ps, gs);
+    cc.check(-x, 0, pc, gc);
+    s.check(-x, 0, cppmpas::libm::sin(-x), c_sin(-x));
+    co.check(-x, 0, cppmpas::libm::cos(-x), c_cos(-x));
+    as.check(-x, 0, cppmpas::libm::asin(-x), c_asin(-x));
+    ac.check(-x, 0, cppmpas::libm::acos(-x), c_acos(-x));
     const __m128d vin = _mm_set_pd(-x, x);
     double outs[2], outc[2];
     _mm_storeu_pd(outs, _ZGVbN2v_sin(vin));
@@ -115,10 +125,17 @@ int main(int argc, char** argv) {
     _mm_storeu_pd(outp, _ZGVbN2vv_pow(_mm_set_pd(b2, b1), _mm_set_pd(e2, e1)));
     vp.check(b1, e1, cppmpas::libm::mvec_pow(b1, e1), outp[0]);
     vp.check(b2, e2, cppmpas::libm::mvec_pow(b2, e2), outp[1]);
+    _mm_storeu_pd(outp, _ZGVbN2vv_pow(_mm_set_pd(b1, -b1), _mm_set_pd(-e1, e1)));
+    vp.check(-b1, e1, cppmpas::libm::mvec_pow(-b1, e1), outp[0]);
+    vp.check(b1, -e1, cppmpas::libm::mvec_pow(b1, -e1), outp[1]);
   };
   auto binary = [&](double y, double x) {
     at.check(y, x, cppmpas::libm::atan2(y, x), c_atan2(y, x));
     pw.check(y, x, cppmpas::libm::pow(y, x), c_pow(y, x));
+    at.check(-y, x, cppmpas::libm::atan2(-y, x), c_atan2(-y, x));
+    at.check(y, -x, cppmpas::libm::atan2(y, -x), c_atan2(y, -x));
+    pw.check(-y, x, cppmpas::libm::pow(-y, x), c_pow(-y, x));
+    pw.check(y, -x, cppmpas::libm::pow(y, -x), c_pow(y, -x));
   };
 
   // --- special inputs

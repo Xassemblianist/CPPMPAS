@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // atm_srk3 and the routines it calls (src/core_atmosphere/dynamics/mpas_atm_time_integration.F, TI) on the path of
-// the mountain-wave reference; see atm_dycore.hpp. Statement by statement: MPAS's loop order, operation order and
+// the mountain-wave and JW baroclinic-wave references; see atm_dycore.hpp. Statement by statement: MPAS's loop order, operation order and
 // parenthesisation (Fortran evaluates a*b*c/d as ((a*b)*c)/d, -a*b as -(a*b)), integer powers as multiplies.
 // Every loop over cells / edges / vertices is a kernel (core/backend.hpp parallel_for): one thread per element, the k
 // loop and the neighbour loops inside the thread in MPAS's order; the work arrays MPAS allocates per routine are the
@@ -8,8 +8,12 @@
 //
 // Reference object code (objdump -d of bin/atmosphere_model, mpas-build asset 153c7206..., gfortran 14.2 -O3, no
 // -march): no FMA and no ymm register in any of these routines; their only libm / libmvec calls are
-//  * atm_recover_large_step_variables_work (0x125d40): the rk_step 3 k loop is vectorised, levels (1,2), (3,4), ...
-//    call _ZGVbN2vv_pow (0x126ed3), an odd last level (or nVertLevels = 1) pow@plt (0x127016);
+//  * atm_recover_large_step_variables_work (0x125d40, called through the .constprop.0 clone 0x1271d0, which only
+//    drops the unused configs argument): the rk_step 3 k loop is vectorised for nVertLevels >= 2 (0x126d67: cmp $1,
+//    je to the scalar loop for nVertLevels = 1 only; explicit-shape arrays, no alias versioning), 2-lane from k = 1
+//    with unaligned movupd loads and no alignment peel, levels (1,2), (3,4), ... calling _ZGVbN2vv_pow (0x126ed3);
+//    an odd last level (or nVertLevels = 1) calls pow@plt (0x127016). (atm_init_coupled_diagnostics differs: its
+//    loop is versioned and vectorised only for nVertLevels >= 3, 0x104120.)
 //  * atm_compute_dyn_tend_work (0x109430): the reference_u of TI:6547, in the j loop over edgesOnEdge unrolled by 2
 //    (see coriolis_reference below): sincos@plt (0x10b2cf, 0x10b69d, 0x10b905), _ZGVbN2v_cos / _ZGVbN2v_sin
 //    (0x10b543-0x10b575).
@@ -19,6 +23,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 
 #include "core/error.hpp"
 #include "core/libm.hpp"
@@ -78,13 +83,16 @@ DycoreConfig read_dycore_config(const std::string& namelist_path, const InitConf
   c.config_horiz_mixing = get("config_horiz_mixing");
   c.config_les_model = get("config_les_model");
   c.config_len_disp = init_cfg.config_len_disp;  // as atm_core_init left it (mpas_atm_core.F:155-201)
+  c.config_visc4_2dsmag = r("config_visc4_2dsmag");
   c.config_mix_scalars = l("config_mix_scalars");
   c.config_del4u_div_factor = r("config_del4u_div_factor");
   c.config_scalar_advection = l("config_scalar_advection");
   c.config_positive_definite = l("config_positive_definite");
   c.config_monotonic = l("config_monotonic");
   c.config_coef_3rd_order = init_cfg.config_coef_3rd_order;
+  c.config_smagorinsky_coef = r("config_smagorinsky_coef");
   c.config_mix_full = l("config_mix_full");
+  c.config_h_ScaleWithMesh = init_cfg.config_h_ScaleWithMesh;
   c.config_smdiv = r("config_smdiv");
   c.config_apvm_upwinding = init_cfg.config_apvm_upwinding;
   c.config_mpas_cam_coef = r("config_mpas_cam_coef");
@@ -97,6 +105,12 @@ DycoreConfig read_dycore_config(const std::string& namelist_path, const InitConf
   c.config_pbl_scheme = get("config_pbl_scheme");
   c.config_radt_lw_scheme = get("config_radt_lw_scheme");
   c.config_radt_sw_scheme = get("config_radt_sw_scheme");
+  c.config_radt_cld_scheme = get("config_radt_cld_scheme");
+  c.config_lsm_scheme = get("config_lsm_scheme");
+  c.config_sfclayer_scheme = get("config_sfclayer_scheme");
+  c.config_gwdo_scheme = get("config_gwdo_scheme");
+  c.config_oml1d = l("config_oml1d");
+  c.config_calendar_type = get("config_calendar_type");
   return c;
 }
 
@@ -108,16 +122,24 @@ void check_dycore_supported(const DycoreConfig& c, const Mesh& m, const State& s
   if (c.config_split_dynamics_transport) no("config_split_dynamics_transport = true");  // TI:2054, 2674
   if (c.config_scalar_advection) no("config_scalar_advection = true (atm_advance_scalars, TI:2504-2507)");
   if (c.config_positive_definite) no("config_positive_definite = true");
-  if (c.config_horiz_mixing != "2d_fixed") no("config_horiz_mixing = '" + c.config_horiz_mixing + "'");  // TI:6346
+  if (c.config_horiz_mixing != "2d_fixed" && c.config_horiz_mixing != "2d_smagorinsky")  // TI:6346, 6354
+    no("config_horiz_mixing = '" + c.config_horiz_mixing + "'");
   if (c.config_les_model != "none") no("config_les_model = '" + c.config_les_model + "'");
-  if (c.config_mpas_cam_coef > 0.0) no("config_mpas_cam_coef > 0 (TI:6390)");
+  // == 0 tests also refuse a NaN, which the Fortran > 0 tests would let through untested
+  if (!(c.config_mpas_cam_coef == 0.0)) no("config_mpas_cam_coef != 0 (TI:6390)");
   if (c.config_rayleigh_damp_u) no("config_rayleigh_damp_u = true (TI:6608)");
   if (c.config_mix_scalars) no("config_mix_scalars = true (DM:1334)");
   if (!c.config_mix_full) no("config_mix_full = false (DM:848, 1442)");
-  if (c.config_h_mom_eddy_visc4 > 0.0) no("config_h_mom_eddy_visc4 > 0 (DM:728, 1073)");
-  if (c.config_h_theta_eddy_visc4 > 0.0) no("config_h_theta_eddy_visc4 > 0 (DM:1306)");
-  if (!(c.config_v_mom_eddy_visc2 > 0.0)) no("config_v_mom_eddy_visc2 <= 0 (DM:816, 1102 not taken)");
-  if (!(c.config_v_theta_eddy_visc2 > 0.0)) no("config_v_theta_eddy_visc2 <= 0 (DM:1414 not taken)");
+  if (!(c.config_h_mom_eddy_visc4 == 0.0)) no("config_h_mom_eddy_visc4 != 0 (DM:728, 1073)");
+  if (!(c.config_h_theta_eddy_visc4 == 0.0)) no("config_h_theta_eddy_visc4 != 0 (DM:1306)");
+  if (!(c.config_apvm_upwinding > 0.0)) no("config_apvm_upwinding <= 0 (TI:7372 not taken)");
+  for (const real x : {c.config_dt, c.config_len_disp, c.config_smdiv, c.config_coef_3rd_order, c.config_h_theta_eddy_visc2,
+                       c.config_v_mom_eddy_visc2, c.config_v_theta_eddy_visc2, c.config_smagorinsky_coef,
+                       c.config_visc4_2dsmag, c.config_del4u_div_factor, c.config_apvm_upwinding})
+    if (!std::isfinite(x)) no("a namelist real that is not finite");
+  // vertical mixing: > 0 (MW, DM:816, 1102, 1414) or 0 (JW, not taken); no reference has a negative value
+  if (!(c.config_v_mom_eddy_visc2 >= 0.0)) no("config_v_mom_eddy_visc2 < 0");
+  if (!(c.config_v_theta_eddy_visc2 >= 0.0)) no("config_v_theta_eddy_visc2 < 0");
   if (c.config_apply_lbcs) no("config_apply_lbcs = true");
   if (c.config_IAU_option != "off") no("config_IAU_option = '" + c.config_IAU_option + "' (TI:2168)");
   if (c.config_physics_suite != "none") no("config_physics_suite = '" + c.config_physics_suite + "'");
@@ -126,7 +148,16 @@ void check_dycore_supported(const DycoreConfig& c, const Mesh& m, const State& s
   if (!off(c.config_microp_scheme)) no("config_microp_scheme = '" + c.config_microp_scheme + "' (TI:2806)");
   if (!off(c.config_convection_scheme)) no("config_convection_scheme = '" + c.config_convection_scheme + "'");
   if (!off(c.config_pbl_scheme)) no("config_pbl_scheme = '" + c.config_pbl_scheme + "'");
-  if (!off(c.config_radt_lw_scheme) || !off(c.config_radt_sw_scheme)) no("radiation schemes");
+  if (!off(c.config_radt_lw_scheme) || !off(c.config_radt_sw_scheme) || !off(c.config_radt_cld_scheme))
+    no("radiation schemes");
+  // a land-surface or surface-layer scheme makes moist_physics true (mpas_atmphys_control.F:310-318) and runs the
+  // physics driver (mpas_atm_core.F:1034-1037); gwdo and oml1d run in it
+  if (!off(c.config_lsm_scheme)) no("config_lsm_scheme = '" + c.config_lsm_scheme + "'");
+  if (!off(c.config_sfclayer_scheme)) no("config_sfclayer_scheme = '" + c.config_sfclayer_scheme + "'");
+  if (!off(c.config_gwdo_scheme)) no("config_gwdo_scheme = '" + c.config_gwdo_scheme + "'");
+  if (c.config_oml1d) no("config_oml1d = true");
+  // add_seconds is the gregorian clock (Registry.xml:79-82)
+  if (c.config_calendar_type != "gregorian") no("config_calendar_type = '" + c.config_calendar_type + "'");
   // the clock's dt is config_dt through a 9-decimal string (mpas_timekeeping.F:1449-1498): exact for whole seconds
   if (!(c.config_dt > 0.0) || c.config_dt != std::floor(c.config_dt) || c.config_dt > 86400.0)
     no("config_dt that is not a whole number of seconds in 1..86400");
@@ -135,17 +166,37 @@ void check_dycore_supported(const DycoreConfig& c, const Mesh& m, const State& s
   // odd nVertLevels: the last level of the rk_step-3 Exner pow is scalar pow@plt (TI:4439), never exercised
   if (m.nVertLevels < 4 || m.nVertLevels % 2 != 0) no("nVertLevels = " + std::to_string(m.nVertLevels) +
                                                       " (only an even nVertLevels >= 4 is verified)");
-  // the reference_u term (TI:6546-6550) calls sincos / libmvec lanes whose values only enter through fEdge: with
-  // fEdge = 0 (MW) the term is +-0; any other fEdge is not verified
-  for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge)
-    if (m.fEdge(iEdge) != 0.0) no("fEdge != 0 (the reference_u term of TI:6547-6548)");
+  // the reference_u term (TI:6546-6550) calls sincos / libmvec lanes (coriolis_reference below) whose values enter
+  // only through u_init, v_init and fEdge: with fEdge = 0 (MW) or u_init = v_init = 0 (JW) the term is +-0 whatever
+  // the lanes give; a non-zero term is not verified
+  if (s.u_init.rank() != 1 || s.u_init.extent(0) < m.nVertLevels || s.v_init.rank() != 1 ||
+      s.v_init.extent(0) < m.nVertLevels || m.fEdge.rank() != 1 || m.fEdge.extent(0) < m.nEdges ||
+      m.meshDensity.rank() != 1 || m.meshDensity.extent(0) < m.nCells)
+    no("a mesh or state without u_init, v_init, fEdge or meshDensity");
+  bool uv_init_zero = true;
+  for (int k = 1; k <= m.nVertLevels; ++k)
+    if (s.u_init(k) != 0.0 || s.v_init(k) != 0.0) uv_init_zero = false;
+  if (!uv_init_zero)
+    for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge)
+      if (m.fEdge(iEdge) != 0.0) no("fEdge != 0 with u_init or v_init != 0 (the reference_u term of TI:6547-6548)");
   if (m.vertexDegree != 3) no("vertexDegree != 3");
+  // the mesh scaling of a variable-resolution mesh takes pow of values no reference has (atm_init.hpp
+  // mesh_scaling_unverified; mpas_atm_core.F:1124-1181); meshScalingDel2 / Del4 feed the dissipation
+  if (c.config_h_ScaleWithMesh)
+    for (int iCell = 1; iCell <= m.nCells; ++iCell)
+      if (m.meshDensity(iCell) != 1.0) no("config_h_ScaleWithMesh = true with a meshDensity other than 1");
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 void allocate_dycore_fields(const Mesh& m, const State& s, DycoreFields& f) {
+  constexpr int kMax = 1 << 30;  // n + 1 never overflows
+  if (m.nCells < 1 || m.nEdges < 1 || m.nVertices < 1 || m.nVertLevels < 1 || m.nCells > kMax || m.nEdges > kMax ||
+      m.nVertices > kMax || m.nVertLevels > kMax)
+    throw Error("allocate_dycore_fields: mesh dimensions outside 1..2^30");
   const int nC = m.nCells + 1, nE = m.nEdges + 1, nV = m.nVertices + 1, nL = m.nVertLevels, nL1 = nL + 1;
-  if (nL < 1) throw Error("allocate_dycore_fields: no vertical levels");
+  if (s.scalars.rank() != 3 || s.scalars.extent(0) < 1 || s.scalars.extent(1) != nL || s.scalars.extent(2) != nC ||
+      static_cast<std::size_t>(s.scalars.extent(0)) != s.scalar_names.size())
+    throw Error("allocate_dycore_fields: scalars are not allocated (num_scalars, nVertLevels, nCells+1)");
   const int ns = s.scalars.extent(0);
   f.u2.allocate({nL, nE}, 0.0);
   f.w2.allocate({nL1, nC}, 0.0);
@@ -173,14 +224,125 @@ void allocate_dycore_fields(const Mesh& m, const State& s, DycoreFields& f) {
   for (std::size_t k = 0; k < s.scalar_names.size(); ++k)
     if (s.scalar_names[k] == "qv") f.index_qv = static_cast<int>(k) + 1;
   if (f.index_qv == 0) throw Error("allocate_dycore_fields: qv is not an active scalar");
+  if (s.Time.rank() != 1 || s.Time.extent(0) != 1) throw Error("allocate_dycore_fields: the state Time was not read");
+  f.Time2 = s.Time(1);  // mpas_pool_initialize_time_levels (mpas_atm_core.F:213-218): time level 2 = time level 1
   // array_group "moist" (Registry.xml:1701-1748): qv, qc, qr, ... in Registry order, all of the active scalars
   f.moist_start = 1;
   f.moist_end = ns;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+namespace {
+
+// rank and extents of an array: exactly ext (exact) or at least ext
+template <class T> bool has(const FArray<T>& a, std::initializer_list<int> ext, bool exact) {
+  if (a.rank() != static_cast<int>(ext.size())) return false;
+  int d = 0;
+  for (const int e : ext) {
+    if (exact ? a.extent(d) != e : a.extent(d) < e) return false;
+    ++d;
+  }
+  return true;
+}
+
+// s or d may be null for a routine that reads neither
+void check_arrays(const Mesh& m, const State* s, const Diag* d, const DycoreFields& f) {
+  auto bad = [](const std::string& what) { throw Error("dycore: " + what); };
+  const int nL = m.nVertLevels;
+  if (nL < 4 || nL % 2 != 0) bad("nVertLevels = " + std::to_string(nL) + " (only an even nVertLevels >= 4 is verified)");
+  if (m.nCells < 1 || m.nEdges < 1 || m.nVertices < 1 || m.vertexDegree != 3 || m.maxEdges < 1 || m.maxEdges2 < 1)
+    bad("mesh dimensions");
+  const int nC = m.nCells + 1, nE = m.nEdges + 1, nV = m.nVertices + 1, mE = m.maxEdges, mE2 = m.maxEdges2;
+  const int nCs = m.nCells, nEs = m.nEdges, nVs = m.nVertices;
+  auto need = [&](bool ok, const char* name) {
+    if (!ok) bad(std::string("array ") + name + " is not allocated with the extents the dycore indexes");
+  };
+  // mesh (at least 1..n of each horizontal dimension)
+  need(has(m.cellsOnEdge, {2, nEs}, false) && has(m.verticesOnEdge, {2, nEs}, false), "cellsOnEdge / verticesOnEdge");
+  need(has(m.edgesOnCell, {mE, nCs}, false) && has(m.edgesOnCell_sign, {mE, nCs}, false) &&
+           has(m.nEdgesOnCell, {nCs}, false), "edgesOnCell / edgesOnCell_sign / nEdgesOnCell");
+  need(has(m.edgesOnEdge, {mE2, nEs}, false) && has(m.weightsOnEdge, {mE2, nEs}, false) &&
+           has(m.nEdgesOnEdge, {nEs}, false), "edgesOnEdge / weightsOnEdge / nEdgesOnEdge");
+  need(has(m.edgesOnVertex, {3, nVs}, false) && has(m.edgesOnVertex_sign, {3, nVs}, false), "edgesOnVertex(_sign)");
+  need(has(m.advCellsForEdge, {1, nEs}, false) && has(m.nAdvCellsForEdge, {nEs}, false) &&
+           has(m.adv_coefs, {m.advCellsForEdge.extent(0), nEs}, false) &&
+           has(m.adv_coefs_3rd, {m.advCellsForEdge.extent(0), nEs}, false), "advCellsForEdge / adv_coefs(_3rd)");
+  for (int iEdge = 1; iEdge <= nEs; ++iEdge)
+    if (m.nAdvCellsForEdge(iEdge) < 0 || m.nAdvCellsForEdge(iEdge) > m.advCellsForEdge.extent(0) ||
+        m.nEdgesOnEdge(iEdge) < 0 || m.nEdgesOnEdge(iEdge) > mE2)
+      bad("nAdvCellsForEdge or nEdgesOnEdge outside the arrays");
+  for (int iCell = 1; iCell <= nCs; ++iCell)
+    if (m.nEdgesOnCell(iCell) < 0 || m.nEdgesOnCell(iCell) > mE) bad("nEdgesOnCell outside maxEdges");
+  for (const auto* a : {&m.dvEdge, &m.dcEdge, &m.angleEdge, &m.fEdge, &m.invDcEdge, &m.invDvEdge, &m.meshScalingDel2,
+                        &m.meshScalingDel4, &m.specZoneMaskEdge})
+    need(has(*a, {nEs}, false), "edge mesh field");
+  for (const auto* a : {&m.invAreaCell, &m.specZoneMaskCell, &m.meshDensity}) need(has(*a, {nCs}, false), "cell mesh field");
+  need(has(m.invAreaTriangle, {nVs}, false), "invAreaTriangle");
+  need(has(m.bdyMaskCell, {nCs}, false) && has(m.bdyMaskEdge, {nEs}, false), "bdyMaskCell / bdyMaskEdge");
+  for (const auto* a : {&m.deformation_coef_c2, &m.deformation_coef_s2, &m.deformation_coef_cs})
+    need(has(*a, {mE, nCs}, false), "deformation_coef_*");
+  need(has(m.zz, {nL, nCs}, false) && has(m.dss, {nL, nCs}, false) && has(m.zxu, {nL, nEs}, false) &&
+           has(m.zgrid, {nL + 1, nCs}, false), "zz / dss / zxu / zgrid");
+  need(has(m.zb_cell, {nL + 1, mE, nCs}, false) && has(m.zb3_cell, {nL + 1, mE, nCs}, false), "zb_cell / zb3_cell");
+  for (const auto* a : {&m.rdzw, &m.rdzu, &m.fzm, &m.fzp, &m.etp, &m.etm}) need(has(*a, {nL}, false), "vertical mesh field");
+  need(has(m.ewp, {nL + 1}, false) && has(m.ewm, {nL + 1}, false), "ewp / ewm");
+  need(has(m.cf1, {1}, false) && has(m.cf2, {1}, false) && has(m.cf3, {1}, false), "cf1 / cf2 / cf3");
+  // the LBC branches (bdyMaskCell > nRelaxZone, specZoneMask* != 0: TI:3620, 3909, 4093-4103, 4183, 4492) are not
+  // ported
+  for (int iCell = 1; iCell <= nCs; ++iCell)
+    if (m.bdyMaskCell(iCell) != 0 || m.specZoneMaskCell(iCell) != 0.0) bad("boundary / specified-zone cells (LBCs)");
+  for (int iEdge = 1; iEdge <= nEs; ++iEdge)
+    if (m.bdyMaskEdge(iEdge) != 0 || m.specZoneMaskEdge(iEdge) != 0.0) bad("boundary / specified-zone edges (LBCs)");
+  // state time level 1 and the diag pool
+  if (s) {
+    const int ns = static_cast<int>(s->scalar_names.size());
+    need(has(s->u, {nL, nE}, true) && has(s->w, {nL + 1, nC}, true), "state u / w");
+    for (const auto* a : {&s->theta_m, &s->rho_zz, &s->rho_base, &s->theta, &s->rho})
+      need(has(*a, {nL, nC}, true), "state theta_m / rho_zz / rho_base / theta / rho");
+    need(ns >= 1 && has(s->scalars, {ns, nL, nC}, true), "state scalars");
+    need(has(s->u_init, {nL}, false) && has(s->v_init, {nL}, false) && has(s->Time, {1}, true), "u_init / v_init / Time");
+  }
+  if (d) {
+    need(has(d->ru, {nL, nE}, true) && has(d->rw, {nL + 1, nC}, true), "diag ru / rw");
+    for (const auto* a : {&d->rho_p, &d->rtheta_p, &d->rtheta_base, &d->exner, &d->exner_base, &d->pressure_p, &d->ke,
+                          &d->divergence, &d->uReconstructX, &d->uReconstructY, &d->uReconstructZ,
+                          &d->uReconstructZonal, &d->uReconstructMeridional})
+      need(has(*a, {nL, nC}, true), "diag cell field");
+    for (const auto* a : {&d->v, &d->rho_edge, &d->pv_edge}) need(has(*a, {nL, nE}, true), "diag edge field");
+    need(has(d->vorticity, {nL, nV}, true), "diag vorticity");
+  }
+  // the dycore fields, as allocate_dycore_fields makes them
+  const int nsf = f.scalars2.extent(0);
+  need(has(f.u2, {nL, nE}, true) && has(f.w2, {nL + 1, nC}, true) && has(f.theta_m2, {nL, nC}, true) &&
+           has(f.rho_zz2, {nL, nC}, true) && f.scalars2.rank() == 3 && has(f.scalars2, {nsf, nL, nC}, true) &&
+           has(f.tend_scalars, {nsf, nL, nC}, true), "time level 2 of the state");
+  if (s) need(nsf == static_cast<int>(s->scalar_names.size()), "time level 2 scalars");
+  for (const auto* a : {&f.ru_save, &f.cqu, &f.ru_p, &f.ruAvg, &f.ruAvg_split, &f.tend_u, &f.tend_u_euler,
+                        &f.tend_ru_physics, &f.delsq_u})
+    need(has(*a, {nL, nE}, true), "dycore edge field");
+  for (const auto* a : {&f.rtheta_p_save, &f.rho_p_save, &f.rho_zz_old_split, &f.cqw, &f.cofwr, &f.cofwz, &f.cofwt,
+                        &f.a_tri, &f.alpha_tri, &f.gamma_tri, &f.rtheta_pp, &f.rtheta_pp_old, &f.rho_pp, &f.h_divergence,
+                        &f.eddy_visc_horz, &f.tend_theta, &f.tend_rho, &f.tend_theta_euler, &f.rt_diabatic_tend,
+                        &f.rthdynten, &f.tend_rtheta_physics, &f.tend_rho_physics, &f.qtot, &f.dpdz, &f.delsq_theta,
+                        &f.delsq_w, &f.delsq_divergence})
+    need(has(*a, {nL, nC}, true), "dycore cell field");
+  for (const auto* a : {&f.rw_save, &f.coftz, &f.rw_p, &f.wwAvg, &f.wwAvg_split, &f.tend_w, &f.tend_w_euler})
+    need(has(*a, {nL + 1, nC}, true), "dycore w-level field");
+  need(has(f.cofrz, {nL}, true) && has(f.delsq_vorticity, {nL, nV}, true), "cofrz / delsq_vorticity");
+  need(has(f.sdw.ke_vertex, {nL, nV}, true) && has(f.sdw.ke_edge, {nL, nE}, true), "ke_vertex / ke_edge");
+  if (f.index_qv < 1 || f.index_qv > nsf || f.moist_start < 1 || f.moist_end > nsf || f.moist_start > f.moist_end)
+    bad("index_qv / moist_start / moist_end outside the scalars");
+}
+
+}  // namespace
+
+void check_dycore_arrays(const Mesh& m, const State& s, const Diag& d, const DycoreFields& f) {
+  check_arrays(m, &s, &d, f);
+}
+
 // TI:3088-3185
 void atm_rk_integration_setup(const Mesh& m, State& s, Diag& d, DycoreFields& f) {
+  check_arrays(m, &s, &d, f);
   const int nVertLevels = m.nVertLevels, num_scalars = s.scalars.extent(0);
   parallel_for(1, nVertLevels, [=, m = view(m), f = view(f)] CPPMPAS_LAMBDA(int k) {
     f.theta_m2(k, m.nCells + 1) = 0.0;  // :3139
@@ -214,6 +376,7 @@ void atm_rk_integration_setup(const Mesh& m, State& s, Diag& d, DycoreFields& f)
 
 // TI:3188-3283 (scalars of time level 2)
 void atm_compute_moist_coefficients(const Mesh& m, DycoreFields& f) {
+  check_arrays(m, nullptr, nullptr, f);
   const int nVertLevels = m.nVertLevels;
   const auto scalars = f.scalars2.cview();
   parallel_for(1, m.nCells, [=, f = view(f)] CPPMPAS_LAMBDA(int iCell) {  // :3237-3246
@@ -228,14 +391,16 @@ void atm_compute_moist_coefficients(const Mesh& m, DycoreFields& f) {
       f.cqw(k, iCell) = 1.0 / (1.0 + qtotal);
     }
   });
-  parallel_for(1, m.nEdges, [=, m = view(m), f = view(f)] CPPMPAS_LAMBDA(int iEdge) {  // :3265-3279 (cell1 <= nCellsSolve always true, one rank)
+  parallel_for(1, m.nEdges, [=, m = view(m), f = view(f)] CPPMPAS_LAMBDA(int iEdge) {  // :3265-3279
     const int cell1 = m.cellsOnEdge(1, iEdge);
     const int cell2 = m.cellsOnEdge(2, iEdge);
-    for (int k = 1; k <= nVertLevels; ++k) {
-      real qtotal = 0.0;
-      for (int iq = f.moist_start; iq <= f.moist_end; ++iq)
-        qtotal = qtotal + 0.5 * (scalars(iq, k, cell1) + scalars(iq, k, cell2));
-      f.cqu(k, iEdge) = 1.0 / (1.0 + qtotal);
+    if (cell1 <= m.nCellsSolve() || cell2 <= m.nCellsSolve()) {  // :3268 (always true on one rank)
+      for (int k = 1; k <= nVertLevels; ++k) {
+        real qtotal = 0.0;
+        for (int iq = f.moist_start; iq <= f.moist_end; ++iq)
+          qtotal = qtotal + 0.5 * (scalars(iq, k, cell1) + scalars(iq, k, cell2));
+        f.cqu(k, iEdge) = 1.0 / (1.0 + qtotal);
+      }
     }
   });
 }
@@ -244,6 +409,7 @@ void atm_compute_moist_coefficients(const Mesh& m, DycoreFields& f) {
 // :304-498): the tendencies are zeroed (:211-216), no scheme block runs, then :489-495 (theta_m and scalars of time
 // level 1). R_v/R_d is the folded quotient (mpas_atmphys_constants.F:11, 42: R_d = rgas, R_v = 461.6).
 void physics_get_tend(const Mesh& m, const State& s, DycoreFields& f) {
+  check_arrays(m, &s, nullptr, f);
   const int nVertLevels = m.nVertLevels;
   constexpr real R_v_R_d = rv / rgas;
   fill_all(f.tend_scalars, 0.0);         // :213
@@ -262,6 +428,7 @@ void physics_get_tend(const Mesh& m, const State& s, DycoreFields& f) {
 
 // TI:3286-3507 (t = theta_m of time level 2, dts = rk_sub_timestep(1))
 void atm_compute_vert_imp_coefs(const Mesh& m, const State& s, const Diag& d, DycoreFields& f, real dts) {
+  check_arrays(m, &s, &d, f);
   const int nVertLevels = m.nVertLevels;
   fits_column(nVertLevels, "atm_compute_vert_imp_coefs");
   const auto zz = m.zz.cview(), fzm = m.fzm.cview(), fzp = m.fzp.cview(), rdzu = m.rdzu.cview(), rdzw = m.rdzw.cview();
@@ -338,6 +505,10 @@ struct CoriolisAngles {
 
 void atm_compute_dyn_tend(const DycoreConfig& cfg, const Mesh& m, const State& s, Diag& d, DycoreFields& f,
                           int rk_step, real dt) {
+  // the configuration and the arrays, also for a caller other than atm_srk3; rk_step as atm_srk3 passes it (TI:2207)
+  check_dycore_supported(cfg, m, s);
+  check_arrays(m, &s, &d, f);
+  if (rk_step < 1 || rk_step > 3) throw Error("atm_compute_dyn_tend: rk_step outside 1..3");
   const int nVertLevels = m.nVertLevels;
   fits_column(nVertLevels, "atm_compute_dyn_tend");
   const auto rho_zz = f.rho_zz2.cview(), u = f.u2.cview(), w = f.w2.cview(), theta_m = f.theta_m2.cview();
@@ -356,7 +527,6 @@ void atm_compute_dyn_tend(const DycoreConfig& cfg, const Mesh& m, const State& s
 
   const real prandtl_inv = 1.0 / prandtl;  // :6322
   const real invDt = 1.0 / dt;              // :6323 (read by smagorinsky_2d only)
-  (void)invDt;
   const real v_mom_eddy_visc2 = cfg.config_v_mom_eddy_visc2;      // :6326
   const real v_theta_eddy_visc2 = cfg.config_v_theta_eddy_visc2;  // :6327
   real h_mom_eddy_visc4 = cfg.config_h_mom_eddy_visc4, h_theta_eddy_visc4 = cfg.config_h_theta_eddy_visc4;
@@ -366,7 +536,10 @@ void atm_compute_dyn_tend(const DycoreConfig& cfg, const Mesh& m, const State& s
       for (int k = 1; k <= nVertLevels; ++k) tend_u_euler(k, iEdge) = 0.0;
     });
     if (cfg.config_les_model != "none") throw Error("atm_compute_dyn_tend: LES models (TI:6371-6388) are not ported");
-    if (cfg.config_horiz_mixing == "2d_fixed") {  // :6354-6367
+    if (cfg.config_horiz_mixing == "2d_smagorinsky") {  // :6346-6352 (v: the diagnostics of the last rk_step 3)
+      smagorinsky_2d(m, f.eddy_visc_horz, f.u2, d.v, cfg.config_smagorinsky_coef, cfg.config_len_disp, invDt,
+                     cfg.config_visc4_2dsmag, h_mom_eddy_visc4, h_theta_eddy_visc4);
+    } else if (cfg.config_horiz_mixing == "2d_fixed") {  // :6354-6367
       parallel_for(1, m.nCells, [=, cfg = view(cfg)] CPPMPAS_LAMBDA(int iCell) {
         for (int k = 1; k <= nVertLevels; ++k) eddy_visc_horz(k, iCell) = cfg.config_h_theta_eddy_visc2;
       });
@@ -459,13 +632,15 @@ void atm_compute_dyn_tend(const DycoreConfig& cfg, const Mesh& m, const State& s
 
   DissipationArgs da;
   da.config_mix_full = cfg.config_mix_full;
+  da.config_del4u_div_factor = cfg.config_del4u_div_factor;
   da.h_mom_eddy_visc4 = h_mom_eddy_visc4;
   da.v_mom_eddy_visc2 = v_mom_eddy_visc2;
   da.h_theta_eddy_visc4 = h_theta_eddy_visc4;
   da.v_theta_eddy_visc2 = v_theta_eddy_visc2;
   da.prandtl_inv = prandtl_inv;
   if (rk_step == 1)  // :6582-6601
-    u_dissipation_3d(m, da, f.eddy_visc_horz, f.delsq_u, f.u2, d.divergence, d.vorticity, d.rho_edge, f.tend_u_euler);
+    u_dissipation_3d(m, da, f.eddy_visc_horz, f.delsq_u, f.delsq_vorticity, f.delsq_divergence, f.u2, d.divergence,
+                     d.vorticity, d.rho_edge, f.tend_u_euler);
 
   if (cfg.config_rayleigh_damp_u) throw Error("atm_compute_dyn_tend: Rayleigh damping of u (TI:6608) is not ported");
   parallel_for(1, m.nEdgesSolve(), [=, f = view(f)] CPPMPAS_LAMBDA(int iEdge) {  // :6635-6642
@@ -585,6 +760,7 @@ void atm_compute_dyn_tend(const DycoreConfig& cfg, const Mesh& m, const State& s
 // ---------------------------------------------------------------------------------------------------------------
 // TI:3510-3642 (bdyMaskCell = 0 <= nRelaxZone for every cell)
 void atm_set_smlstep_pert_variables(const Mesh& m, DycoreFields& f) {
+  check_arrays(m, nullptr, nullptr, f);
   const int nVertLevels = m.nVertLevels;
   const auto u_tend = f.tend_u.cview();
   auto w_tend = f.tend_w.view();
@@ -605,6 +781,8 @@ void atm_set_smlstep_pert_variables(const Mesh& m, DycoreFields& f) {
 // TI:3645-4109: rho_zz and w of time level 2, theta_m of time level 1 (TI:3713-3718); specZoneMask* = 0
 void atm_advance_acoustic_step(const Mesh& m, const State& s, const Diag& d, DycoreFields& f, real dts,
                                int small_step) {
+  check_arrays(m, &s, &d, f);
+  if (small_step < 1) throw Error("atm_advance_acoustic_step: small_step < 1");
   const int nVertLevels = m.nVertLevels;
   fits_column(nVertLevels, "atm_advance_acoustic_step");
   const auto rho_zz = f.rho_zz2.cview(), w = f.w2.cview(), theta_m = s.theta_m.cview();
@@ -626,6 +804,7 @@ void atm_advance_acoustic_step(const Mesh& m, const State& s, const Diag& d, Dyc
     parallel_for(1, m.nEdges, [=, m = view(m)] CPPMPAS_LAMBDA(int iEdge) {
       const int cell1 = m.cellsOnEdge(1, iEdge);
       const int cell2 = m.cellsOnEdge(2, iEdge);
+      if (!(cell1 <= m.nCellsSolve() || cell2 <= m.nCellsSolve())) return;  // :3901 (always true on one rank)
       for (int k = 1; k <= nVertLevels; ++k) {
         real pgrad = ((rtheta_pp(k, cell2) - rtheta_pp(k, cell1)) * m.invDcEdge(iEdge)) / (.5 * (zz(k, cell2) + zz(k, cell1)));
         pgrad = cqu(k, iEdge) * 0.5 * c2 * (exner(k, cell1) + exner(k, cell2)) * pgrad;
@@ -635,7 +814,10 @@ void atm_advance_acoustic_step(const Mesh& m, const State& s, const Diag& d, Dyc
       for (int k = 1; k <= nVertLevels; ++k) ruAvg(k, iEdge) = ruAvg(k, iEdge) + ru_p(k, iEdge);
     });
   } else {  // :3924-3950
-    parallel_for(1, m.nEdges, [=] CPPMPAS_LAMBDA(int iEdge) {
+    parallel_for(1, m.nEdges, [=, m = view(m)] CPPMPAS_LAMBDA(int iEdge) {
+      const int cell1 = m.cellsOnEdge(1, iEdge);
+      const int cell2 = m.cellsOnEdge(2, iEdge);
+      if (!(cell1 <= m.nCellsSolve() || cell2 <= m.nCellsSolve())) return;  // :3934 (always true on one rank)
       for (int k = 1; k <= nVertLevels; ++k) ru_p(k, iEdge) = dts * tend_ru(k, iEdge);
       for (int k = 1; k <= nVertLevels; ++k) ruAvg(k, iEdge) = ru_p(k, iEdge);
     });
@@ -718,6 +900,7 @@ void atm_advance_acoustic_step(const Mesh& m, const State& s, const Diag& d, Dyc
 
 // TI:4112-4193 (theta_m of time level 1)
 void atm_divergence_damping_3d(const DycoreConfig& cfg, const Mesh& m, const State& s, DycoreFields& f, real dts) {
+  check_arrays(m, &s, nullptr, f);
   const int nVertLevels = m.nVertLevels;
   const auto theta_m = s.theta_m.cview();
   const real rdts = 1.0 / dts;                                                   // :4153
@@ -725,6 +908,7 @@ void atm_divergence_damping_3d(const DycoreConfig& cfg, const Mesh& m, const Sta
   parallel_for(1, m.nEdges, [=, m = view(m), f = view(f)] CPPMPAS_LAMBDA(int iEdge) {  // :4162-4188
     const int cell1 = m.cellsOnEdge(1, iEdge);
     const int cell2 = m.cellsOnEdge(2, iEdge);
+    if (!(cell1 <= m.nCellsSolve() || cell2 <= m.nCellsSolve())) return;  // :4168 (always true on one rank)
     for (int k = 1; k <= nVertLevels; ++k) {
       const real divCell1 = -(f.rtheta_pp(k, cell1) - f.rtheta_pp_old(k, cell1));
       const real divCell2 = -(f.rtheta_pp(k, cell2) - f.rtheta_pp_old(k, cell2));
@@ -737,7 +921,9 @@ void atm_divergence_damping_3d(const DycoreConfig& cfg, const Mesh& m, const Sta
 // TI:4196-4527 (state of time level 2; bdyMaskCell = 0 <= nRelaxZone for every cell)
 void atm_recover_large_step_variables(const Mesh& m, State& s, Diag& d, DycoreFields& f, real dt, int ns,
                                       int rk_step) {
-  (void)s;
+  check_arrays(m, &s, &d, f);
+  // as atm_srk3 passes them (TI:2427): ns = 0 would make invNs infinite
+  if (rk_step < 1 || rk_step > 3 || ns < 1) throw Error("atm_recover_large_step_variables: rk_step outside 1..3 or ns < 1");
   const int nVertLevels = m.nVertLevels;
   auto rho_zz = f.rho_zz2.view(), w = f.w2.view(), theta_m = f.theta_m2.view(), u = f.u2.view();
   auto rw = d.rw.view(), rtheta_p = d.rtheta_p.view(), rho_p = d.rho_p.view(), ru = d.ru.view(),
@@ -782,10 +968,6 @@ void atm_recover_large_step_variables(const Mesh& m, State& s, Diag& d, DycoreFi
         pressure_p(k, iCell) = zz(k, iCell) * rgas *
                                (exner(k, iCell) * rtheta_p(k, iCell) + rtheta_base(k, iCell) * (exner(k, iCell) - exner_base(k, iCell)));
       };
-      if (nVertLevels == 1) {
-        lane(1, false);
-        return;
-      }
       int k = 1;
       for (; k + 1 <= nVertLevels; k += 2) {
         lane(k, true);
@@ -832,7 +1014,10 @@ void atm_recover_large_step_variables(const Mesh& m, State& s, Diag& d, DycoreFi
 // TI:7668-7832 (dynamics_split = 1 when config_split_dynamics_transport = .false.)
 void atm_rk_dynamics_substep_finish(const Mesh& m, State& s, Diag& d, DycoreFields& f, int dynamics_substep,
                                     int dynamics_split) {
-  (void)d;
+  check_arrays(m, &s, &d, f);
+  // dynamics_split = 1 (config_split_dynamics_transport = .false., TI:2053-2061): the only substep is 1
+  if (dynamics_split != 1 || dynamics_substep != 1)
+    throw Error("atm_rk_dynamics_substep_finish: dynamics substeps (TI:7735-7803) are not ported");
   const int nVertLevels = m.nVertLevels;
   parallel_for(1, nVertLevels, [=, m = view(m), s = view(s)] CPPMPAS_LAMBDA(int k) {
     s.theta_m(k, m.nCells + 1) = 0.0;  // :7730
@@ -867,6 +1052,7 @@ void atm_rk_dynamics_substep_finish(const Mesh& m, State& s, Diag& d, DycoreFiel
 // TI:1855-2882
 void atm_srk3(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreFields& f, real dt) {
   check_dycore_supported(cfg, m, s);
+  check_arrays(m, &s, &d, f);
   const int nVertLevels = m.nVertLevels;
   parallel_for(1, nVertLevels, [=, m = view(m), f = view(f)] CPPMPAS_LAMBDA(int k) {
     f.qtot(k, m.nCells + 1) = 0.0;  // :2023-2028
@@ -941,9 +1127,12 @@ void atm_srk3(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreF
 
 void atm_timestep(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreFields& f, real dt,
                   const std::string& xtime_new) {
+  if (xtime_new.size() > 64) throw Error("atm_timestep: xtime longer than StrLen = 64");
   atm_srk3(cfg, m, s, d, f, dt);  // TI:1829
-  f.xtime2 = xtime_new;           // TI:1836-1842
-  f.Time2 = f.Time1 + dt;         // TI:1844-1849
+  // TI:1836-1842; xtime is character(len=StrLen = 64), blank-padded as the input stream holds it
+  f.xtime2 = xtime_new;
+  f.xtime2.resize(64, ' ');
+  f.Time2 = s.Time(1) + dt;         // TI:1844-1849
 }
 
 void shift_time_levels(State& s, DycoreFields& f) {
@@ -953,28 +1142,48 @@ void shift_time_levels(State& s, DycoreFields& f) {
   std::swap(s.rho_zz, f.rho_zz2);
   std::swap(s.scalars, f.scalars2);
   std::swap(s.xtime, f.xtime2);
-  std::swap(f.Time1, f.Time2);
+  std::swap(s.Time(1), f.Time2);
 }
 
-void atm_compute_output_diagnostics(const Mesh& m, State& s) {
+void atm_compute_output_diagnostics(const Mesh& m, State& s, Diag& d) {
+  if (m.nVertLevels < 1 || !has(s.theta_m, {m.nVertLevels, m.nCells + 1}, true) ||
+      !has(d.pressure_p, {m.nVertLevels, m.nCells + 1}, true) || !has(d.pressure_base, {m.nVertLevels, m.nCells + 1}, true) ||
+      !has(s.rho_zz, {m.nVertLevels, m.nCells + 1}, true) || !has(s.theta, {m.nVertLevels, m.nCells + 1}, true) ||
+      !has(s.rho, {m.nVertLevels, m.nCells + 1}, true) || !has(m.zz, {m.nVertLevels, m.nCells}, false) ||
+      s.scalars.rank() != 3 || s.scalars.extent(1) != m.nVertLevels || s.scalars.extent(2) != m.nCells + 1)
+    throw Error("atm_compute_output_diagnostics: arrays not allocated with MPAS's extents");
   int index_qv = 0;
   for (std::size_t k = 0; k < s.scalar_names.size(); ++k)
     if (s.scalar_names[k] == "qv") index_qv = static_cast<int>(k) + 1;
   if (index_qv == 0) throw Error("atm_compute_output_diagnostics: qv is not an active scalar");
-  parallel_for(1, m.nCells, [=, m = view(m), s = view(s)] CPPMPAS_LAMBDA(int iCell) {  // mpas_atm_core.F:957-963
+  if (!d.pressure.allocated()) d.pressure.allocate({m.nVertLevels, m.nCells + 1}, 0.0);  // Registry default 0
+  parallel_for(1, m.nCells, [=, m = view(m), s = view(s), d = view(d)] CPPMPAS_LAMBDA(int iCell) {  // mpas_atm_core.F:957-963
     for (int k = 1; k <= m.nVertLevels; ++k) {
       s.theta(k, iCell) = s.theta_m(k, iCell) / (1. + rvord * s.scalars(index_qv, k, iCell));
       s.rho(k, iCell) = s.rho_zz(k, iCell) * m.zz(k, iCell);
+      d.pressure(k, iCell) = d.pressure_base(k, iCell) + d.pressure_p(k, iCell);
     }
   });
 }
 
 std::string add_seconds(const std::string& ts, long long seconds) {
-  int Y, M, D, h, mi, sec;
-  char tail;
-  if (ts.size() != 19 || std::sscanf(ts.c_str(), "%4d-%2d-%2d_%2d:%2d:%2d%c", &Y, &M, &D, &h, &mi, &sec, &tail) != 6)
-    throw Error("time stamp '" + ts + "' is not YYYY-MM-DD_hh:mm:ss");
+  // exactly YYYY-MM-DD_hh:mm:ss in ASCII digits and separators (no sign, blank or other character)
+  bool form = ts.size() == 19;
+  for (std::size_t i = 0; form && i < 19; ++i) {
+    const char want = i == 4 || i == 7 ? '-' : i == 10 ? '_' : i == 13 || i == 16 ? ':' : '0';
+    form = want == '0' ? (ts[i] >= '0' && ts[i] <= '9') : ts[i] == want;
+  }
+  if (!form) throw Error("time stamp '" + ts + "' is not YYYY-MM-DD_hh:mm:ss");
+  auto num = [&](std::size_t p, std::size_t n) {
+    int v = 0;
+    for (std::size_t i = p; i < p + n; ++i) v = v * 10 + (ts[i] - '0');
+    return v;
+  };
+  int Y = num(0, 4), M = num(5, 2), D = num(8, 2);
+  const int h = num(11, 2), mi = num(14, 2), sec = num(17, 2);
   if (seconds < 0) throw Error("add_seconds: negative interval");
+  // at most 9999 years of 366 days: no overflow, a bounded day loop, and the year stays below 10000 or is refused
+  if (seconds > 9999LL * 366 * 86400) throw Error("add_seconds: interval longer than 9999 years");
   auto leap = [](int y) { return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0; };
   auto mdays = [&](int y, int mo) {
     static const int n[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
@@ -982,8 +1191,8 @@ std::string add_seconds(const std::string& ts, long long seconds) {
   };
   if (Y < 0 || M < 1 || M > 12 || D < 1 || D > mdays(Y, M) || h > 23 || mi > 59 || sec > 59 || h < 0 || mi < 0 || sec < 0)
     throw Error("time stamp '" + ts + "' is not a valid date");
-  long long t = static_cast<long long>(h) * 3600 + mi * 60 + sec + seconds;
-  long long days = t / 86400;
+  long long t = static_cast<long long>(h) * 3600 + mi * 60 + sec + seconds % 86400;
+  long long days = seconds / 86400 + t / 86400;
   t %= 86400;
   while (days-- > 0) {
     if (++D > mdays(Y, M)) {
@@ -994,6 +1203,7 @@ std::string add_seconds(const std::string& ts, long long seconds) {
       }
     }
   }
+  if (Y > 9999) throw Error("add_seconds: the time is after the year 9999 (YYYY)");
   char buf[32];
   std::snprintf(buf, sizeof buf, "%04d-%02d-%02d_%02d:%02d:%02d", Y, M, D, static_cast<int>(t / 3600),
                 static_cast<int>(t / 60 % 60), static_cast<int>(t % 60));

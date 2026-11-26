@@ -97,6 +97,7 @@ set(CPPMPAS_SOURCES
   src/io/netcdf_file.cpp
   src/io/registry.cpp
   src/io/mpas_reader.cpp
+  src/io/mpas_restart.cpp
   src/io/mpas_writer.cpp
 )
 add_library(cppmpas STATIC ${CPPMPAS_SOURCES})

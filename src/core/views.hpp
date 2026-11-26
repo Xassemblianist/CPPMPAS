@@ -41,7 +41,7 @@ template <class T> void fill_all(FArray<T>& a, T v) {
 #define CPPMPAS_DIAG_REAL_ARRAYS(X)                                                                                   \
   X(ru) X(rw) X(rho_p) X(rtheta_base) X(rtheta_p) X(exner) X(exner_base) X(pressure_p) X(pressure_base) X(v)         \
   X(rho_edge) X(pv_edge) X(gradPVt) X(gradPVn) X(vorticity) X(pv_vertex) X(divergence) X(ke) X(pv_cell)              \
-  X(uReconstructX) X(uReconstructY) X(uReconstructZ) X(uReconstructZonal) X(uReconstructMeridional)
+  X(uReconstructX) X(uReconstructY) X(uReconstructZ) X(uReconstructZonal) X(uReconstructMeridional) X(pressure)
 
 // view element type: const T for a read-only view
 template <bool C, class T> using VElem = std::conditional_t<C, const T, T>;
