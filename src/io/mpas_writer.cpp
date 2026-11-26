@@ -225,7 +225,18 @@ void write_history(MpasInput& in, const std::string& path, const std::vector<std
       define_dims(f, dims, defined,
                   [&](const std::string& d) { return d == "Time" ? NC_UNLIMITED : file_dim(m, d); });
       f.def_var(n, nc_type_of(rv), dims);
-      for (const auto& [k, v] : rv.attrs) f.put_att_text(n, k, v);
+      for (const auto& [k, v] : rv.attrs) {
+        // mpas_atm_core.F:271-274: Time's units are 'seconds since ' // initial_time with '_' -> ' ' (written trimmed)
+        if (n == "Time" && k == "units") {
+          std::string t = in.state.initial_time;
+          while (!t.empty() && t.back() == ' ') t.pop_back();
+          if (t.empty()) throw Error("write Time: initial_time was not read");
+          std::replace(t.begin(), t.end(), '_', ' ');
+          f.put_att_text(n, k, "seconds since " + t);
+        } else {
+          f.put_att_text(n, k, v);
+        }
+      }
     }
     // mpas_subdriver.F:497-530 (character values are written trimmed, mpas_io.F:6036, 6208-6210)
     f.put_att_text("", "model_name", "mpas");

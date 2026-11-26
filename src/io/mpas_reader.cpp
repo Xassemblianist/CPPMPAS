@@ -484,7 +484,7 @@ FieldRef field_ref(MpasInput& in, const std::string& name) {
   CPPMPAS_R(meshScalingRegionalEdge) CPPMPAS_R(etp) CPPMPAS_R(etm) CPPMPAS_R(ewp) CPPMPAS_R(ewm)
   CPPMPAS_R(specZoneMaskCell) CPPMPAS_R(specZoneMaskEdge) CPPMPAS_R(specZoneMaskVertex)
   CPPMPAS_I(nearestRelaxationCell)
-  CPPMPAS_S(theta_m) CPPMPAS_S(rho_zz)
+  CPPMPAS_S(theta_m) CPPMPAS_S(rho_zz) CPPMPAS_S(Time)
   CPPMPAS_D(ru) CPPMPAS_D(rw) CPPMPAS_D(rho_p) CPPMPAS_D(rtheta_base) CPPMPAS_D(rtheta_p) CPPMPAS_D(exner)
   CPPMPAS_D(exner_base) CPPMPAS_D(pressure_p) CPPMPAS_D(pressure_base)
   CPPMPAS_D(v) CPPMPAS_D(rho_edge) CPPMPAS_D(vorticity) CPPMPAS_D(divergence) CPPMPAS_D(ke) CPPMPAS_D(pv_edge)
