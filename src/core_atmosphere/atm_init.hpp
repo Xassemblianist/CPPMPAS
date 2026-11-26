@@ -2,9 +2,9 @@
 #pragma once
 // The computations MPAS-Atmosphere's atm_mpas_init_block (src/core_atmosphere/mpas_atm_core.F:366-617) makes before
 // the first time step, in MPAS's order, for a cold start (config_do_restart = .false.) on one rank.
-// Not included (later units): atm_compute_solve_diagnostics and the first mpas_reconstruct (CORE:524-541, 545-563),
+// Not included (later units): atm_compute_solve_diagnostics and the first mpas_reconstruct (CORE:532-541, 546-563),
 // and for moist physics (SC) physics_tables_init / physics_registry_init / physics_run_init / physics_init
-// (CORE:568-596). These do not change any field computed here.
+// (CORE:565-597). These do not change any field computed here.
 #include <string>
 #include <vector>
 
@@ -39,5 +39,23 @@ void atm_init_coupled_diagnostics(const Mesh& mesh, State& state, Diag& diag);
 // atm_mpas_init_block (mpas_atm_core.F:366-617) without the parts listed at the top. log receives the messages MPAS
 // writes to its log (e.g. CORE:1263); allocates the fields first.
 void atm_mpas_init_block(Mesh& mesh, State& state, Diag& diag, const InitConfig& cfg, std::vector<std::string>& log);
+
+// atm_core_init (mpas_atm_core.F:155-201): nominalMinDc = config_len_disp when that is > 0, else config_len_disp =
+// nominalMinDc; both <= 0 is an error. cfg.config_len_disp is updated as MPAS updates the config.
+void atm_core_init_len_disp(Mesh& mesh, InitConfig& cfg, std::vector<std::string>& log);
+// startTimeStamp of the clock (mpas_atm_core.F:238-239) for a config_start_time in YYYY-MM-DD_hh:mm:ss form.
+std::string atm_start_time_stamp(const InitConfig& cfg);
+// mpas_atm_run_compatibility (mpas_atm_core.F:1578-1617): limited-area and dynamics checks.
+void mpas_atm_run_compatibility(const Mesh& mesh, const InitConfig& cfg, std::vector<std::string>& log);
+// What atm_core_init (mpas_atm_core.F:155-262) does to the fields of a cold start: len_disp, the compatibility
+// checks, atm_mpas_init_block, then xtime = startTimeStamp (:261-262).
+void atm_core_init(Mesh& mesh, State& state, Diag& diag, const InitConfig& cfg, std::vector<std::string>& log);
+
+// Arrays atm_core_init sets that are proven bit-identical against the MPAS references (tests init_restart_*,
+// init_step0_*), for meshes with an even nVertLevels: exner_base, pressure_base and pressure_p of an odd
+// nVertLevels go through the scalar pow of the last level, which no reference exercises.
+std::vector<std::string> init_block_verified_fields(int nVertLevels);
+// Every array atm_core_init sets (or overwrites).
+const std::vector<std::string>& init_block_computed_fields();
 
 }  // namespace cppmpas

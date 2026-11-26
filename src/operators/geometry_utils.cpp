@@ -10,7 +10,7 @@ namespace cppmpas {
 // mpas_geometry_utils.F:131-154. In the reference (inlined into mpas_sphere_angle as well) 2.0*r is r+r and
 // r*2.0*asin(...) is asin(...)*(r+r): both exact rewrites.
 real mpas_arc_length(real ax, real ay, real az, real bx, real by, real bz) {
-  const real cx = bx - ax;  // :141-143
+  const real cx = bx - ax;  // :140-142
   const real cy = by - ay;
   const real cz = bz - az;
   const real r = std::sqrt(ax * ax + ay * ay + az * az);  // :149
@@ -20,27 +20,27 @@ real mpas_arc_length(real ax, real ay, real az, real bx, real by, real bz) {
 
 // mpas_geometry_utils.F:27-72
 real mpas_sphere_angle(real ax, real ay, real az, real bx, real by, real bz, real cx, real cy, real cz) {
-  const real a = mpas_arc_length(bx, by, bz, cx, cy, cz);  // :45-47
+  const real a = mpas_arc_length(bx, by, bz, cx, cy, cz);  // :46-48
   const real b = mpas_arc_length(ax, ay, az, cx, cy, cz);
   const real c = mpas_arc_length(ax, ay, az, bx, by, bz);
 
-  const real ABx = bx - ax;  // :49-55
+  const real ABx = bx - ax;  // :50-56
   const real ABy = by - ay;
   const real ABz = bz - az;
   const real ACx = cx - ax;
   const real ACy = cy - ay;
   const real ACz = cz - az;
 
-  const real Dx = (ABy * ACz) - (ABz * ACy);     // :57-59
+  const real Dx = (ABy * ACz) - (ABz * ACy);     // :58-60
   const real Dy = -((ABx * ACz) - (ABz * ACx));
   const real Dz = (ABx * ACy) - (ABy * ACx);
 
-  const real s = 0.5 * (a + b + c);  // :61
-  // :63, sin@plt x4 (__sin_fma); MAX / MIN as maxsd / minsd (operand order of the reference executable)
+  const real s = 0.5 * (a + b + c);  // :62
+  // :64, sin@plt x4 (__sin_fma); MAX / MIN as maxsd / minsd (operand order of the reference executable)
   const real q = (libm::sin(s - b) * libm::sin(s - c)) / (libm::sin(b) * libm::sin(c));
   const real sin_angle = std::sqrt(minsd(maxsd(q, 0.0), 1.0));
 
-  if ((Dx * ax + Dy * ay + Dz * az) >= 0.0) {  // :65-69
+  if ((Dx * ax + Dy * ay + Dz * az) >= 0.0) {  // :66-70
     return 2.0 * libm::asin(maxsd(minsd(sin_angle, 1.0), -1.0));
   } else {
     return -2.0 * libm::asin(maxsd(minsd(sin_angle, 1.0), -1.0));

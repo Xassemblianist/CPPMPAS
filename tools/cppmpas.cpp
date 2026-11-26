@@ -5,7 +5,9 @@
 //   cppmpas history   <init> <out> --fields a,b,... [--scalars ...] [--file-id ID]
 //   cppmpas dump      <in> <out.nc> [--init] [--scalars ...]
 //   cppmpas init      <init> <out> --fields a,b,... [--namelist namelist.atmosphere] [--scalars ...] [--file-id ID]
-// init runs the computations of atm_mpas_init_block (core_atmosphere/atm_init.hpp) on an init file and writes the
+//                     [--unverified]
+// init runs what atm_core_init does to the fields of a cold start (core_atmosphere/atm_init.hpp: len_disp, the
+// compatibility checks, atm_mpas_init_block, xtime) on an init file and writes the
 // given fields as MPAS writes them to a history / restart file (global order, Registry layout).
 // dump writes every array as MPAS holds it in memory on one rank: local order, local 1-based indices, the garbage
 // element included (dimensions <dim>_mem); compare with MPAS memory dumps after nothing more than a type change.
@@ -42,7 +44,7 @@ std::vector<std::string> split(const std::string& s) {
 
 struct Args {
   std::vector<std::string> pos;
-  bool init = false;
+  bool init = false, unverified = false;
   std::vector<std::string> scalars{"qv"}, fields;
   std::string file_id, namelist;
 };
@@ -56,6 +58,7 @@ Args parse(int argc, char** argv) {
       return argv[++i];
     };
     if (s == "--init") a.init = true;
+    else if (s == "--unverified") a.unverified = true;
     else if (s == "--scalars") a.scalars = split(next());
     else if (s == "--fields") a.fields = split(next());
     else if (s == "--file-id") a.file_id = next();
@@ -179,12 +182,22 @@ int run(int argc, char** argv) {
                  "written yet\n";
   } else if (cmd == "init") {
     if (a.pos.size() != 2 || a.fields.empty())
-      throw Error("usage: cppmpas init <init> <out> --fields a,b,... [--namelist file] [--scalars ...] [--file-id ID]");
+      throw Error("usage: cppmpas init <init> <out> --fields a,b,... [--namelist file] [--scalars ...] [--file-id ID] "
+                  "[--unverified]");
     a.init = true;
     const InitConfig cfg = read_init_config(a.namelist);
     MpasInput in = load(a, a.pos[0]);
+    // an array this port computes that is not yet proven against MPAS needs --unverified (CONSTITUTION.md 3.1)
+    const auto& computed = init_block_computed_fields();
+    const auto verified = init_block_verified_fields(in.mesh.nVertLevels);
+    for (const auto& f : a.fields) {
+      const bool is_computed = std::find(computed.begin(), computed.end(), f) != computed.end();
+      if (is_computed && !a.unverified && std::find(verified.begin(), verified.end(), f) == verified.end())
+        throw Error("field " + f + " is computed by a port not yet verified against MPAS output; --unverified "
+                    "writes it anyway");
+    }
     std::vector<std::string> log;
-    atm_mpas_init_block(in.mesh, in.state, in.diag, cfg, log);
+    atm_core_init(in.mesh, in.state, in.diag, cfg, log);
     for (const auto& l : log) std::cerr << "MPAS log: " << l << "\n";
     HistoryOptions opt;
     opt.file_id = a.file_id;
