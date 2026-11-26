@@ -262,7 +262,7 @@ MUTATIONS = [
      D("uReconstructMeridional", "JW")),
     (RC, "      libm::sincos(m.lonCell(iCell), &slon, &clon);", "      libm::sincos(m.lonCell(iCell), &clon, &slon);",
      D("uReconstructZonal uReconstructMeridional", "JW")),
-    # the arrays OPM03 could not compare
+    # the init-block arrays the restart and step files do not hold (initdump only)
     (A, "m.invAreaCell(iCell) = 1.0 / m.areaCell(iCell);",
      "m.invAreaCell(iCell) = 1.0 / std::sqrt(m.areaCell(iCell)) / std::sqrt(m.areaCell(iCell));", D("invAreaCell", "MW SC JW")),
     (A, "m.invDvEdge(iEdge) = 1.0 / m.dvEdge(iEdge);",
@@ -430,7 +430,7 @@ MUTATIONS = [
     # behaviour can reach the CLI (each guard is killed in unit_io_core); the message the user sees can be changed
     ("src/io/registry.cpp", "  if (!r) throw Error(\"variable '\" + name + \"' is not defined in MPAS-Atmosphere's Registry\");",
      "  if (!r) throw Error(\"variable '\" + name + \"' is not in the Registry\");", ["err_unknown_field", "unit_io_core"]),
-    # --- OPM07: the two routines on arrays that hold values (unit_solve_diag): each zeroing of an accumulation
+    # --- the two routines on arrays that hold values (unit_solve_diag): each zeroing of an accumulation
     (S, "    for (int k = 1; k <= nVertLevels; ++k) vorticity(k, iVertex) = 0.0;\n", "", ["unit_solve_diag"]),
     (S, "    for (int k = 1; k <= nVertLevels; ++k) divergence(k, iCell) = 0.0;\n", "", ["unit_solve_diag"]),
     (S, "    for (int k = 1; k <= nVertLevels; ++k) ke(k, iCell) = 0.0;\n", "", ["unit_solve_diag"]),
