@@ -12,6 +12,7 @@
 
 #include "core/backend.hpp"
 #include "core/glibc_math.hpp"
+#include "core/libmvec_x86.hpp"
 
 namespace cppmpas::libm {
 
@@ -44,6 +45,7 @@ CPPMPAS_FORCEINLINE double atan2(double y, double x) {  // __ieee754_atan2_fma
   return ::cppwrf::glibc::atan2(arg(y), arg(x));
 }
 CPPMPAS_FORCEINLINE double pow(double x, double y) { return ::cppwrf::glibc::pow(arg(x), arg(y)); }  // __ieee754_pow_fma
+CPPMPAS_FORCEINLINE double exp(double x) { return ::cppwrf::glibc::exp(arg(x)); }  // __exp_fma (Kessler)
 
 // one lane of libmvec's 2-lane SSE4 functions (glibc 2.41 sysdeps/x86_64/fpu/multiarch/svml_d_*2_core_sse4.S)
 CPPMPAS_FORCEINLINE double mvec_sin(double x) { return ::cppwrf::glibc::mvec::sin(arg(x)); }  // _ZGVbN2v_sin_sse4
@@ -51,6 +53,7 @@ CPPMPAS_FORCEINLINE double mvec_cos(double x) { return ::cppwrf::glibc::mvec::co
 CPPMPAS_FORCEINLINE double mvec_pow(double x, double y) {  // _ZGVbN2vv_pow_sse4
   return ::cppwrf::glibc::mvec::pow(arg(x), arg(y));
 }
+CPPMPAS_FORCEINLINE double mvec_exp(double x) { return ::cppwrf::glibc::mvec::exp(arg(x)); }  // _ZGVbN2v_exp_sse4
 
 // sincos: __sincos_fma, glibc 2.41 sysdeps/ieee754/dbl-64/s_sincos.c (built with FMA through
 // sysdeps/x86_64/fpu/multiarch/s_sincos-fma.c), statement by statement, with s_sin.c's do_sin, do_cos and
@@ -105,5 +108,13 @@ CPPMPAS_FORCEINLINE void sincos(double x, double* sinx, double* cosx) {
   }
   *sinx = *cosx = x / x;  // :106 (errno of :103-104 left out)
 }
+
+// WSM6 (physics/mp_wsm6.hpp): log (__log_fma), atan (__atan_fma, mp_wsm6_init's pi) and the 2-lane log
+// _ZGVbN2v_log_sse4 (CPPWRF's core/libmvec_x86.hpp, shared). The vector log takes an approximate reciprocal with
+// rcpps, which the hardware defines: libmvec_tables.hpp holds Intel's (dumped on an i7-10750H, the workstation);
+// lanes outside the normal range call the scalar log, as libmvec does.
+CPPMPAS_FORCEINLINE double log(double x) { return ::cppwrf::glibc::log(arg(x)); }    // __log_fma
+CPPMPAS_FORCEINLINE double atan(double x) { return ::cppwrf::glibc::atan(arg(x)); }  // __atan_fma
+CPPMPAS_FORCEINLINE double mvec_log(double x) { return ::cppwrf::mvec::log(arg(x)); }  // _ZGVbN2v_log_sse4 (Intel rcpps)
 
 }  // namespace cppmpas::libm
