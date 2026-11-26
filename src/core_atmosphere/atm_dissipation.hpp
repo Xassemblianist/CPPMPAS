@@ -1,23 +1,33 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 // The dissipation routines of src/core_atmosphere/dynamics/mpas_atm_dissipation_models.F (DM) that
-// atm_compute_dyn_tend calls at rk_step 1, on the path of the mountain-wave reference: les_model_opt = none,
-// 2nd-order horizontal mixing with eddy_visc_horz, no 4th-order filter (h_mom_eddy_visc4 = h_theta_eddy_visc4 = 0),
-// vertical mixing of the full state (config_mix_full = .true.) with v_*_eddy_visc2 > 0, no scalar mixing. Any
-// other branch is an Error (atm_dycore.hpp check_dycore_supported refuses the configurations first).
+// atm_compute_dyn_tend calls at rk_step 1, on the paths of the mountain-wave (MW) and JW baroclinic-wave references:
+// les_model_opt = none; the eddy viscosity of smagorinsky_2d (JW) or 2d_fixed (MW, set in atm_compute_dyn_tend);
+// 2nd-order horizontal mixing with eddy_visc_horz; the 4th-order filters when h_mom_eddy_visc4 / h_theta_eddy_visc4
+// > 0 (JW, from smagorinsky_2d); vertical mixing of the full state (config_mix_full = .true.) when v_*_eddy_visc2 > 0
+// (MW), none when v_*_eddy_visc2 = 0 (JW); no scalar mixing. Any other branch is an Error (atm_dycore.hpp
+// check_dycore_supported refuses the configurations first).
 #include "core/mesh.hpp"
 
 namespace cppmpas {
 
 struct DissipationArgs {
   bool config_mix_full = true;
+  real config_del4u_div_factor = 10;  // Registry.xml:189
   real h_mom_eddy_visc4 = 0, v_mom_eddy_visc2 = 0;
   real h_theta_eddy_visc4 = 0, v_theta_eddy_visc2 = 0, prandtl_inv = 1;
 };
 
+// DM:119-204, called at TI:6348-6352 for config_horiz_mixing = '2d_smagorinsky': kdiff (eddy_visc_horz) of every
+// cell from u and v of the current state and diagnostics, h_mom_eddy_visc4 = h_theta_eddy_visc4 =
+// config_visc4_2dsmag * config_len_disp**3.
+void smagorinsky_2d(const Mesh& m, FArray<real>& kdiff, const FArray<real>& u, const FArray<real>& v, real c_s,
+                    real config_len_disp, real invDt, real config_visc4_2dsmag, real& h_mom_eddy_visc4,
+                    real& h_theta_eddy_visc4);
 // DM:579-947. u, divergence, vorticity, rho_edge of the current solve diagnostics; tend_u_euler accumulates.
 void u_dissipation_3d(const Mesh& m, const DissipationArgs& a, const FArray<real>& eddy_visc_horz,
-                      FArray<real>& delsq_u, const FArray<real>& u, const FArray<real>& divergence,
+                      FArray<real>& delsq_u, FArray<real>& delsq_vorticity, FArray<real>& delsq_divergence,
+                      const FArray<real>& u, const FArray<real>& divergence,
                       const FArray<real>& vorticity, const FArray<real>& rho_edge, FArray<real>& tend_u_euler);
 // DM:951-1153. tend_w_euler is zeroed and set.
 void w_dissipation_3d(const Mesh& m, const DissipationArgs& a, FArray<real>& delsq_w, const FArray<real>& w,

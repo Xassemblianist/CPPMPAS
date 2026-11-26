@@ -435,13 +435,14 @@ void atm_compute_dyn_tend(const DycoreConfig& cfg, const Mesh& m, const State& s
 
   DissipationArgs da;
   da.config_mix_full = cfg.config_mix_full;
+  da.config_del4u_div_factor = cfg.config_del4u_div_factor;
   da.h_mom_eddy_visc4 = h_mom_eddy_visc4;
   da.v_mom_eddy_visc2 = v_mom_eddy_visc2;
   da.h_theta_eddy_visc4 = h_theta_eddy_visc4;
   da.v_theta_eddy_visc2 = v_theta_eddy_visc2;
   da.prandtl_inv = prandtl_inv;
   if (rk_step == 1)  // :6582-6601
-    u_dissipation_3d(m, da, eddy_visc_horz, f.delsq_u, u, d.divergence, d.vorticity, rho_edge, tend_u_euler);
+    u_dissipation_3d(m, da, eddy_visc_horz, f.delsq_u, f.delsq_vorticity, f.delsq_divergence, u, d.divergence, d.vorticity, rho_edge, tend_u_euler);
 
   if (cfg.config_rayleigh_damp_u) throw Error("atm_compute_dyn_tend: Rayleigh damping of u (TI:6608) is not ported");
   for (int iEdge = 1; iEdge <= m.nEdgesSolve(); ++iEdge)  // :6635-6642
