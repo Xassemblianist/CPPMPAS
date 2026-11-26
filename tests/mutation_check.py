@@ -403,7 +403,9 @@ MUTATIONS = [
     ("src/core/field.hpp", "    if (d < 0) throw Error(\"FArray: negative dimension index\");", "", ["unit_decomp"]),
     ("tests/compare_arrays.py", "            out.append((k, arr.dtype.str, arr.tobytes()))\n    return out",
      "            out.append((k, arr.dtype.str, arr.tobytes()))\n    return sorted(out)", ["compare_arrays_unit"]),
-    ("tests/compare_arrays.py", "    if \"\" in names:", "    if False:", ["compare_arrays_unit"]),
+    # (an empty name would also fail as a missing variable: the mutant restores the old filter)
+    ("tests/compare_arrays.py", "    names = a.vars.split(\",\")\n", "    names = [v for v in a.vars.split(\",\") if v]\n",
+     ["compare_arrays_unit"]),
     ("tools/gen_namelist_table.py", "        if key in out:", "        if False:", ["namelist_gen_errors"]),
     ("tools/gen_namelist_table.py", "            if typ != \"character\" and quoted:", "            if False:", ["namelist_gen_errors"]),
     ("tools/gen_namelist_table.py", "        if not -2**31 <= int(text) <= 2**31 - 1:", "        if False:", ["namelist_gen_errors"]),
