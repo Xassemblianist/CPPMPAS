@@ -7,7 +7,7 @@
 //  * read_dycore_config takes the options of the namelist file and config_len_disp / config_coef_3rd_order /
 //    config_apvm_upwinding / config_dt from the InitConfig that atm_core_init left.
 //
-// usage: test_dycore <MW init file> <MW namelist.atmosphere>
+// usage: test_dycore <MW init file> <MW namelist.atmosphere> <scratch dir>
 #include <cmath>
 #include <cstdio>
 #include <functional>
@@ -19,6 +19,7 @@
 #include "core_atmosphere/atm_dycore.hpp"
 #include "core_atmosphere/atm_init.hpp"
 #include "io/mpas_reader.hpp"
+#include "io/mpas_writer.hpp"
 
 using namespace cppmpas;
 
@@ -41,8 +42,8 @@ template <class F> static bool throws_with(F f, const std::string& text) {
 }
 
 int main(int argc, char** argv) {
-  if (argc != 3) {
-    std::printf("usage: test_dycore <MW init file> <MW namelist.atmosphere>\n");
+  if (argc != 4) {
+    std::printf("usage: test_dycore <MW init file> <MW namelist.atmosphere> <scratch dir>\n");
     return 2;
   }
   InitConfig icfg = read_init_config(argv[2]);
@@ -181,6 +182,13 @@ int main(int argc, char** argv) {
     atm_timestep(mw, t.mesh, t.state, t.diag, tf, 6.0, "0000-01-01_00:30:06");
     shift_time_levels(t.state, tf);
     expect(t.state.Time(1) == 1806.0 && tf.Time2 == 1800.0, "Time: 1800 + 6 after one step");
+    // xtime of the new time level is character(len=StrLen): the stamp, blank-padded to 64
+    expect(t.state.xtime == "0000-01-01_00:30:06" + std::string(45, ' '), "xtime: the new stamp, blank-padded");
+    const real u_before = t.state.u(5, 7);
+    expect(throws_with([&] { atm_timestep(mw, t.mesh, t.state, t.diag, tf, 6.0, std::string(65, '0')); },
+                       "xtime longer than StrLen"),
+           "atm_timestep refuses an xtime longer than 64");
+    expect(t.state.u(5, 7) == u_before && tf.Time2 == 1800.0, "atm_timestep refuses before it steps");
     State s0 = in.state;
     s0.Time = FArray<real>();
     DycoreFields f0;
@@ -208,6 +216,35 @@ int main(int argc, char** argv) {
   expect(throws_with([] { add_seconds("2001-13-01_00:00:00", 6); }, "is not a valid date"), "add_seconds month 13");
   expect(throws_with([] { add_seconds("2001-01-01_24:00:00", 6); }, "is not a valid date"), "add_seconds hour 24");
   expect(throws_with([] { add_seconds("0000-01-01_00:00:00", -1); }, "negative"), "add_seconds negative");
+  // only ASCII digits and the separators (review F8): no blank, sign or NUL
+  for (const char* bad : {"  00- 1- 1_ 0: 0: 0", "+000-+1-+1_+0:+0:+0", "0000/01/01_00:00:00", "0000-01-01T00:00:00",
+                          "0000-01-01_00-00-00"})
+    expect(throws_with([&] { add_seconds(bad, 6); }, "is not YYYY-MM-DD_hh:mm:ss"), std::string("add_seconds ") + bad);
+  expect(throws_with([] { add_seconds(std::string("0000-01-01_00:00:0\0", 19), 6); }, "time stamp '"),
+         "add_seconds embedded NUL");
+  // the year stays within YYYY; the interval is bounded (no overflow, a bounded day loop: review F18)
+  expect(add_seconds("9999-12-31_23:59:58", 1) == "9999-12-31_23:59:59", "add_seconds last second of 9999");
+  expect(throws_with([] { add_seconds("9999-12-31_23:59:59", 1); }, "after the year 9999"), "add_seconds year 10000");
+  expect(throws_with([] { add_seconds("0000-01-01_00:00:00", 9999LL * 366 * 86400 + 1); }, "longer than 9999 years"),
+         "add_seconds interval bound");
+  expect(throws_with([] { add_seconds("0000-01-01_00:00:00", 9223372036854775807LL); }, "longer than 9999 years"),
+         "add_seconds LLONG_MAX");
+  expect(add_seconds("0000-01-01_23:59:59", 86400LL * 365 + 1) == "0001-01-01_00:00:00", "add_seconds a year (0 leap)");
+  // write_history: a Time without initial_time is refused before the file is created (review F8)
+  {
+    const std::string path = std::string(argv[3]) + "/keep.nc";
+    { std::FILE* fp = std::fopen(path.c_str(), "w"); std::fputs("keep", fp); std::fclose(fp); }
+    MpasInput t = in;
+    t.state.initial_time = std::string(64, ' ');
+    expect(throws_with([&] { write_history(t, path, {"Time"}, HistoryOptions{}); }, "initial_time was not read"),
+           "write_history refuses Time without initial_time");
+    char buf[8] = {0};
+    std::FILE* fp = std::fopen(path.c_str(), "r");
+    const bool kept = fp && std::fread(buf, 1, 4, fp) == 4 && std::string(buf) == "keep";
+    if (fp) std::fclose(fp);
+    expect(kept, "write_history leaves the existing file untouched");
+    std::remove(path.c_str());
+  }
 
   std::printf("%s (%d failures)\n", fails ? "FAILED" : "OK", fails);
   return fails ? 1 : 0;

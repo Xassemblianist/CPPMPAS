@@ -206,6 +206,23 @@ void write_history(MpasInput& in, const std::string& path, const std::vector<std
   if (fields.empty()) throw Error("history: no fields to write");
   const Mesh& m = in.mesh;
   // every field is checked before the file is created: no partial file is left behind
+  // MPAS_io_put_att_text (mpas_io.F:6036-6045, 6208-6210): trim, cut at StrKIND, trim; SMIOL then writes
+  // strlen of the C string (smiol.c:1731), which ends at the first NUL
+  auto trimmed = [](std::string s) {
+    while (!s.empty() && s.back() == ' ') s.pop_back();
+    s = s.substr(0, 512);
+    while (!s.empty() && s.back() == ' ') s.pop_back();
+    return s.substr(0, s.find('\0'));
+  };
+  // mpas_atm_core.F:271-274: Time's units are 'seconds since ' // initial_time with '_' -> ' ' (written trimmed)
+  std::string time_units;
+  if (std::find(fields.begin(), fields.end(), "Time") != fields.end()) {
+    std::string t = in.state.initial_time;
+    while (!t.empty() && t.back() == ' ') t.pop_back();
+    if (t.empty()) throw Error("write Time: initial_time was not read");
+    std::replace(t.begin(), t.end(), '_', ' ');
+    time_units = trimmed("seconds since " + t);
+  }
   for (const auto& n : fields) {
     const RegistryVar& rv = registry_var(n);
     const FieldRef ref = field_ref(in, n);  // a field without a port is an error
@@ -228,11 +245,7 @@ void write_history(MpasInput& in, const std::string& path, const std::vector<std
       for (const auto& [k, v] : rv.attrs) {
         // mpas_atm_core.F:271-274: Time's units are 'seconds since ' // initial_time with '_' -> ' ' (written trimmed)
         if (n == "Time" && k == "units") {
-          std::string t = in.state.initial_time;
-          while (!t.empty() && t.back() == ' ') t.pop_back();
-          if (t.empty()) throw Error("write Time: initial_time was not read");
-          std::replace(t.begin(), t.end(), '_', ' ');
-          f.put_att_text(n, k, "seconds since " + t);
+          f.put_att_text(n, k, time_units);
         } else {
           f.put_att_text(n, k, v);
         }
@@ -251,14 +264,6 @@ void write_history(MpasInput& in, const std::string& path, const std::vector<std
     f.put_att_double("", "x_period", m.x_period);
     f.put_att_double("", "y_period", m.y_period);
     f.put_att_text("", "history", "mpirun -n " + std::to_string(opt.nprocs) + " ./atmosphere_model");
-    // MPAS_io_put_att_text (mpas_io.F:6036-6045, 6208-6210): trim, cut at StrKIND, trim; SMIOL then writes
-    // strlen of the C string (smiol.c:1731), which ends at the first NUL
-    auto trimmed = [](std::string s) {
-      while (!s.empty() && s.back() == ' ') s.pop_back();
-      s = s.substr(0, 512);
-      while (!s.empty() && s.back() == ' ') s.pop_back();
-      return s.substr(0, s.find('\0'));
-    };
     f.put_att_text("", "parent_id", trimmed(m.parent_id));
     f.put_att_text("", "mesh_spec", trimmed(m.mesh_spec));
     f.put_att_text("", "file_id", trimmed(opt.file_id.empty() ? random_file_id() : opt.file_id));

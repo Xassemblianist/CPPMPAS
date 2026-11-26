@@ -654,7 +654,7 @@ MUTATIONS += [
      JST([0], "xtime Time u w rho_zz theta_m rho theta pressure_p qv")),
     (X, "    for (const auto& sn : in.state.scalar_names) fields.push_back(sn);", "",
      ST(range(11), "qv") + JST(range(11), "qv")),
-    ("src/io/mpas_writer.cpp", '          f.put_att_text(n, k, "seconds since " + t);', "          f.put_att_text(n, k, v);",
+    ("src/io/mpas_writer.cpp", '          f.put_att_text(n, k, time_units);', "          f.put_att_text(n, k, v);",
      ST(range(11), "Time") + JST(range(11), "Time")),
     # JW: smagorinsky_2d (DM:119-204) and its call (TI:6346-6352)
     (DS, "        dudx[k] = dudx[k] + c2 * u(k, e) - cs * v(k, e);", "        dudx[k] = dudx[k] + c2 * u(k, e) + cs * v(k, e);",
@@ -700,6 +700,20 @@ MUTATIONS += [
      "      const real r_areaCell = a.h_theta_eddy_visc4 * a.prandtl_inv * m.invAreaCell(iCell) * 0.5;",
      JST([1], "theta_m theta")),
     (DY, "  da.config_del4u_div_factor = cfg.config_del4u_div_factor;", "  da.config_del4u_div_factor = 1.0;", J1),
+    # time stamps (review F8, F18); the blank padding of xtime itself has no file-level mutant: the writer pads
+    # character fields with blanks too (mpas_writer.cpp write_values), unit_dycore compares the string
+    (DY, "    form = want == '0' ? (ts[i] >= '0' && ts[i] <= '9') : ts[i] == want;",
+     "    form = want == '0' ? true : ts[i] == want;", ["unit_dycore"]),
+    (DY, "  if (seconds > 9999LL * 366 * 86400) throw", "  if (false) throw", ["unit_dycore"]),
+    (DY, '  if (Y > 9999) throw Error("add_seconds:', '  if (false) throw Error("add_seconds:', ["unit_dycore"]),
+    (DY, '  if (xtime_new.size() > 64) throw', '  if (false) throw', ["unit_dycore"]),
+    (DY, "  f.xtime2.resize(64, ' ');", "", ["unit_dycore"]),
+    # the content of xtime with its file name unchanged (review F12): the files' xtime values must differ
+    (DY, "  f.xtime2.resize(64, ' ');", "  f.xtime2.resize(64, 'x');",
+     ST(range(1, 11), "xtime") + JST(range(1, 11), "xtime") + ["dycore_MW_restart_xtime", "dycore_MW_output30_xtime",
+      "dycore_JW_restart_xtime", "dycore_JW_output24h_xtime", "unit_dycore"]),
+    ("src/io/mpas_writer.cpp", '    if (t.empty()) throw Error("write Time: initial_time was not read");',
+     '    if (false) throw Error("write Time: initial_time was not read");', ["unit_dycore"]),
     # the configuration checks, the CLI
     (DY, '  if (c.config_horiz_mixing != "2d_fixed" && c.config_horiz_mixing != "2d_smagorinsky")',
      '  if (c.config_horiz_mixing != "2d_fixed")', ["dycore_run_JW", "dycore_run_long_JW", "unit_dycore"]),

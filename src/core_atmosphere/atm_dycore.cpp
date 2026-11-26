@@ -911,8 +911,11 @@ void atm_srk3(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreF
 
 void atm_timestep(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreFields& f, real dt,
                   const std::string& xtime_new) {
+  if (xtime_new.size() > 64) throw Error("atm_timestep: xtime longer than StrLen = 64");
   atm_srk3(cfg, m, s, d, f, dt);  // TI:1829
-  f.xtime2 = xtime_new;           // TI:1836-1842
+  // TI:1836-1842; xtime is character(len=StrLen = 64), blank-padded as the input stream holds it
+  f.xtime2 = xtime_new;
+  f.xtime2.resize(64, ' ');
   f.Time2 = s.Time(1) + dt;         // TI:1844-1849
 }
 
@@ -939,11 +942,23 @@ void atm_compute_output_diagnostics(const Mesh& m, State& s) {
 }
 
 std::string add_seconds(const std::string& ts, long long seconds) {
-  int Y, M, D, h, mi, sec;
-  char tail;
-  if (ts.size() != 19 || std::sscanf(ts.c_str(), "%4d-%2d-%2d_%2d:%2d:%2d%c", &Y, &M, &D, &h, &mi, &sec, &tail) != 6)
-    throw Error("time stamp '" + ts + "' is not YYYY-MM-DD_hh:mm:ss");
+  // exactly YYYY-MM-DD_hh:mm:ss in ASCII digits and separators (no sign, blank or other character)
+  bool form = ts.size() == 19;
+  for (std::size_t i = 0; form && i < 19; ++i) {
+    const char want = i == 4 || i == 7 ? '-' : i == 10 ? '_' : i == 13 || i == 16 ? ':' : '0';
+    form = want == '0' ? (ts[i] >= '0' && ts[i] <= '9') : ts[i] == want;
+  }
+  if (!form) throw Error("time stamp '" + ts + "' is not YYYY-MM-DD_hh:mm:ss");
+  auto num = [&](std::size_t p, std::size_t n) {
+    int v = 0;
+    for (std::size_t i = p; i < p + n; ++i) v = v * 10 + (ts[i] - '0');
+    return v;
+  };
+  int Y = num(0, 4), M = num(5, 2), D = num(8, 2);
+  const int h = num(11, 2), mi = num(14, 2), sec = num(17, 2);
   if (seconds < 0) throw Error("add_seconds: negative interval");
+  // at most 9999 years of 366 days: no overflow, a bounded day loop, and the year stays below 10000 or is refused
+  if (seconds > 9999LL * 366 * 86400) throw Error("add_seconds: interval longer than 9999 years");
   auto leap = [](int y) { return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0; };
   auto mdays = [&](int y, int mo) {
     static const int n[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
@@ -951,8 +966,8 @@ std::string add_seconds(const std::string& ts, long long seconds) {
   };
   if (Y < 0 || M < 1 || M > 12 || D < 1 || D > mdays(Y, M) || h > 23 || mi > 59 || sec > 59 || h < 0 || mi < 0 || sec < 0)
     throw Error("time stamp '" + ts + "' is not a valid date");
-  long long t = static_cast<long long>(h) * 3600 + mi * 60 + sec + seconds;
-  long long days = t / 86400;
+  long long t = static_cast<long long>(h) * 3600 + mi * 60 + sec + seconds % 86400;
+  long long days = seconds / 86400 + t / 86400;
   t %= 86400;
   while (days-- > 0) {
     if (++D > mdays(Y, M)) {
@@ -963,6 +978,7 @@ std::string add_seconds(const std::string& ts, long long seconds) {
       }
     }
   }
+  if (Y > 9999) throw Error("add_seconds: the time is after the year 9999 (YYYY)");
   char buf[32];
   std::snprintf(buf, sizeof buf, "%04d-%02d-%02d_%02d:%02d:%02d", Y, M, D, static_cast<int>(t / 3600),
                 static_cast<int>(t / 60 % 60), static_cast<int>(t % 60));
