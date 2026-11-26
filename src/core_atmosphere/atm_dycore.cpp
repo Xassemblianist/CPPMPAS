@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // atm_srk3 and the routines it calls (src/core_atmosphere/dynamics/mpas_atm_time_integration.F, TI) on the path of
-// the mountain-wave reference; see atm_dycore.hpp. Statement by statement: MPAS's loop order, operation order and
+// the mountain-wave and JW baroclinic-wave references; see atm_dycore.hpp. Statement by statement: MPAS's loop order, operation order and
 // parenthesisation (Fortran evaluates a*b*c/d as ((a*b)*c)/d, -a*b as -(a*b)), integer powers as multiplies.
 //
 // Reference object code (objdump -d of bin/atmosphere_model, mpas-build asset 153c7206..., gfortran 14.2 -O3, no
@@ -76,12 +76,14 @@ DycoreConfig read_dycore_config(const std::string& namelist_path, const InitConf
   c.config_horiz_mixing = get("config_horiz_mixing");
   c.config_les_model = get("config_les_model");
   c.config_len_disp = init_cfg.config_len_disp;  // as atm_core_init left it (mpas_atm_core.F:155-201)
+  c.config_visc4_2dsmag = r("config_visc4_2dsmag");
   c.config_mix_scalars = l("config_mix_scalars");
   c.config_del4u_div_factor = r("config_del4u_div_factor");
   c.config_scalar_advection = l("config_scalar_advection");
   c.config_positive_definite = l("config_positive_definite");
   c.config_monotonic = l("config_monotonic");
   c.config_coef_3rd_order = init_cfg.config_coef_3rd_order;
+  c.config_smagorinsky_coef = r("config_smagorinsky_coef");
   c.config_mix_full = l("config_mix_full");
   c.config_smdiv = r("config_smdiv");
   c.config_apvm_upwinding = init_cfg.config_apvm_upwinding;
@@ -106,7 +108,8 @@ void check_dycore_supported(const DycoreConfig& c, const Mesh& m, const State& s
   if (c.config_split_dynamics_transport) no("config_split_dynamics_transport = true");  // TI:2054, 2674
   if (c.config_scalar_advection) no("config_scalar_advection = true (atm_advance_scalars, TI:2504-2507)");
   if (c.config_positive_definite) no("config_positive_definite = true");
-  if (c.config_horiz_mixing != "2d_fixed") no("config_horiz_mixing = '" + c.config_horiz_mixing + "'");  // TI:6346
+  if (c.config_horiz_mixing != "2d_fixed" && c.config_horiz_mixing != "2d_smagorinsky")  // TI:6346, 6354
+    no("config_horiz_mixing = '" + c.config_horiz_mixing + "'");
   if (c.config_les_model != "none") no("config_les_model = '" + c.config_les_model + "'");
   if (c.config_mpas_cam_coef > 0.0) no("config_mpas_cam_coef > 0 (TI:6390)");
   if (c.config_rayleigh_damp_u) no("config_rayleigh_damp_u = true (TI:6608)");
@@ -114,8 +117,9 @@ void check_dycore_supported(const DycoreConfig& c, const Mesh& m, const State& s
   if (!c.config_mix_full) no("config_mix_full = false (DM:848, 1442)");
   if (c.config_h_mom_eddy_visc4 > 0.0) no("config_h_mom_eddy_visc4 > 0 (DM:728, 1073)");
   if (c.config_h_theta_eddy_visc4 > 0.0) no("config_h_theta_eddy_visc4 > 0 (DM:1306)");
-  if (!(c.config_v_mom_eddy_visc2 > 0.0)) no("config_v_mom_eddy_visc2 <= 0 (DM:816, 1102 not taken)");
-  if (!(c.config_v_theta_eddy_visc2 > 0.0)) no("config_v_theta_eddy_visc2 <= 0 (DM:1414 not taken)");
+  // vertical mixing: > 0 (MW, DM:816, 1102, 1414) or 0 (JW, not taken); no reference has a negative value
+  if (!(c.config_v_mom_eddy_visc2 >= 0.0)) no("config_v_mom_eddy_visc2 < 0");
+  if (!(c.config_v_theta_eddy_visc2 >= 0.0)) no("config_v_theta_eddy_visc2 < 0");
   if (c.config_apply_lbcs) no("config_apply_lbcs = true");
   if (c.config_IAU_option != "off") no("config_IAU_option = '" + c.config_IAU_option + "' (TI:2168)");
   if (c.config_physics_suite != "none") no("config_physics_suite = '" + c.config_physics_suite + "'");
@@ -133,10 +137,15 @@ void check_dycore_supported(const DycoreConfig& c, const Mesh& m, const State& s
   // odd nVertLevels: the last level of the rk_step-3 Exner pow is scalar pow@plt (TI:4439), never exercised
   if (m.nVertLevels < 4 || m.nVertLevels % 2 != 0) no("nVertLevels = " + std::to_string(m.nVertLevels) +
                                                       " (only an even nVertLevels >= 4 is verified)");
-  // the reference_u term (TI:6546-6550) calls sincos / libmvec lanes whose values only enter through fEdge: with
-  // fEdge = 0 (MW) the term is +-0; any other fEdge is not verified
-  for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge)
-    if (m.fEdge(iEdge) != 0.0) no("fEdge != 0 (the reference_u term of TI:6547-6548)");
+  // the reference_u term (TI:6546-6550) calls sincos / libmvec lanes (coriolis_reference below) whose values enter
+  // only through u_init, v_init and fEdge: with fEdge = 0 (MW) or u_init = v_init = 0 (JW) the term is +-0 whatever
+  // the lanes give; a non-zero term is not verified
+  bool uv_init_zero = true;
+  for (int k = 1; k <= m.nVertLevels; ++k)
+    if (s.u_init(k) != 0.0 || s.v_init(k) != 0.0) uv_init_zero = false;
+  if (!uv_init_zero)
+    for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge)
+      if (m.fEdge(iEdge) != 0.0) no("fEdge != 0 with u_init or v_init != 0 (the reference_u term of TI:6547-6548)");
   if (m.vertexDegree != 3) no("vertexDegree != 3");
 }
 
@@ -335,7 +344,6 @@ void atm_compute_dyn_tend(const DycoreConfig& cfg, const Mesh& m, const State& s
 
   const real prandtl_inv = 1.0 / prandtl;  // :6322
   const real invDt = 1.0 / dt;              // :6323 (read by smagorinsky_2d only)
-  (void)invDt;
   const real v_mom_eddy_visc2 = cfg.config_v_mom_eddy_visc2;      // :6326
   const real v_theta_eddy_visc2 = cfg.config_v_theta_eddy_visc2;  // :6327
   real h_mom_eddy_visc4 = cfg.config_h_mom_eddy_visc4, h_theta_eddy_visc4 = cfg.config_h_theta_eddy_visc4;
@@ -344,7 +352,10 @@ void atm_compute_dyn_tend(const DycoreConfig& cfg, const Mesh& m, const State& s
     for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge)
       for (int k = 1; k <= nVertLevels; ++k) tend_u_euler(k, iEdge) = 0.0;
     if (cfg.config_les_model != "none") throw Error("atm_compute_dyn_tend: LES models (TI:6371-6388) are not ported");
-    if (cfg.config_horiz_mixing == "2d_fixed") {  // :6354-6367
+    if (cfg.config_horiz_mixing == "2d_smagorinsky") {  // :6346-6352 (v: the diagnostics of the last rk_step 3)
+      smagorinsky_2d(m, eddy_visc_horz, u, d.v, cfg.config_smagorinsky_coef, cfg.config_len_disp, invDt,
+                     cfg.config_visc4_2dsmag, h_mom_eddy_visc4, h_theta_eddy_visc4);
+    } else if (cfg.config_horiz_mixing == "2d_fixed") {  // :6354-6367
       for (int iCell = 1; iCell <= m.nCells; ++iCell)
         for (int k = 1; k <= nVertLevels; ++k) eddy_visc_horz(k, iCell) = cfg.config_h_theta_eddy_visc2;
       h_mom_eddy_visc4 = cfg.config_h_mom_eddy_visc4;

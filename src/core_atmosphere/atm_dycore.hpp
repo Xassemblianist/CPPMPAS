@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
-// One time step of MPAS-Atmosphere's dynamical core as the mountain-wave reference runs it: atm_timestep ->
+// One time step of MPAS-Atmosphere's dynamical core as the mountain-wave (MW) and JW baroclinic-wave references run it: atm_timestep ->
 // atm_srk3 (src/core_atmosphere/dynamics/mpas_atm_time_integration.F:1789-1850, 1855-2882; tag TI below), with the
 // dissipation of mpas_atm_dissipation_models.F (DM, core_atmosphere/atm_dissipation.hpp), the time-level shift and
 // the output diagnostics of atm_core_run (mpas_atm_core.F:816-848, 916-965; CORE). One rank, one block, one thread
 // (the reference is built without OpenMP: every thread range is the whole range, every halo exchange a no-op,
 // DYCORE_MAP.md section 3).
 //
-// Ported and verified (MW, mpas842-dbl-mw-001 steps 1-10): SRK3 of order 2, coupled dynamics-transport
-// (config_split_dynamics_transport = false), no scalar advection, 2d_fixed horizontal mixing with mix_full vertical
-// mixing, no 4th-order filters, no LES, no Rayleigh damping of u, no CAM top filter, physics suite 'none', no LBCs,
-// no IAU, fEdge = 0, an even nVertLevels >= 4. Every other configuration is refused by check_dycore_supported.
+// Ported and verified (MW: mpas842-dbl-mw-001, planar, steps 1-10 and 300 / 301 / 600; JW: mpas842-dbl-jw-001,
+// x1.40962 sphere, steps 1-10): SRK3 of order 2, coupled dynamics-transport (config_split_dynamics_transport =
+// false), no scalar advection, horizontal mixing 2d_fixed (MW) or 2d_smagorinsky with the 4th-order filters it
+// switches on (JW), vertical mixing of the full state (MW) or none (JW, v_*_eddy_visc2 = 0), no LES, no Rayleigh
+// damping of u, no CAM top filter, physics suite 'none', no LBCs, no IAU, fEdge = 0 (MW) or u_init = v_init = 0 (JW),
+// an even nVertLevels >= 4. Every other configuration is refused by check_dycore_supported.
 #include <string>
 #include <vector>
 
@@ -35,12 +37,14 @@ struct DycoreConfig {
   std::string config_horiz_mixing;          // :144
   std::string config_les_model;             // :149
   real config_len_disp = 0;                 // :174 (after atm_core_init, mpas_atm_core.F:155-201)
+  real config_visc4_2dsmag = 0.05;          // :179
   bool config_mix_scalars = false;          // :184
   real config_del4u_div_factor = 10;        // :189
   bool config_scalar_advection = true;      // :229
   bool config_positive_definite = false;    // :234
   bool config_monotonic = true;             // :239
   real config_coef_3rd_order = 0.25;        // :244
+  real config_smagorinsky_coef = 0.125;     // :249
   bool config_mix_full = true;              // :254
   real config_smdiv = 0.1;                  // :264
   real config_apvm_upwinding = 0.5;         // :269
