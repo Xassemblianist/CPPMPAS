@@ -203,7 +203,7 @@ MUTATIONS = [
     (L, "    *sinx = g::copysign(g::do_cos(a, da), x);", "    *sinx = g::copysign(g::do_cos(y, hp1), x);", ["unit_libm"]),
     (L, "1.0 ? __builtin_nan(\"\") : ::cppwrf::glibc::asin(x);", "1.0 ? -__builtin_nan(\"\") : ::cppwrf::glibc::asin(x);",
      ["unit_libm"]),
-    # --- OPM05: every initdump field (atm_mpas_init_block at t = 0) against mpas842-dbl-mw-003 / sc-002 / jw-002
+    # --- every initdump field (atm_mpas_init_block at t = 0) against mpas842-dbl-mw-003 / sc-002 / jw-002
     # atm_compute_solve_diagnostics
     (S, "h_edge(k, iEdge) = 0.5 * (h(k, cell1) + h(k, cell2));", "h_edge(k, iEdge) = 0.5 * (h(k, cell1) + h(k, cell1));",
      D("rho_edge", "MW SC JW")),
