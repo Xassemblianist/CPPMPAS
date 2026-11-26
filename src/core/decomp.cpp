@@ -2,14 +2,16 @@
 #include "core/decomp.hpp"
 
 #include <algorithm>
+#include <climits>
 #include <string>
 #include <unordered_set>
 
 namespace cppmpas {
 
-// Arguments are checked (negative counts, a count beyond its dimension, a search past the list): these routines are
-// public, MPAS's take them as valid. Offsets into the (maxEdges, nCells) and (maxCells, nEdges) arrays are computed
-// in 64 bits, as gfortran computes the offset of a 2-D array element: maxEdges * nCells may exceed 2^31.
+// Arguments are checked (negative counts, a count beyond its dimension, a search past the list, a count of INT_MAX,
+// where a C++ loop `i <= n` overflows): these routines are public, MPAS's take them as valid. Offsets into the
+// (maxEdges, nCells) and (maxCells, nEdges) arrays are computed in 64 bits, as gfortran computes the offset of a 2-D
+// array element: maxEdges * nCells may exceed 2^31.
 namespace {
 std::size_t at2(int j, int i, int dim1) {
   return static_cast<std::size_t>(j - 1) + static_cast<std::size_t>(dim1) * static_cast<std::size_t>(i - 1);
@@ -19,6 +21,7 @@ std::size_t at2(int j, int i, int dim1) {
 std::vector<int> block_decomp_one_block_cell_list(int nCellsGlobal) {
   // mpas_block_decomp.F:304-315
   if (nCellsGlobal < 0) throw Error("block_decomp_one_block_cell_list: nCellsGlobal < 0");
+  if (nCellsGlobal == INT_MAX) throw Error("block_decomp_one_block_cell_list: nCellsGlobal = INT_MAX");
   std::vector<int> local_cell_list(nCellsGlobal);
   for (int i = 1; i <= nCellsGlobal; ++i) local_cell_list[i - 1] = i;
   return local_cell_list;
@@ -28,6 +31,7 @@ std::vector<int> block_decomp_all_edges_in_block(int maxEdges, int nCells, const
                                                  const int* edgesOnCell) {
   // mpas_block_decomp.F:647-655: count the distinct IDs (the hash only answers membership)
   if (maxEdges < 0 || nCells < 0) throw Error("block_decomp_all_edges_in_block: negative dimension");
+  if (maxEdges == INT_MAX || nCells == INT_MAX) throw Error("block_decomp_all_edges_in_block: dimension INT_MAX");
   for (int i = 1; i <= nCells; ++i)
     if (nEdgesOnCell[i - 1] < 0 || nEdgesOnCell[i - 1] > maxEdges)
       throw Error("block_decomp_all_edges_in_block: nEdgesOnCell(" + std::to_string(i) + ") outside 0..maxEdges");
@@ -57,6 +61,8 @@ std::vector<int> block_decomp_all_edges_in_block(int maxEdges, int nCells, const
 int block_decomp_partitioned_edge_list(int nCells, const int* cellIDList, int maxCells, int nEdges,
                                        const int* cellsOnEdge, int* edgeIDList) {
   if (nCells < 0 || maxCells < 0 || nEdges < 0) throw Error("block_decomp_partitioned_edge_list: negative dimension");
+  if (nCells == INT_MAX || maxCells == INT_MAX || nEdges == INT_MAX)
+    throw Error("block_decomp_partitioned_edge_list: dimension INT_MAX");
   std::unordered_set<int> h;  // mpas_block_decomp.F:581-585
   for (int i = 1; i <= nCells; ++i) h.insert(cellIDList[i - 1]);
   int lastEdge = 0;
@@ -111,8 +117,10 @@ void postread_reindex(FArray<int>& field, int innerDim, int outerDim, const FArr
                       int indexSpaceDim) {
   // mpas_stream_manager.F:5619-5624: sortedID(1,i) = indexToID(i), sortedID(2,i) = i, mpas_quicksort (IDs are unique,
   // so the sort order is fully determined)
-  if (innerDim < 0 || outerDim < 0 || indexSpaceDim < 0 || indexSpaceDim > indexToID.extent(0) ||
-      innerDim > field.extent(0) || outerDim > field.extent(1))
+  // an unallocated FArray has no elements (its extent() answers 1 for every dimension)
+  const auto ext = [](const FArray<int>& a, int d) { return a.allocated() ? a.extent(d) : 0; };
+  if (innerDim < 0 || outerDim < 0 || indexSpaceDim < 0 || indexSpaceDim > ext(indexToID, 0) ||
+      innerDim > ext(field, 0) || outerDim > ext(field, 1))
     throw Error("postread_reindex: dimension outside its array");
   std::vector<std::pair<int, int>> sortedID(indexSpaceDim);
   for (int i = 1; i <= indexSpaceDim; ++i) sortedID[i - 1] = {indexToID(i), i};
