@@ -422,3 +422,12 @@ target_link_libraries(test_pbl_column PRIVATE cppmpas)
 add_test(NAME pbl_column COMMAND ${T}/pbl_column/run_check.sh ${CPPMPAS_MPAS_SRC} ${CPPMPAS_MMM_PHYSICS}
   ${W}/pbl_column $<TARGET_FILE:test_pbl_column>)
 set_tests_properties(pbl_column PROPERTIES FIXTURES_REQUIRED work_dir)
+
+# GWDO (bl_ysu_gwdo), New Tiedtke (cu_ntiedtke) and their MPAS drivers, with MPAS_to_physics and physics_get_tend,
+# against MPAS's own code built with the reference compiler and flags (tests/cu_gwdo_column/run_check.sh); same
+# requirements as wsm6_column.
+add_executable(test_cu_gwdo_column cu_gwdo_column/test_cu_gwdo_column.cpp)
+target_link_libraries(test_cu_gwdo_column PRIVATE cppmpas)
+add_test(NAME cu_gwdo_column COMMAND ${T}/cu_gwdo_column/run_check.sh ${CPPMPAS_MPAS_SRC} ${CPPMPAS_MMM_PHYSICS}
+  ${W}/cu_gwdo_column $<TARGET_FILE:test_cu_gwdo_column>)
+set_tests_properties(cu_gwdo_column PROPERTIES FIXTURES_REQUIRED work_dir)
