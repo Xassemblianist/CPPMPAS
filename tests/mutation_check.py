@@ -1206,6 +1206,30 @@ MUTATIONS += [
     # o3vmr diagnostic pressures in hPa (RL:489)
     (RDRV, '        p2d(i, k) = v.pres_hyd_p(i, k) / 100.;',
      '        p2d(i, k) = v.pres_hyd_p(i, k) / 10.;', ["radiation_column"]),
+    # Noah column check (tests/noah_column): log10 of TDFCND, the soil table read (SOILPARM.TBL SATDK / SATDW),
+    # lsminit's supercooled water with MPAS's gravity (WRF's lsminit uses 9.81), the convective rain of
+    # lsm_from_MPAS (:460-468), correct_tsk_over_seaice's xice < 0.1 limit (lsm_shared.F:49), usemonalb =
+    # config_sfc_albedo (driver_lsm.F:735, case 'as'), the sfc-diagnostics cqs2 threshold (regime 9), the sea-ice
+    # TBOT (seaice_drv.F, shared kernel), SFLX_GLACIAL's LVCOEF (snow ageing on land ice)
+    (L, "CPPMPAS_FORCEINLINE double log10(double x) { return ::cppwrf::glibc::log10(arg(x)); }",
+     "CPPMPAS_FORCEINLINE double log10(double x) { return ::cppwrf::glibc::log(arg(x)) / 2.302585092994046; }",
+     ["noah_column"]),
+    ("src/physics/mpas_atmphys_lsm_noahinit.cpp", "&t.satpsi[lc], &t.satdk[lc], &t.satdw[lc], &t.wltsmc[lc]",
+     "&t.satpsi[lc], &t.satdw[lc], &t.satdk[lc], &t.wltsmc[lc]", ["noah_column"]),
+    ("src/physics/mpas_atmphys_driver_lsm.cpp", "real fk = libm::pow((hlice / (pc::gravity * (-psisat)))",
+     "real fk = libm::pow((hlice / (9.81 * (-psisat)))", ["noah_column"]),
+    ("src/physics/mpas_atmphys_driver_lsm.cpp", '  if (cfg.config_convection_scheme != "off")  // :460-468',
+     "  if (false)  // :460-468", ["noah_column"]),
+    ("src/physics/mpas_atmphys_driver_lsm.cpp", "      if (xice[ii] < 0.1 && tsk_ice[ii] < 263.15) tsk_ice[ii] = 263.15;",
+     "      if (false && tsk_ice[ii] < 263.15) tsk_ice[ii] = 263.15;", ["noah_column"]),
+    ("src/physics/mpas_atmphys_driver_lsm.cpp", "a.usemonalb = cfg.config_sfc_albedo;", "a.usemonalb = true;",
+     ["noah_column"]),
+    ("src/physics/mpas_atmphys_driver_lsm.cpp", "    if (p.cqs2(i) < 1.e-5) {", "    if (p.cqs2(i) < 1.e-6) {",
+     ["noah_column"]),
+    ("src/physics/module_sf_noahdrv_kernels.hpp", "    real tbot = real(271.36);", "    real tbot = real(271.15);",
+     ["noah_column"]),
+    ("src/physics/module_sf_noahdrv.cpp", "gl.lvcoef = tables.lvcoef_data;", "gl.lvcoef = tables.salp_data;",
+     ["noah_column"]),
 ]
 
 MUTATIONS = [(p, o, n, [t for t in ts if t not in EQUIVALENT_ON_SC.get((p, n), [])]) for p, o, n, ts in MUTATIONS]

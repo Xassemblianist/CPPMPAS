@@ -35,6 +35,7 @@ constexpr real xlv = 2.50e6;              // :60
 constexpr real xlf = 3.50e5;              // :61
 constexpr real xls = xlv + xlf;           // :62
 constexpr real karman = 0.4;              // :69
+constexpr real stbolt = 5.67051e-8;       // :71
 constexpr real cliq = 4190.;              // :73
 constexpr real cice = 2106.;              // :74
 constexpr real epsilon = 1.e-15;          // :75

@@ -122,5 +122,8 @@ CPPMPAS_FORCEINLINE double mvec_log(double x) { return ::cppwrf::mvec::log(arg(x
 // sf_sfclayrev_init): the 2-lane atan _ZGVbN2v_atan_sse4.
 CPPMPAS_FORCEINLINE double tanh(double x) { return ::cppwrf::glibc::tanh(arg(x)); }        // tanh (s_tanh.c)
 CPPMPAS_FORCEINLINE double mvec_atan(double x) { return ::cppwrf::glibc::mvec::atan(arg(x)); }  // _ZGVbN2v_atan_sse4
+// Noah LSM (physics/sf_noah.hpp, TDFCND): log10 is __ieee754_log10 (sysdeps/ieee754/dbl-64/e_log10.c, no FMA
+// variant; its log is __log_fma). The reference calls it through log10@plt; no libmvec lane in Noah.
+CPPMPAS_FORCEINLINE double log10(double x) { return ::cppwrf::glibc::log10(arg(x)); }  // __ieee754_log10
 
 }  // namespace cppmpas::libm
