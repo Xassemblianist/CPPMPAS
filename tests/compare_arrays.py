@@ -25,16 +25,16 @@ def ulp_max(a, b):
 
 
 def attributes(v):
-    """{name: (type, raw bytes)} of a variable's attributes: an NC_INT 1 differs from an NC_CHAR "1", an NC_FLOAT
-    from an NC_DOUBLE of the same printed value."""
-    out = {}
+    """[(name, type, raw bytes)] of a variable's attributes in file order: an NC_INT 1 differs from an NC_CHAR "1",
+    an NC_FLOAT from an NC_DOUBLE of the same printed value, and the same attributes in another order differ."""
+    out = []
     for k in v.ncattrs():
         a = v.getncattr(k)
         if isinstance(a, str):
-            out[k] = ("char", a.encode())
+            out.append((k, "char", a.encode()))
         else:
             arr = np.asarray(a)
-            out[k] = (arr.dtype.str, arr.tobytes())
+            out.append((k, arr.dtype.str, arr.tobytes()))
     return out
 
 
@@ -45,7 +45,10 @@ def main(argv=None):
     p.add_argument("vars")
     p.add_argument("--record", type=int, default=0, help="time record of the reference (default 0)")
     a = p.parse_args(argv)
-    names = [v for v in a.vars.split(",") if v]
+    names = a.vars.split(",")
+    if "" in names:
+        print(f"ERROR empty name in the list {a.vars!r}")
+        return 2
     bad = 0
     compared = 0
     with nc.Dataset(a.reference) as r, nc.Dataset(a.candidate) as c:

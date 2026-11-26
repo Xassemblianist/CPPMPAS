@@ -19,17 +19,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import compare_arrays  # noqa: E402
 
 
-def make(path, vtype="f8", att=("units", "m"), values=(1.0, 2.0, -0.0)):
+def make(path, vtype="f8", att=("units", "m"), values=(1.0, 2.0, -0.0), more=()):
     with nc.Dataset(path, "w", format="NETCDF3_64BIT_DATA") as d:
         d.createDimension("n", 3)
         v = d.createVariable("x", vtype, ("n",))
-        v.setncattr(att[0], att[1])
+        for k, x in (att,) + tuple(more):
+            v.setncattr(k, x)
         v[:] = np.array(values, dtype=vtype)
 
 
-def run(a, b):
+def run(a, b, names="x"):
     with contextlib.redirect_stdout(io.StringIO()) as out:
-        rc = compare_arrays.main([str(a), str(b), "x"])
+        rc = compare_arrays.main([str(a), str(b), names])
     return rc, out.getvalue().strip()
 
 
@@ -61,7 +62,18 @@ def main():
     rc, out = run(ref2, cand)
     print(f"{'ok  ' if rc == 1 else 'FAIL'} float attribute for double: rc {rc} {out}")
     bad += rc != 1
-    for p in (ref, ref2, cand):
+    # the same two attributes in the other order differ (MPAS writes them in Registry order)
+    ref3 = w / "ca_ref3.nc"
+    make(ref3, att=("units", "m"), more=[("long_name", "x")])
+    make(cand, att=("long_name", "x"), more=[("units", "m")])
+    rc, out = run(ref3, cand)
+    print(f"{'ok  ' if rc == 1 else 'FAIL'} attribute order: rc {rc} {out}")
+    bad += rc != 1
+    # an empty name in the list is an input error, not a name left out
+    rc, out = run(ref, ref, "x,")
+    print(f"{'ok  ' if rc == 2 else 'FAIL'} empty name in the list: rc {rc} {out}")
+    bad += rc != 2
+    for p in (ref, ref2, ref3, cand):
         p.unlink()
     return 1 if bad else 0
 
