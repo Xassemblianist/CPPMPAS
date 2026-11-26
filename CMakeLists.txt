@@ -60,6 +60,8 @@ add_library(cppmpas STATIC
   src/core_atmosphere/atm_init.cpp
   src/core_atmosphere/atm_solve_diagnostics.cpp
   src/operators/geometry_utils.cpp
+  src/physics/module_mp_wsm6.cpp
+  src/physics/mpas_atmphys_microphysics.cpp
   src/operators/vector_operations.cpp
   src/operators/vector_reconstruct.cpp
   src/io/netcdf_file.cpp
