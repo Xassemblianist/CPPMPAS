@@ -5,8 +5,12 @@
 //
 // Reference object code (objdump -d of bin/atmosphere_model, mpas-build asset 153c7206..., gfortran 14.2 -O3, no
 // -march): no FMA and no ymm register in any of these routines; their only libm / libmvec calls are
-//  * atm_recover_large_step_variables_work (0x125d40): the rk_step 3 k loop is vectorised, levels (1,2), (3,4), ...
-//    call _ZGVbN2vv_pow (0x126ed3), an odd last level (or nVertLevels = 1) pow@plt (0x127016);
+//  * atm_recover_large_step_variables_work (0x125d40, called through the .constprop.0 clone 0x1271d0, which only
+//    drops the unused configs argument): the rk_step 3 k loop is vectorised for nVertLevels >= 2 (0x126d67: cmp $1,
+//    je to the scalar loop for nVertLevels = 1 only; explicit-shape arrays, no alias versioning), 2-lane from k = 1
+//    with unaligned movupd loads and no alignment peel, levels (1,2), (3,4), ... calling _ZGVbN2vv_pow (0x126ed3);
+//    an odd last level (or nVertLevels = 1) calls pow@plt (0x127016). (atm_init_coupled_diagnostics differs: its
+//    loop is versioned and vectorised only for nVertLevels >= 3, 0x104120.)
 //  * atm_compute_dyn_tend_work (0x109430): the reference_u of TI:6547, in the j loop over edgesOnEdge unrolled by 2
 //    (see coriolis_reference below): sincos@plt (0x10b2cf, 0x10b69d, 0x10b905), _ZGVbN2v_cos / _ZGVbN2v_sin
 //    (0x10b543-0x10b575).
@@ -924,10 +928,6 @@ void atm_recover_large_step_variables(const Mesh& m, State& s, Diag& d, DycoreFi
         pressure_p(k, iCell) = zz(k, iCell) * rgas *
                                (exner(k, iCell) * rtheta_p(k, iCell) + rtheta_base(k, iCell) * (exner(k, iCell) - exner_base(k, iCell)));
       };
-      if (nVertLevels == 1) {
-        lane(1, false);
-        continue;
-      }
       int k = 1;
       for (; k + 1 <= nVertLevels; k += 2) {
         lane(k, true);
