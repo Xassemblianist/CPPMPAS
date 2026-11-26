@@ -748,10 +748,10 @@ MUTATIONS += [
      ST(range(11), "qv") + JST(range(11), "qv")),
     ("src/io/mpas_writer.cpp", '          f.put_att_text(n, k, time_units);', "          f.put_att_text(n, k, v);",
      ST(range(11), "Time") + JST(range(11), "Time")),
-    # the init pow loop for nVertLevels <= 2 (NEONM09 F1): no reference has such a mesh, so its fields need
+    # the init pow loop for nVertLevels <= 2: no reference has such a mesh, so its fields need
     # --unverified; the scalar loop itself (atm_init.cpp) has no mutant for the same reason
     (A, "    if ((nVertLevels % 2 != 0 || nVertLevels <= 2) &&", "    if ((nVertLevels % 2 != 0) &&", ["unit_init_guards"]),
-    # mutants OPM08 left out as exact on MW that JW kills (review F15): the level index of etp / ewp (JW's top at
+    # mutants left out earlier as exact on MW that JW kills: the level index of etp / ewp (JW's top at
     # 45 km crosses the epssm transition, so etp / ewp vary with k), sign(1, ru) against a constant +1 (JW's flow
     # reverses)
     (DY, "      a_tri(k, iCell) = a_tri(k, iCell) * etp(k - 1) * ewp(k - 1);",
@@ -762,12 +762,12 @@ MUTATIONS += [
     (DY, "m.adv_coefs(j, iEdge) + sign1(ru_edge_w[k]) * m.adv_coefs_3rd(j, iEdge);",
      "m.adv_coefs(j, iEdge) + 1.0 * m.adv_coefs_3rd(j, iEdge);", J1),
     # Exact on MW and JW for the reasons given, so not in the list (the first three were run on JW, the rk_timestep,
-    # ruAvg, rthdynten and rho_zz_old_split ones on MW by OPM08):
+    # ruAvg, rthdynten and rho_zz_old_split ones on MW):
     #  * the reference_u lanes all sincos ("vec = false") or the reference_u term deleted: the term is +-0 on both
     #    (fEdge = 0 on MW, u_init = v_init = 0 on JW); all 71 JW tests pass with either mutant;
     #  * the smagorinsky_2d bound (0.01*len**2)*invDt at 1/100 of its value: it never binds on JW;
     #  * rk_timestep[1] / rk_timestep[2]: atm_recover_large_step_variables reads dt only at rk_step 3 (TI:4437) and
-    #    the other readers (advance_scalars, LBCs) are not on the ported path (OPM08's reason, rt_diabatic_tend = 0,
+    #    the other readers (advance_scalars, LBCs) are not on the ported path (the earlier reason, rt_diabatic_tend = 0,
     #    was wrong);
     #  * ruAvg / wwAvg (their invNs averaging and the _split copies): read only by advance_scalars and split
     #    transport, not ported here; rthdynten: read only by convection schemes; rho_zz_old_split: copied into
