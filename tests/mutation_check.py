@@ -203,7 +203,7 @@ MUTATIONS = [
     (V, "    if (m.cellsOnEdge(1, iEdge) == nCells + 1 || m.cellsOnEdge(2, iEdge) == nCells + 1)",
      "    if (m.cellsOnEdge(1, iEdge) == nCells + 1)", ["unit_init_guards"]),
     (R, "    buf = f.get_double(rv.name, record);", "    buf = f.get_double(rv.name, record), buf[0] = buf[0] * 0.5;",
-     ["readrestart_MW", "readrestart_SC", "readrestart_JW"]),
+     ["readrestart_MW", "readrestart_SC", "readrestart_JW"] + [f"dycore_restart0_MW_{f}" for f in "u w rho theta".split()]),
     ("tests/compare_arrays.py", "            out.append((k, arr.dtype.str, arr.tobytes()))", "            out.append((k, \"x\", str(a)))",
      ["compare_arrays_unit"]),
     ("tests/compare_arrays.py", "            if attributes(x) != attributes(y):", "            if False:", ["compare_arrays_unit"]),
@@ -632,7 +632,7 @@ MUTATIONS += [
     (DY, "  number_sub_steps[3] = number_of_sub_steps;", "  number_sub_steps[3] = number_of_sub_steps - 1;", S1),
     (DY, "    if (f.scalars2.data()[i] < 0.0) f.scalars2.data()[i] = 0.0;",
      "    if (f.scalars2.data()[i] <= 0.0) f.scalars2.data()[i] = 1.0e-300;",
-     ST(range(1, 11), "qv") + ["dycore_MW_restart_qv", "dycore_MW_output30_qv"]),
+     ST(range(1, 11), "qv") + ["dycore_MW_restart_qv", "dycore_MW_output30_qv", "dycore_restart_MW_output60_qv"]),
     # output diagnostics, Time, xtime, the step files
     (DY, "      s.rho(k, iCell) = s.rho_zz(k, iCell) * m.zz(k, iCell);", "      s.rho(k, iCell) = s.rho_zz(k, iCell);",
      ST(range(11), "rho")),
@@ -650,7 +650,7 @@ MUTATIONS += [
      ST(range(11), "Time")),
     # the configuration checks, the CLI
     (DY, '  if (c.config_horiz_mixing != "2d_fixed") no(', '  if (c.config_horiz_mixing != "2d_smagorinsky") no(',
-     ["dycore_run_MW", "dycore_run_long_MW", "err_dycore_JW", "unit_dycore"]),
+     ["dycore_run_MW", "dycore_run_long_MW", "dycore_restart0_run_MW", "dycore_restart_run_long_MW", "err_dycore_JW", "unit_dycore"]),
     (DY, "  if (c.config_scalar_advection) no(", "  if (false) no(", ["err_dycore_SC", "unit_dycore"]),
     (DY, "    if (m.fEdge(iEdge) != 0.0) no(", "    if (false) no(", ["err_dycore_fEdge", "unit_dycore"]),
     (DY, "  if (m.nVertLevels < 4 || m.nVertLevels % 2 != 0) no(", "  if (false) no(", ["err_dycore_odd_levels", "unit_dycore"]),
@@ -693,6 +693,11 @@ MUTATIONS += [
      '    if (false)\n      throw Error("config_do_restart = true: init', ["namelist_MW"]),
     (X, "    if (cfg.config_do_restart) {\n      rst = read_mpas_restart", "    if (false) {\n      rst = read_mpas_restart",
      ["dycore_restart0_run_MW"]),
+    (A, "  s.xtime = stamp;                                    // :261-262",
+     '  s.xtime = stamp + "x";                              // :261-262', ["dycore_restart0_MW_xtime", "dycore_MW_step0_xtime"]),
+    (R, "        in.state.scalars(k, lev, i) = buf[static_cast<std::size_t>(g - 1) * m.nVertLevels + (lev - 1)];",
+     "        in.state.scalars(k, lev, i) = buf[static_cast<std::size_t>(g - 1) * m.nVertLevels + (lev - 1)] + 1.0e-12;",
+     ["dycore_restart0_MW_qv", "dycore_MW_step0_qv"]),
     ("src/core/namelist_table.inc", r'"config_do_restart", "logical", "false", "false\ntrue")',
      r'"config_do_restart", "logical", "false", "false")', ["dycore_restart0_run_MW", "namelist_MW"]),
 ]
