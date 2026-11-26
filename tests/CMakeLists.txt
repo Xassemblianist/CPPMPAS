@@ -414,3 +414,11 @@ target_link_libraries(test_wsm6_column PRIVATE cppmpas)
 add_test(NAME wsm6_column COMMAND ${T}/wsm6_column/run_check.sh ${CPPMPAS_MPAS_SRC} ${CPPMPAS_MMM_PHYSICS}
   ${W}/wsm6_column $<TARGET_FILE:test_wsm6_column>)
 set_tests_properties(wsm6_column PROPERTIES FIXTURES_REQUIRED work_dir)
+
+# The revised MM5 surface layer, YSU and their MPAS drivers, MPAS_to_physics and physics_get_tend against MPAS's own
+# code built with the reference compiler and flags (tests/pbl_column/run_check.sh); same requirements as wsm6_column.
+add_executable(test_pbl_column pbl_column/test_pbl_column.cpp)
+target_link_libraries(test_pbl_column PRIVATE cppmpas)
+add_test(NAME pbl_column COMMAND ${T}/pbl_column/run_check.sh ${CPPMPAS_MPAS_SRC} ${CPPMPAS_MMM_PHYSICS}
+  ${W}/pbl_column $<TARGET_FILE:test_pbl_column>)
+set_tests_properties(pbl_column PROPERTIES FIXTURES_REQUIRED work_dir)
