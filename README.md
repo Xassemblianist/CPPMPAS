@@ -28,6 +28,13 @@ checks against WRF, all at tolerance 0). CPPMPAS applies the same method to MPAS
   **Verified at tolerance 0** against `mpas842-dbl-mw-001`: steps 1-10 in every field of the step files, the
   restart at 30:06 and the output at 30 and 60 min. Every other configuration (scalar advection, Smagorinsky or
   4th-order mixing, physics, Coriolis, ...) is a hard error until it is ported and verified.
+- The CUDA FP64 build (`-DCPPMPAS_ENABLE_CUDA=ON`, executable `cppmpas_gpu`): the same sources, every loop over
+  cells, edges and vertices of the init block, the solve diagnostics and the dycore a kernel with one thread per
+  element (MPAS's neighbour and level order inside the thread), glibc's libm / libmvec ports on the device,
+  `--fmad=false`. **Verified at tolerance 0** on an RTX 5070 Ti (sm_120, CUDA 13.1, driver 621.24): every
+  initdump field of MW, SC and JW and MW steps 1-10 against the references and against the CPU build (`ctest -L gpu
+  -LE long`; without a CUDA build or device these tests are reported as skipped). Not yet proven on the GPU: the
+  30-min output, the 30:06 restart and the 60-min output (label long).
 - The namelist: every option of MPAS-Atmosphere's Registry is known; a value that no verified reference runs with is a
   hard error naming the option.
 - The MPAS reference itself is reproducible across machines: the MW reference built and run on an AMD EPYC and on an
