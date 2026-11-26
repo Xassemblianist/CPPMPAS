@@ -422,3 +422,17 @@ target_link_libraries(test_pbl_column PRIVATE cppmpas)
 add_test(NAME pbl_column COMMAND ${T}/pbl_column/run_check.sh ${CPPMPAS_MPAS_SRC} ${CPPMPAS_MMM_PHYSICS}
   ${W}/pbl_column $<TARGET_FILE:test_pbl_column>)
 set_tests_properties(pbl_column PROPERTIES FIXTURES_REQUIRED work_dir)
+
+# The cloudiness, RRTMG LW / SW radiation drivers, the RRTMG table initialisation and the ozone climatology against
+# MPAS's own code built with the reference compiler and flags (tests/radiation_column/run_check.sh). Needs gfortran
+# 14.2, the MPAS v8.4.2 source tree and the reference build's tables directory (RRTMG_*_DATA.DBL, OZONE_*.TBL of the
+# cppmpas-data mpas-build asset); CPPMPAS_CPPWRF_RRTMG (CPPWRF's data/rrtmg) adds the byte comparison of the tables
+# with CPPWRF's. Without the tables the test fails.
+set(CPPMPAS_MPAS_TABLES "" CACHE PATH "the MPAS reference build's tables directory (RRTMG_*_DATA.DBL, OZONE_*.TBL)")
+set(CPPMPAS_CPPWRF_RRTMG "" CACHE PATH "CPPWRF's data/rrtmg (rrtmg_lw_tables.bin, rrtmg_sw_tables.bin)")
+add_executable(test_radiation_column radiation_column/test_radiation_column.cpp)
+target_link_libraries(test_radiation_column PRIVATE cppmpas)
+add_test(NAME radiation_column COMMAND ${CMAKE_COMMAND} -E env CPPMPAS_CPPWRF_RRTMG=${CPPMPAS_CPPWRF_RRTMG}
+  ${T}/radiation_column/run_check.sh ${CPPMPAS_MPAS_SRC} ${CPPMPAS_MPAS_TABLES} ${W}/radiation_column
+  $<TARGET_FILE:test_radiation_column>)
+set_tests_properties(radiation_column PROPERTIES FIXTURES_REQUIRED work_dir)
