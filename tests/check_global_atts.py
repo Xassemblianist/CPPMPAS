@@ -70,6 +70,12 @@ def main():
         got = h.getncattr("parent_id")
         if got != want:
             fails.append(f"parent_id has {len(got)} characters, MPAS writes {len(want)}")
+    # a file_id longer than StrKIND is cut at 512 (mpas_io.F:6038-6043)
+    out = Path(work) / "long_id.history.nc"
+    subprocess.run([exe, "history", init, str(out), "--fields", "latCell", "--file-id", "a" * 600], check=True)
+    if len(get_text_att(out, "file_id")) != 512:
+        fails.append(f"a 600-character file_id is written with {len(get_text_att(out, 'file_id'))} characters, MPAS 512")
+    out.unlink()
     # file_id with NULs: (file_id, parent_id) of the input -> parent_id of the history file
     for fid, pid, want in (("abc\0def", "p", "abc"), ("\0", "p", ""), ("ab ", "p", "ab\np")):
         src = Path(work) / "nul_id.nc"

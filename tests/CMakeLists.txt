@@ -119,9 +119,10 @@ add_test(NAME err_empty_list COMMAND ${PY} ${T}/expect_error.py "empty name in t
 set_tests_properties(err_empty_list PROPERTIES FIXTURES_REQUIRED inputs)
 cppmpas_error_test(trailing_comma "empty name in the list 'u,'" history ${W}/mw_init.nc ${W}/x.nc --fields u,)
 cppmpas_error_test(unknown_field "variable 'notavar' is not defined in MPAS-Atmosphere's Registry" history ${W}/mw_init.nc ${W}/x.nc --fields notavar)
-# a field that is neither read nor computed is refused before the output file is created
+# a field that is neither read nor computed is refused before the output file is created (the output directory does
+# not exist: creating the file would fail with another message)
 add_test(NAME err_unheld_field COMMAND ${CMAKE_COMMAND} -E env sh -c
-  "rm -f '${W}/unheld.nc'; ${Python3_EXECUTABLE} -I '${T}/expect_error.py' 'write ru: the field was neither read nor computed' '${EXE}' history '${W}/mw_init.nc' '${W}/unheld.nc' --fields u,ru && if [ -e '${W}/unheld.nc' ]; then echo 'FAIL: the output file was created'; exit 1; fi")
+  "rm -rf '${W}/no_such_dir'; ${Python3_EXECUTABLE} -I '${T}/expect_error.py' 'write ru: the field was neither read nor computed' '${EXE}' history '${W}/mw_init.nc' '${W}/no_such_dir/unheld.nc' --fields u,ru")
 set_tests_properties(err_unheld_field PROPERTIES FIXTURES_REQUIRED inputs)
 
 # tests/compare_arrays.py itself: value bytes, variable types and attribute types are compared

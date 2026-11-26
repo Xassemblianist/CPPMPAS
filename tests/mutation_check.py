@@ -128,8 +128,9 @@ MUTATIONS = [
      "    for (const auto& d : rv.dims) vertical |= (d == \"nVertLevels\");", ["grid_read_of_init"]),
     (R, "    if (std::find(scalars.begin(), it, *it) != it) throw", "    if (false) throw", ["err_dup_scalar"]),
     (R, "  if (std::find(scalars.begin(), scalars.end(), \"qv\") == scalars.end())", "  if (false)", ["err_no_qv"]),
-    (R, "(rtrim(file_id) + \"\\n\" + rtrim(parent_id)).substr(0, kStrKIND);", "(rtrim(file_id) + \"\\n\" + rtrim(parent_id));",
-     ["global_atts"]),
+    # the reader's cut of parent_id at StrKIND (domain % parent_id) is not visible in the output since the writer
+    # cuts every text attribute at StrKIND as MPAS_io_put_att_text does: that cut is the one mutated
+    (W, "      s = s.substr(0, 512);\n", "", ["global_atts"]),
     (R, "    in.warnings.push_back(\"Attribute file_id not found;", "    if (false) in.warnings.push_back(\"Attribute file_id not found;",
      ["global_atts"]),
     (R, "  if (a.len > kStrKIND)", "  if (false)", ["err_long_att"]),
