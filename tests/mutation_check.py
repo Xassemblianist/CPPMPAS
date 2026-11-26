@@ -657,6 +657,29 @@ MUTATIONS += [
      ST(range(11), "qv") + JST(range(11), "qv")),
     ("src/io/mpas_writer.cpp", '          f.put_att_text(n, k, time_units);', "          f.put_att_text(n, k, v);",
      ST(range(11), "Time") + JST(range(11), "Time")),
+    # mutants OPM08 left out as exact on MW that JW kills (review F15): the level index of etp / ewp (JW's top at
+    # 45 km crosses the epssm transition, so etp / ewp vary with k), sign(1, ru) against a constant +1 (JW's flow
+    # reverses)
+    (DY, "      a_tri(k, iCell) = a_tri(k, iCell) * etp(k - 1) * ewp(k - 1);",
+     "      a_tri(k, iCell) = a_tri(k, iCell) * etp(k) * ewp(k - 1);", J1),
+    (DY, "      c_tri[k] = c_tri[k] * etp(k) * ewp(k + 1);", "      c_tri[k] = c_tri[k] * etp(k) * ewp(k);", J1),
+    (DY, "m.adv_coefs(j, iEdge) + sign1(ru(k, iEdge)) * m.adv_coefs_3rd(j, iEdge);",
+     "m.adv_coefs(j, iEdge) + 1.0 * m.adv_coefs_3rd(j, iEdge);", J1),
+    (DY, "m.adv_coefs(j, iEdge) + sign1(ru_edge_w[k]) * m.adv_coefs_3rd(j, iEdge);",
+     "m.adv_coefs(j, iEdge) + 1.0 * m.adv_coefs_3rd(j, iEdge);", J1),
+    # Exact on MW and JW for the reasons given, so not in the list (the first three were run on JW, the rk_timestep,
+    # ruAvg, rthdynten and rho_zz_old_split ones on MW by OPM08):
+    #  * the reference_u lanes all sincos ("vec = false") or the reference_u term deleted: the term is +-0 on both
+    #    (fEdge = 0 on MW, u_init = v_init = 0 on JW); all 71 JW tests pass with either mutant;
+    #  * the smagorinsky_2d bound (0.01*len**2)*invDt at 1/100 of its value: it never binds on JW;
+    #  * rk_timestep[1] / rk_timestep[2]: atm_recover_large_step_variables reads dt only at rk_step 3 (TI:4437) and
+    #    the other readers (advance_scalars, LBCs) are not on the ported path (OPM08's reason, rt_diabatic_tend = 0,
+    #    was wrong);
+    #  * ruAvg / wwAvg (their invNs averaging and the _split copies): read only by advance_scalars and split
+    #    transport, not ported here; rthdynten: read only by convection schemes; rho_zz_old_split: copied into
+    #    time level 1 at substep_finish, which nothing reads before the level swap and the next setup overwrite it;
+    #  * qtot sums and the rb*qtot terms: qv = 0 on MW and JW (SC exercises them);
+    #  * the copy of Time into time level 2 at allocation: atm_timestep overwrites it before it is read.
     # JW: smagorinsky_2d (DM:119-204) and its call (TI:6346-6352)
     (DS, "        dudx[k] = dudx[k] + c2 * u(k, e) - cs * v(k, e);", "        dudx[k] = dudx[k] + c2 * u(k, e) + cs * v(k, e);",
      JALLDYN + JLONG),
@@ -701,6 +724,18 @@ MUTATIONS += [
      "      const real r_areaCell = a.h_theta_eddy_visc4 * a.prandtl_inv * m.invAreaCell(iCell) * 0.5;",
      JST([1], "theta_m theta")),
     (DY, "  da.config_del4u_div_factor = cfg.config_del4u_div_factor;", "  da.config_del4u_div_factor = 1.0;", J1),
+    # step 0 by value with the file names intact (review F12): every real field written as 1.0 (w is 0 at t = 0),
+    # character fields padded with 'x'
+    ("src/io/mpas_writer.cpp", "    std::vector<double> local(ref.r->data(), ref.r->data() + ref.r->size());",
+     "    std::vector<double> local(ref.r->size(), 1.0);",
+     ST([0], "Time u w rho_zz theta_m rho theta pressure_p") + JST([0], "Time u w rho_zz theta_m rho theta pressure_p")),
+    ("src/io/mpas_writer.cpp", "    v.resize(kStrLen, ' ');", "    v.resize(kStrLen, 'x');",
+     ["dycore_MW_step0_xtime", "dycore_JW_step0_xtime"]),
+    # the step files' global attributes (review F14): tests/dycore_compare.py checks them file by file
+    ("src/io/mpas_writer.cpp", '    f.put_att_text("", "version", "8.4.2");', '    f.put_att_text("", "version", "8.4.1");',
+     ["dycore_MW_mpas_compare", "dycore_JW_mpas_compare"]),
+    ("src/io/mpas_writer.cpp", '    f.put_att_double("", "sphere_radius", m.sphere_radius);',
+     '    f.put_att_double("", "sphere_radius", m.sphere_radius * (1 + 1e-15));', ["dycore_MW_mpas_compare", "dycore_JW_mpas_compare"]),
     # output diagnostics (review F10): pressure (mpas_atm_core.F:961); computing them only on output steps has no
     # mutant (theta, rho and pressure are read by no routine of the step)
     (DY, "      d.pressure(k, iCell) = d.pressure_base(k, iCell) + d.pressure_p(k, iCell);",
