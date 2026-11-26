@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// atm_mpas_init_block and atm_core_init (src/core_atmosphere/mpas_atm_core.F, CORE). Every loop over cells / edges /
+// vertices is a kernel (core/backend.hpp parallel_for): one thread per element, its inner loops in MPAS's order; a
+// loop MPAS runs as one sequence is one thread (serial); the work arrays MPAS allocates are the thread's own.
 #include "core_atmosphere/atm_init.hpp"
 
 #include <algorithm>
@@ -9,6 +12,7 @@
 
 #include "core/error.hpp"
 #include "core/libm.hpp"
+#include "core/views.hpp"
 #include "operators/geometry_utils.hpp"
 #include "core_atmosphere/atm_solve_diagnostics.hpp"
 #include "operators/vector_operations.hpp"
@@ -17,8 +21,6 @@
 namespace cppmpas {
 
 namespace {
-
-template <class T> void fill_all(FArray<T>& a, T v) { std::fill(a.data(), a.data() + a.size(), v); }
 
 // Physical constants, src/framework/mpas_constants.F:47-48, :50-51 (gfortran folds the parameter expressions with one
 // correctly rounded operation each, as the C++ compiler does here)
@@ -78,7 +80,7 @@ void allocate_init_fields(Mesh& m, State& s, Diag& d) {
 void atm_compute_signs(Mesh& m, std::vector<std::string>& log) {
   const int nCells = m.nCells, nVertices = m.nVertices, nEdges = m.nEdges, vertexDegree = m.vertexDegree;
   const int nL1 = m.nVertLevels + 1;
-  for (int iVtx = 1; iVtx <= nVertices; ++iVtx) {  // :1220-1232
+  parallel_for(1, nVertices, [=, m = view(m)] CPPMPAS_LAMBDA(int iVtx) {  // :1220-1232
     for (int i = 1; i <= vertexDegree; ++i) {
       if (m.edgesOnVertex(i, iVtx) <= nEdges) {
         if (iVtx == m.verticesOnEdge(2, m.edgesOnVertex(i, iVtx)))
@@ -89,8 +91,8 @@ void atm_compute_signs(Mesh& m, std::vector<std::string>& log) {
         m.edgesOnVertex_sign(i, iVtx) = 0.0;
       }
     }
-  }
-  for (int iCell = 1; iCell <= nCells; ++iCell) {  // :1234-1250
+  });
+  parallel_for(1, nCells, [=, m = view(m)] CPPMPAS_LAMBDA(int iCell) {  // :1234-1250
     for (int i = 1; i <= m.nEdgesOnCell(iCell); ++i) {
       const int e = m.edgesOnCell(i, iCell);
       if (e <= nEdges) {
@@ -104,8 +106,11 @@ void atm_compute_signs(Mesh& m, std::vector<std::string>& log) {
         m.edgesOnCell_sign(i, iCell) = 0.0;
       }
     }
-  }
-  for (int iCell = 1; iCell <= nCells; ++iCell) {  // :1252-1269
+  });
+  // the log line of :1262-1264, once per occurrence: counted per cell by its thread, written in cell order after
+  FArray<int> kite_errors({nCells + 1}, 0);
+  const auto kite_err = kite_errors.view();
+  parallel_for(1, nCells, [=, m = view(m)] CPPMPAS_LAMBDA(int iCell) {  // :1252-1269
     for (int i = 1; i <= m.nEdgesOnCell(iCell); ++i) {
       const int iVtx = m.verticesOnCell(i, iCell);
       if (iVtx <= nVertices) {
@@ -116,21 +121,30 @@ void atm_compute_signs(Mesh& m, std::vector<std::string>& log) {
             break;
           }
         }
-        if (j > vertexDegree) log.push_back("ERROR: Unexpected error while identifying kiteForCell");  // :1262-1264
+        if (j > vertexDegree) kite_err(iCell) = kite_err(iCell) + 1;  // :1262-1264
       } else {
         m.kiteForCell(i, iCell) = 1;
       }
     }
-  }
+  });
+  for (int iCell = 1; iCell <= nCells; ++iCell)
+    for (int n = 0; n < kite_errors(iCell); ++n) log.push_back("ERROR: Unexpected error while identifying kiteForCell");
 }
 
 // mpas_atm_core.F:459-473
 void atm_compute_inverses(Mesh& m) {
-  for (int iCell = 1; iCell <= m.nCells; ++iCell) m.invAreaCell(iCell) = 1.0 / m.areaCell(iCell);
-  for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge) m.invDvEdge(iEdge) = 1.0 / m.dvEdge(iEdge);
-  for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge) m.invDcEdge(iEdge) = 1.0 / m.dcEdge(iEdge);
-  for (int iVertex = 1; iVertex <= m.nVertices; ++iVertex)
+  parallel_for(1, m.nCells, [=, m = view(m)] CPPMPAS_LAMBDA(int iCell) {
+    m.invAreaCell(iCell) = 1.0 / m.areaCell(iCell);
+  });
+  parallel_for(1, m.nEdges, [=, m = view(m)] CPPMPAS_LAMBDA(int iEdge) {
+    m.invDvEdge(iEdge) = 1.0 / m.dvEdge(iEdge);
+  });
+  parallel_for(1, m.nEdges, [=, m = view(m)] CPPMPAS_LAMBDA(int iEdge) {
+    m.invDcEdge(iEdge) = 1.0 / m.dcEdge(iEdge);
+  });
+  parallel_for(1, m.nVertices, [=, m = view(m)] CPPMPAS_LAMBDA(int iVertex) {
     m.invAreaTriangle(iVertex) = 1.0 / m.areaTriangle(iVertex);
+  });
 }
 
 // mpas_atm_core.F:1620-1850
@@ -142,23 +156,24 @@ void atm_initialize_deformation_weights(Mesh& m, int nCells, bool on_a_sphere, r
   fill_all(m.deformation_coef_c, 0.0);
   fill_all(m.deformation_coef_s, 0.0);
   const real pii = kPi;  // :1698
-  std::vector<real> theta_abs(static_cast<std::size_t>(nCells) + 1);
-  real xc[26], yc[26], zc[26], thetav[26], thetat[26], dl_sphere[26], xp[26], yp[26];  // dimension(25), 1-based
-  std::array<int, 26> cell_list{};
+  FArray<real> theta_abs_a({nCells + 1});  // theta_abs(nCells): element iCell is the cell's own (read in its thread)
+  const auto theta_abs = theta_abs_a.view();
   if (m.is_periodic)
     throw Error("atm_initialize_deformation_weights: the periodic-plane path (mpas_fix_periodicity with x_period / "
                 "y_period) is not verified");
 
-  for (int iCell = 1; iCell <= nCells; ++iCell) {
+  parallel_for(1, nCells, [=, m = view(m)] CPPMPAS_LAMBDA(int iCell) {
+    real xc[26], yc[26], zc[26], thetav[26], thetat[26], dl_sphere[26], xp[26], yp[26];  // dimension(25), 1-based
+    std::array<int, 26> cell_list{};
     // :1702-1706; MPAS's dimension(25) holds the cell and at most 24 neighbours: checked before the copy
     const int n = m.nEdgesOnCell(iCell) + 1;
-    if (n > 25) throw Error("atm_initialize_deformation_weights: nEdgesOnCell > 24 overflows MPAS's dimension(25)");
-    cell_list.at(1) = iCell;
-    for (int i = 2; i <= n; ++i) cell_list.at(i) = m.cellsOnCell(i - 1, iCell);
+    if (n > 25) return kernel_fail("atm_initialize_deformation_weights: nEdgesOnCell > 24 overflows MPAS's dimension(25)");
+    cell_list[1] = iCell;
+    for (int i = 2; i <= n; ++i) cell_list[i] = m.cellsOnCell(i - 1, iCell);
     bool do_the_cell = true;  // :1710-1716
     for (int i = 1; i <= n; ++i)
       if (cell_list[i] > nCells) do_the_cell = false;
-    if (!do_the_cell) continue;
+    if (!do_the_cell) return;
 
     if (on_a_sphere) {
       xc[1] = m.xCell(iCell) / sphere_radius;  // :1725-1734
@@ -254,27 +269,27 @@ void atm_initialize_deformation_weights(Mesh& m, int nCells, bool on_a_sphere, r
         m.deformation_coef_cs(i, iCell) = -m.deformation_coef_cs(i, iCell);
       }
     }
-  }
+  });
 }
 
 // mpas_atm_core.F:1391-1536
 void atm_adv_coef_compression(Mesh& m) {
   const int nCells = m.nCells, nEdges = m.nEdges;
-  auto& adv = m.adv_coefs;
-  auto& adv3 = m.adv_coefs_3rd;
-  int cell_list[21];
-  for (int iEdge = 1; iEdge <= nEdges; ++iEdge) {
+  auto adv = m.adv_coefs.view();
+  auto adv3 = m.adv_coefs_3rd.view();
+  parallel_for(1, nEdges, [=, m = view(m)] CPPMPAS_LAMBDA(int iEdge) {
+    int cell_list[21];
     m.nAdvCellsForEdge(iEdge) = 0;
     const int cell1 = m.cellsOnEdge(1, iEdge);
     const int cell2 = m.cellsOnEdge(2, iEdge);
-    if (!(cell1 <= nCells || cell2 <= nCells)) continue;  // :1431
+    if (!(cell1 <= nCells || cell2 <= nCells)) return;  // :1431
     cell_list[1] = cell1;
     cell_list[2] = cell2;
     int n = 2;
     for (int i = 1; i <= m.nEdgesOnCell(cell1); ++i) {  // :1438-1443
       if (m.cellsOnCell(i, cell1) != cell2) {
         n = n + 1;
-        if (n > 20) throw Error("atm_adv_coef_compression: more than 20 cells overflow MPAS's cell_list(20)");
+        if (n > 20) return kernel_fail("atm_adv_coef_compression: more than 20 cells overflow MPAS's cell_list(20)");
         cell_list[n] = m.cellsOnCell(i, cell1);
       }
     }
@@ -284,11 +299,11 @@ void atm_adv_coef_compression(Mesh& m) {
         if (cell_list[i] == m.cellsOnCell(iCell, cell2)) addcell = false;
       if (addcell) {
         n = n + 1;
-        if (n > 20) throw Error("atm_adv_coef_compression: more than 20 cells overflow MPAS's cell_list(20)");
+        if (n > 20) return kernel_fail("atm_adv_coef_compression: more than 20 cells overflow MPAS's cell_list(20)");
         cell_list[n] = m.cellsOnCell(iCell, cell2);
       }
     }
-    if (n > 15) throw Error("atm_adv_coef_compression: more than 15 cells overflow advCellsForEdge(FIFTEEN, nEdges)");
+    if (n > 15) return kernel_fail("atm_adv_coef_compression: more than 15 cells overflow advCellsForEdge(FIFTEEN, nEdges)");
     m.nAdvCellsForEdge(iEdge) = n;  // :1458-1461
     for (int iCell = 1; iCell <= n; ++iCell) m.advCellsForEdge(iCell, iEdge) = cell_list[iCell];
 
@@ -300,7 +315,8 @@ void atm_adv_coef_compression(Mesh& m) {
       int j_in = 0;
       for (int j = 1; j <= n; ++j)
         if (cell_list[j] == c) j_in = j;
-      if (j_in == 0) throw Error("atm_adv_coef_compression: cell not in cell_list (MPAS would index slot 0)");
+      // (on the GPU the launch throws; slot 1 keeps the thread's indices inside the arrays until then)
+      if (j_in == 0) return kernel_fail("atm_adv_coef_compression: cell not in cell_list (MPAS would index slot 0)"), 1;
       return j_in;
     };
     int j_in = slot(cell1);  // :1471-1476
@@ -331,14 +347,18 @@ void atm_adv_coef_compression(Mesh& m) {
       adv(j, iEdge) = m.dvEdge(iEdge) * adv(j, iEdge);
       adv3(j, iEdge) = m.dvEdge(iEdge) * adv3(j, iEdge);
     }
-  }
+  });
 }
 
 // mpas_atm_core.F:1539-1558: whole arrays, garbage element and unused slots included
 void atm_couple_coef_3rd_order(Mesh& m, const InitConfig& cfg) {
   const real c = cfg.config_coef_3rd_order;
-  for (std::size_t k = 0; k < m.adv_coefs_3rd.size(); ++k) m.adv_coefs_3rd.data()[k] = c * m.adv_coefs_3rd.data()[k];
-  for (std::size_t k = 0; k < m.zb3_cell.size(); ++k) m.zb3_cell.data()[k] = c * m.zb3_cell.data()[k];
+  parallel_for_n(m.adv_coefs_3rd.size(), [=, m = view(m)] CPPMPAS_LAMBDA(std::size_t k) {
+    m.adv_coefs_3rd.data()[k] = c * m.adv_coefs_3rd.data()[k];
+  });
+  parallel_for_n(m.zb3_cell.size(), [=, m = view(m)] CPPMPAS_LAMBDA(std::size_t k) {
+    m.zb3_cell.data()[k] = c * m.zb3_cell.data()[k];
+  });
 }
 
 // mpas_atm_core.F:1124-1181. (a+b)/2.0 is (a+b)*0.5 in the reference (exact). The edge loops call pow@plt; the
@@ -349,37 +369,43 @@ void atm_compute_mesh_scaling(Mesh& m, const InitConfig& cfg) {
   fill_all(m.meshScalingDel2, 1.0);  // :1153-1154
   fill_all(m.meshScalingDel4, 1.0);
   if (cfg.config_h_ScaleWithMesh) {
-    for (int iEdge = 1; iEdge <= nEdges; ++iEdge) {  // :1156-1161
+    parallel_for(1, nEdges, [=, m = view(m)] CPPMPAS_LAMBDA(int iEdge) {  // :1156-1161
       const int cell1 = m.cellsOnEdge(1, iEdge);
       const int cell2 = m.cellsOnEdge(2, iEdge);
       m.meshScalingDel2(iEdge) = 1.0 / libm::pow((m.meshDensity(cell1) + m.meshDensity(cell2)) / 2.0, 0.25);
       m.meshScalingDel4(iEdge) = 1.0 / libm::pow((m.meshDensity(cell1) + m.meshDensity(cell2)) / 2.0, 0.75);
-    }
+    });
   }
   fill_all(m.meshScalingRegionalCell, 1.0);  // :1167-1168
   fill_all(m.meshScalingRegionalEdge, 1.0);
   if (cfg.config_h_ScaleWithMesh) {
-    for (int iEdge = 1; iEdge <= nEdges; ++iEdge) {  // :1170-1174
+    parallel_for(1, nEdges, [=, m = view(m)] CPPMPAS_LAMBDA(int iEdge) {  // :1170-1174
       const int cell1 = m.cellsOnEdge(1, iEdge);
       const int cell2 = m.cellsOnEdge(2, iEdge);
       m.meshScalingRegionalEdge(iEdge) = 1.0 / libm::pow((m.meshDensity(cell1) + m.meshDensity(cell2)) / 2.0, 0.25);
-    }
-    int iCell = 1;  // :1176-1178
-    for (; iCell + 1 <= nCells; iCell += 2) {
+    });
+    // :1176-1178, one thread per pair of cells (the two lanes), then the odd last cell
+    parallel_for(1, nCells / 2, [=, m = view(m)] CPPMPAS_LAMBDA(int pair) {
+      const int iCell = 2 * pair - 1;
       m.meshScalingRegionalCell(iCell) = 1.0 / libm::mvec_pow(m.meshDensity(iCell), 0.25);
       m.meshScalingRegionalCell(iCell + 1) = 1.0 / libm::mvec_pow(m.meshDensity(iCell + 1), 0.25);
-    }
-    if (iCell <= nCells) m.meshScalingRegionalCell(iCell) = 1.0 / libm::pow(m.meshDensity(iCell), 0.25);
+    });
+    const int iCell = nCells / 2 * 2 + 1;
+    if (iCell <= nCells)
+      serial([=, m = view(m)] CPPMPAS_LAMBDA() {
+        m.meshScalingRegionalCell(iCell) = 1.0 / libm::pow(m.meshDensity(iCell), 0.25);
+      });
   }
 }
 
 // mpas_atm_core.F:1274-1388. sin(...)**2.0 and sin(...)**2 are s*s (no pow call in the reference); sin@plt.
 void atm_compute_damping_coefs(Mesh& m, const InitConfig& cfg) {
   const int nCells = m.nCells, nVertLevels = m.nVertLevels;
+  fits_column(nVertLevels, "atm_compute_damping_coefs");
   const real pii = kPi;  // :1292-1293
   const real config_zd = cfg.config_zd, config_xnutr = cfg.config_xnutr;
   fill_all(m.dss, 0.0);  // :1304
-  for (int iCell = 1; iCell <= nCells; ++iCell) {  // :1305-1313
+  parallel_for(1, nCells, [=, m = view(m)] CPPMPAS_LAMBDA(int iCell) {  // :1305-1313
     const real zt = m.zgrid(nVertLevels + 1, iCell);
     for (int k = 1; k <= nVertLevels; ++k) {
       const real z = 0.5 * (m.zgrid(k, iCell) + m.zgrid(k + 1, iCell));
@@ -388,11 +414,13 @@ void atm_compute_damping_coefs(Mesh& m, const InitConfig& cfg) {
         m.dss(k, iCell) = config_xnutr * (s * s);
       }
     }
-  }
+  });
   const real min_coeff = cfg.config_epssm_minimum, max_coeff = cfg.config_epssm_maximum;
   const real transition_lower_bound = cfg.config_epssm_transition_bottom_z;
   const real transition_upper_bound = cfg.config_epssm_transition_top_z;
-  std::vector<real> height_u_levels(nVertLevels + 1), epssm_coeff_u(nVertLevels + 1),
+  // one sequence (:1330-1381, height_w_levels(k+1) from height_w_levels(k)): one thread
+  serial([=, m = view(m)] CPPMPAS_LAMBDA() {
+  Column<real> height_u_levels(nVertLevels + 1), epssm_coeff_u(nVertLevels + 1),
       height_w_levels(nVertLevels + 2), epssm_coeff_w(nVertLevels + 2);
   const real transition_width = transition_upper_bound - transition_lower_bound;  // :1330
   std::fill(height_w_levels.begin(), height_w_levels.end(), 0.0);                 // :1335
@@ -426,6 +454,7 @@ void atm_compute_damping_coefs(Mesh& m, const InitConfig& cfg) {
     m.ewp(k) = 0.5 * (1.0 + epssm_coeff_w[k]);
     m.ewm(k) = 0.5 * (1.0 - epssm_coeff_w[k]);
   }
+  });
 }
 
 // src/core_atmosphere/dynamics/mpas_atm_boundaries.F:659-753 (nRelaxZone = 5, :37)
@@ -436,18 +465,21 @@ void mpas_atm_setup_bdy_masks(Mesh& m) {
     for (std::size_t k = 0; k < a->size(); ++k)
       if (a->data()[k] != 0) throw Error("mpas_atm_setup_bdy_masks: bdyMask* > 0 (limited-area mesh) is not verified");
   const int nCells = m.nCells;
-  for (std::size_t k = 0; k < m.bdyMaskCell.size(); ++k)  // :697-699, whole arrays
+  parallel_for_n(m.bdyMaskCell.size(), [=, m = view(m)] CPPMPAS_LAMBDA(std::size_t k) {  // :697-699, whole arrays
     if (m.bdyMaskCell.data()[k] > nRelaxZone) m.specZoneMaskCell.data()[k] = 1.0;
-  for (std::size_t k = 0; k < m.bdyMaskEdge.size(); ++k)
+  });
+  parallel_for_n(m.bdyMaskEdge.size(), [=, m = view(m)] CPPMPAS_LAMBDA(std::size_t k) {
     if (m.bdyMaskEdge.data()[k] > nRelaxZone) m.specZoneMaskEdge.data()[k] = 1.0;
-  for (std::size_t k = 0; k < m.bdyMaskVertex.size(); ++k)
+  });
+  parallel_for_n(m.bdyMaskVertex.size(), [=, m = view(m)] CPPMPAS_LAMBDA(std::size_t k) {
     if (m.bdyMaskVertex.data()[k] > nRelaxZone) m.specZoneMaskVertex.data()[k] = 1.0;
+  });
   fill_all(m.nearestRelaxationCell, nCells + 1);  // :702
-  auto dist2 = [&](int a, int b) {
-    const real dx = m.xCell(a) - m.xCell(b), dy = m.yCell(a) - m.yCell(b), dz = m.zCell(a) - m.zCell(b);
-    return dx * dx + dy * dy + dz * dz;
-  };
-  for (int iCell = 1; iCell <= nCells; ++iCell) {  // :708-722
+  parallel_for(1, nCells, [=, m = view(m)] CPPMPAS_LAMBDA(int iCell) {  // :708-722
+    auto dist2 = [&](int a, int b) {
+      const real dx = m.xCell(a) - m.xCell(b), dy = m.yCell(a) - m.yCell(b), dz = m.zCell(a) - m.zCell(b);
+      return dx * dx + dy * dy + dz * dz;
+    };
     if (m.bdyMaskCell(iCell) == nRelaxZone + 1) {
       real dmin = 1.0e36;
       for (int j = 1; j <= m.nEdgesOnCell(iCell); ++j) {
@@ -461,8 +493,12 @@ void mpas_atm_setup_bdy_masks(Mesh& m) {
         }
       }
     }
-  }
-  for (int iCell = 1; iCell <= nCells; ++iCell) {  // :728-751
+  });
+  parallel_for(1, nCells, [=, m = view(m)] CPPMPAS_LAMBDA(int iCell) {  // :728-751
+    auto dist2 = [&](int a, int b) {
+      const real dx = m.xCell(a) - m.xCell(b), dy = m.yCell(a) - m.yCell(b), dz = m.zCell(a) - m.zCell(b);
+      return dx * dx + dy * dy + dz * dz;
+    };
     if (m.bdyMaskCell(iCell) == nRelaxZone + 2) {
       real dmin = 1.0e36;
       for (int j = 1; j <= m.nEdgesOnCell(iCell); ++j) {
@@ -481,7 +517,7 @@ void mpas_atm_setup_bdy_masks(Mesh& m) {
         }
       }
     }
-  }
+  });
 }
 
 // src/core_atmosphere/dynamics/mpas_atm_time_integration.F:7440-7665, cellStart..cellEnd = 1..nCells,
@@ -498,31 +534,31 @@ void atm_init_coupled_diagnostics(const Mesh& m, State& s, Diag& d) {
   constexpr real rcv = rgas / (cp - rgas);  // :7538
   constexpr real p0 = 1.e5;                 // :7539
   constexpr real rgas_p0 = rgas / p0;       // (rgas/p0) of :7635-7636, folded
-  const auto& zz = m.zz;
-  auto& theta_m = s.theta_m;
-  auto& rho_zz = s.rho_zz;
+  const auto zz = m.zz.cview();
+  auto theta_m = s.theta_m.view();
+  auto rho_zz = s.rho_zz.view();
 
-  for (int iCell = 1; iCell <= m.nCells; ++iCell) {  // :7543-7549
+  parallel_for(1, m.nCells, [=, s = view(s)] CPPMPAS_LAMBDA(int iCell) {  // :7543-7549
     for (int k = 1; k <= nVertLevels; ++k) {
       theta_m(k, iCell) = s.theta(k, iCell) * (1. + rvord * s.scalars(index_qv, k, iCell));
       rho_zz(k, iCell) = s.rho(k, iCell) / zz(k, iCell);
     }
-  }
-  for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge) {  // :7556-7563
+  });
+  parallel_for(1, m.nEdges, [=, m = view(m), s = view(s), d = view(d)] CPPMPAS_LAMBDA(int iEdge) {  // :7556-7563
     const int cell1 = m.cellsOnEdge(1, iEdge);
     const int cell2 = m.cellsOnEdge(2, iEdge);
     for (int k = 1; k <= nVertLevels; ++k)
       d.ru(k, iEdge) = 0.5 * s.u(k, iEdge) * (rho_zz(k, cell1) + rho_zz(k, cell2));
-  }
-  for (int iCell = 1; iCell <= m.nCells; ++iCell) {  // :7572-7582
+  });
+  parallel_for(1, m.nCells, [=, m = view(m), s = view(s), d = view(d)] CPPMPAS_LAMBDA(int iCell) {  // :7572-7582
     d.rw(1, iCell) = 0.0;
     d.rw(nVertLevels + 1, iCell) = 0.0;
     for (int k = 2; k <= nVertLevels; ++k) {
       d.rw(k, iCell) = s.w(k, iCell) * (m.fzp(k) * rho_zz(k - 1, iCell) + m.fzm(k) * rho_zz(k, iCell)) *
                        (m.fzp(k) * zz(k - 1, iCell) + m.fzm(k) * zz(k, iCell));
     }
-  }
-  for (int iCell = 1; iCell <= m.nCells; ++iCell) {  // :7587-7600
+  });
+  parallel_for(1, m.nCells, [=, m = view(m), d = view(d)] CPPMPAS_LAMBDA(int iCell) {  // :7587-7600
     for (int i = 1; i <= m.nEdgesOnCell(iCell); ++i) {
       const int iEdge = m.edgesOnCell(i, iCell);
       for (int k = 2; k <= nVertLevels; ++k) {
@@ -532,16 +568,19 @@ void atm_init_coupled_diagnostics(const Mesh& m, State& s, Diag& d) {
                                               flux * (m.fzp(k) * zz(k - 1, iCell) + m.fzm(k) * zz(k, iCell));
       }
     }
-  }
-  for (int iCell = 1; iCell <= m.nCells; ++iCell)  // :7605-7609
+  });
+  parallel_for(1, m.nCells, [=, s = view(s), d = view(d)] CPPMPAS_LAMBDA(int iCell) {  // :7605-7609
     for (int k = 1; k <= nVertLevels; ++k) d.rho_p(k, iCell) = rho_zz(k, iCell) - s.rho_base(k, iCell);
-  for (int iCell = 1; iCell <= m.nCells; ++iCell)  // :7614-7618
+  });
+  parallel_for(1, m.nCells, [=, s = view(s), d = view(d)] CPPMPAS_LAMBDA(int iCell) {  // :7614-7618
     for (int k = 1; k <= nVertLevels; ++k) d.rtheta_base(k, iCell) = s.theta_base(k, iCell) * s.rho_base(k, iCell);
-  for (int iCell = 1; iCell <= m.nCells; ++iCell)  // :7623-7628
+  });
+  parallel_for(1, m.nCells, [=, s = view(s), d = view(d)] CPPMPAS_LAMBDA(int iCell) {  // :7623-7628
     for (int k = 1; k <= nVertLevels; ++k)
       d.rtheta_p(k, iCell) = theta_m(k, iCell) * d.rho_p(k, iCell) +
                              s.rho_base(k, iCell) * (theta_m(k, iCell) - s.theta_base(k, iCell));
-  for (int iCell = 1; iCell <= m.nCells; ++iCell) {  // :7633-7638
+  });
+  parallel_for(1, m.nCells, [=, d = view(d)] CPPMPAS_LAMBDA(int iCell) {  // :7633-7638
     auto lane = [&](int k, bool vector) {
       const real xe = zz(k, iCell) * rgas_p0 * (d.rtheta_p(k, iCell) + d.rtheta_base(k, iCell));
       const real xb = zz(k, iCell) * rgas_p0 * (d.rtheta_base(k, iCell));
@@ -550,7 +589,7 @@ void atm_init_coupled_diagnostics(const Mesh& m, State& s, Diag& d) {
     };
     if (nVertLevels == 1) {
       lane(1, false);
-      continue;
+      return;
     }
     int k = 1;
     for (; k + 1 <= nVertLevels; k += 2) {
@@ -558,15 +597,15 @@ void atm_init_coupled_diagnostics(const Mesh& m, State& s, Diag& d) {
       lane(k + 1, true);
     }
     if (k <= nVertLevels) lane(k, false);
-  }
-  for (int iCell = 1; iCell <= m.nCells; ++iCell) {  // :7643-7651
+  });
+  parallel_for(1, m.nCells, [=, d = view(d)] CPPMPAS_LAMBDA(int iCell) {  // :7643-7651
     for (int k = 1; k <= nVertLevels; ++k) {
       d.pressure_p(k, iCell) = zz(k, iCell) * rgas *
                                (d.exner(k, iCell) * d.rtheta_p(k, iCell) +
                                 d.rtheta_base(k, iCell) * (d.exner(k, iCell) - d.exner_base(k, iCell)));
       d.pressure_base(k, iCell) = zz(k, iCell) * rgas * d.exner_base(k, iCell) * d.rtheta_base(k, iCell);
     }
-  }
+  });
 }
 
 // mpas_atm_core.F:366-617, in MPAS's order
