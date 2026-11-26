@@ -27,7 +27,8 @@ spec.loader.exec_module(mc)
 B, BC, X, L = "src/core/backend.hpp", "src/core/backend_cuda.cu", "tools/cppmpas.cpp", "src/core/libm.hpp"
 CM = "CMakeLists.txt"
 MW10 = [f"gpu_dycore_MW_step{s}_{f}" for s in (1, 10) for f in ("u", "theta_m")] + ["gpu_dycore_MW_vs_cpu"]
-JW10 = [f"gpu_dycore_JW_step{s}_{f}" for s in (1, 10) for f in ("u", "theta_m")] + ["gpu_dycore_JW_vs_cpu"]
+JWSTEP = [f"gpu_dycore_JW_step{s}_{f}" for s in (1, 10) for f in ("u", "theta_m")]
+JW10 = JWSTEP + ["gpu_dycore_JW_vs_cpu"]
 # (file, original fragment, mutated fragment, GPU tests that must fail)
 GPU_MUTATIONS = [
     # a kernel skips the last element of its range
@@ -63,13 +64,14 @@ GPU_MUTATIONS = [
     (CM, "|-Ofast|-f(fast-math|unsafe-math-optimizations|", "|-Ofast|-f(unsafe-math-optimizations|",
      ["cmake_rejects_cuda_6_CMAKE_CUDA_FLAGS", "cmake_rejects_cuda_6_CMAKE_CUDA_FLAGS_RELEASE"]),
 ]
-# tests/mutation_check.py mutants by a piece of their original fragment, with the GPU tests they must break
+# tests/mutation_check.py mutants by a piece of their original fragment, with the GPU tests they must break (a mutant
+# of the shared source changes the CPU build alike: the vs_cpu tests are not among them)
 CPU_MUTANTS = [
     # JW: smagorinsky_2d's eddy viscosity from u twice instead of u and v
-    ("smagorinsky_2d(m, f.eddy_visc_horz, f.u2, d.v,", JW10),
+    ("smagorinsky_2d(m, f.eddy_visc_horz, f.u2, d.v,", JWSTEP),
     # JW: the del4 vorticity of u_dissipation_3d (DM:735-751)
     ("        const real edge_sign = m.invAreaTriangle(iVertex) * m.dcEdge(iEdge) * m.edgesOnVertex_sign(i, iVertex);",
-     JW10),
+     JWSTEP),
     # the RBF reconstruction coefficients and the local vertical unit vectors (init block, not in the initdump set)
     ("    alpha = alpha / static_cast<real>(pointCount);", ["gpu_init_restart_MW", "gpu_init_restart_JW"]),
     ("      mpas_unit_vec_in_r3(v);\n      for (int d = 1; d <= 3; ++d) lvu(d, iCell) = v[d - 1];",

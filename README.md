@@ -33,13 +33,14 @@ checks against WRF, all at tolerance 0). CPPMPAS applies the same method to MPAS
 - Restart runs (`config_do_restart = true`): `cppmpas run` reads an MPAS restart file as MPAS reads its restart
   stream and continues from it. **Verified at tolerance 0** on MW: restarted from the reference's 00:30:06 restart
   file, the state at 01:00:00 is identical to the reference forecast's output in every field the port computes.
-- The CUDA FP64 build (`-DCPPMPAS_ENABLE_CUDA=ON`, executable `cppmpas_gpu`): the same sources, every loop over
-  cells, edges and vertices of the init block, the solve diagnostics and the dycore a kernel with one thread per
-  element (MPAS's neighbour and level order inside the thread), glibc's libm / libmvec ports on the device,
-  `--fmad=false`. **Verified at tolerance 0** on an RTX 5070 Ti (sm_120, CUDA 13.1, driver 621.24): every
-  initdump field of MW, SC and JW and MW steps 1-10 against the references and against the CPU build (`ctest -L gpu
-  -LE long`; without a CUDA build or device these tests are reported as skipped). Not yet proven on the GPU: the
-  30-min output, the 30:06 restart and the 60-min output (label long).
+- The CUDA FP64 build (`-DCPPMPAS_ENABLE_CUDA=ON`, executable `cppmpas_gpu`, CUDA 12.1 or later): the same sources,
+  every loop over cells, edges and vertices of the init block, the solve diagnostics and the dycore (the JW
+  Smagorinsky viscosity and 4th-order filters included) a kernel with one thread per element (MPAS's neighbour and
+  level order inside the thread), glibc's libm / libmvec ports on the device, `--fmad=false`. **Verified at
+  tolerance 0** on an NVIDIA L4 (sm_89, CUDA 13.0, driver 580.82.07; `ctest -L gpu`, 538 GPU tests), against the
+  references and against the CPU build: every initdump field of MW, SC and JW and the init block's restart-stream
+  fields; MW steps 1-10, the 30:06 restart, the 30 and 60 min output and the restart run to 01:00:00; JW steps 1-10,
+  the 24 h output and the 24:07:30 restart. Without a CUDA build or device the GPU tests are reported as skipped.
 - The namelist: every option of MPAS-Atmosphere's Registry is known; a value that no verified reference runs with is a
   hard error naming the option.
 - The MPAS reference itself is reproducible across machines: the MW reference built and run on an AMD EPYC and on an
