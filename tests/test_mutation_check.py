@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 """tests/mutation_check.py's reading of CTest output: a test that failed or crashed kills the mutant; a test that
-passed, or was not run because its fixture setup failed (CTest's "***Not Run"), does not.
+passed, or was not run because its fixture setup failed (CTest's "***Not Run"), does not; nor does one that did not
+pass before the mutant was applied.
 
 usage: test_mutation_check.py
 """
@@ -69,6 +70,12 @@ class Status(unittest.TestCase):
         self.assertTrue(self.k(FAILED, "initdump_JW_ke"))
         self.assertTrue(self.k(SEGV, "unit_solve_diag"))
         self.assertTrue(self.k(ABORT, "unit_solve_diag"))
+
+    def test_baseline(self):
+        # a test that fails, crashes or is not run before any mutant is applied cannot show a kill
+        self.assertEqual(mutation_check.not_passing(FAILED, ["initdump_run_JW", "initdump_JW_ke"]), {"initdump_JW_ke"})
+        self.assertEqual(mutation_check.not_passing(NOT_RUN, ["setup", "dep"]), {"setup", "dep"})
+        self.assertEqual(mutation_check.not_passing(PASSED, ["initdump_run_JW", "initdump_JW_ke", "absent"]), {"absent"})
 
     def test_absent_or_prefix(self):
         self.assertFalse(self.k(FAILED, "initdump_JW"))  # a prefix of a test name is not that test
