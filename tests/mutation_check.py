@@ -1061,7 +1061,8 @@ MUTATIONS += [
     # LW McICA permuteseed 150 (LW 12183)
     (RAD, 'mcica_subcol(icld, 150, 140,',
      'mcica_subcol(icld, 151, 140,', ["radiation_column"]),
-    # zenith angle: the reference's sincos of xxlat (SW 10205)
+    # zenith angle: the reference's sincos of xxlat (SW 10205). SURVIVES: on the check's latitudes sincos and sin / cos
+    # round the same (s_sincos.c differs from __sin only in some ulps of 0.855 <= |x| < 2.43); kept as a known survivor
     (RAD, '    libm::sincos(xxlat, &sinlat, &coslat);',
      '    sinlat = libm::sin(xxlat); coslat = libm::cos(xxlat);', ["radiation_column"]),
     # SW flux adjustment scon / rrsw_scon (inatm_sw)
