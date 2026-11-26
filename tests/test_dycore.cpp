@@ -8,9 +8,11 @@
 //    config_apvm_upwinding / config_dt from the InitConfig that atm_core_init left.
 //
 // usage: test_dycore <MW init file> <MW namelist.atmosphere>
+#include <cmath>
 #include <cstdio>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "core/error.hpp"
@@ -173,6 +175,40 @@ int main(int argc, char** argv) {
     } catch (const Error& e) {
       expect(false, std::string("config_mix_full = false refused: ") + e.what());
     }
+  }
+
+  // the scalars_2 < 0 clamp (TI:2799-2800): every element, the garbage column included; -0.0 and +0.0 stay
+  {
+    FArray<real> q({3, 2, 3}, 0.0);  // (num_scalars, nVertLevels, nCells+1) with nCells = 2
+    q(1, 1, 1) = -1.0e-300;
+    q(2, 2, 2) = -5.0;
+    q(3, 1, 3) = -2.0;  // garbage column
+    q(1, 2, 1) = -0.0;
+    q(2, 1, 1) = 3.5;
+    q(3, 2, 3) = -7.0;  // the last element of the array
+    q(1, 1, 2) = std::nan("");
+    clamp_negative_scalars(q);
+    expect(q(1, 1, 1) == 0.0 && !std::signbit(q(1, 1, 1)) && q(2, 2, 2) == 0.0 && q(3, 1, 3) == 0.0 &&
+               !std::signbit(q(3, 1, 3)) && q(3, 2, 3) == 0.0,
+           "clamp: negative values (garbage column included) become +0.0");
+    expect(q(1, 2, 1) == 0.0 && std::signbit(q(1, 2, 1)), "clamp: -0.0 is not < 0 and stays -0.0");
+    expect(q(2, 1, 1) == 3.5 && std::isnan(q(1, 1, 2)), "clamp: positive values and NaN unchanged");
+  }
+  // moist_start / moist_end: the active constituents of array_group moist (gen_inc.c:1364-1374)
+  {
+    auto range = [&](std::vector<std::string> names) {
+      State s = in.state;
+      s.scalar_names = names;
+      s.scalars.allocate({static_cast<int>(names.size()), in.mesh.nVertLevels, in.mesh.nCells + 1}, 0.0);
+      DycoreFields f;
+      allocate_dycore_fields(in.mesh, s, f);
+      return std::pair<int, int>{f.moist_start, f.moist_end};
+    };
+    expect(range({"qv"}) == std::pair<int, int>{1, 1}, "moist range qv");
+    expect(range({"qv", "qc", "qr"}) == std::pair<int, int>{1, 3}, "moist range qv qc qr");
+    expect(range({"qv", "qc", "qr", "qi", "qs", "qg", "ni", "nr"}) == std::pair<int, int>{1, 6},
+           "moist range excludes the number concentrations");
+    expect(range({"qv", "tke"}) == std::pair<int, int>{1, 1}, "moist range excludes tke");
   }
 
   // add_seconds

@@ -623,9 +623,14 @@ MUTATIONS += [
     (DY, "  rk_sub_timestep[1] = dt_dynamics / static_cast<real>(number_of_sub_steps);",
      "  rk_sub_timestep[1] = dt_dynamics / static_cast<real>(number_of_sub_steps + 1);", S1),
     (DY, "  number_sub_steps[3] = number_of_sub_steps;", "  number_sub_steps[3] = number_of_sub_steps - 1;", S1),
-    (DY, "    if (f.scalars2.data()[i] < 0.0) f.scalars2.data()[i] = 0.0;",
-     "    if (f.scalars2.data()[i] <= 0.0) f.scalars2.data()[i] = 1.0e-300;",
-     ST(range(1, 11), "qv") + ["dycore_MW_restart_qv", "dycore_MW_output30_qv"]),
+    # the clamp of TI:2799-2800 acts on no reference (MW's qv and SC's mono-limited scalars are >= +0 there): the
+    # call deleted is exact on every step file; unit_dycore tests the routine itself
+    (DY, "    if (scalars.data()[i] < 0.0) scalars.data()[i] = 0.0;", "    ;", ["unit_dycore"]),
+    (DY, "    if (scalars.data()[i] < 0.0) scalars.data()[i] = 0.0;", "    if (scalars.data()[i] <= 0.0) scalars.data()[i] = 0.0;",
+     ["unit_dycore"]),
+    (DY, "  for (std::size_t i = 0; i < scalars.size(); ++i)", "  for (std::size_t i = 0; i + 3 < scalars.size(); ++i)",
+     ["unit_dycore"]),
+    (DY, "    if (!moist) continue;", "", ["unit_dycore"]),
     # output diagnostics, Time, xtime, the step files
     (DY, "      s.rho(k, iCell) = s.rho_zz(k, iCell) * m.zz(k, iCell);", "      s.rho(k, iCell) = s.rho_zz(k, iCell);",
      ST(range(11), "rho")),
@@ -644,12 +649,13 @@ MUTATIONS += [
     # the configuration checks, the CLI
     (DY, '  if (c.config_horiz_mixing != "2d_fixed") no(', '  if (c.config_horiz_mixing != "2d_smagorinsky") no(',
      ["dycore_run_MW", "dycore_run_long_MW", "err_dycore_JW", "unit_dycore"]),
-    (DY, "  if (c.config_scalar_advection) no(", "  if (false) no(", ["err_dycore_SC", "unit_dycore"]),
+    (DY, "  if (c.config_scalar_advection) check_advance_scalars_supported(c, m);",
+     "  if (false) check_advance_scalars_supported(c, m);", ["unit_dycore"]),
     (DY, "    if (m.fEdge(iEdge) != 0.0) no(", "    if (false) no(", ["err_dycore_fEdge", "unit_dycore"]),
     (DY, "  if (m.nVertLevels < 4 || m.nVertLevels % 2 != 0) no(", "  if (false) no(", ["err_dycore_odd_levels", "unit_dycore"]),
     (DY, "  if (c.config_time_integration_order != 2)", "  if (c.config_time_integration_order > 3)", ["unit_dycore"]),
     (DY, "  if (!(c.config_v_mom_eddy_visc2 > 0.0)) no(", "  if (false) no(", ["unit_dycore"]),
-    (DY, "  if (!off(c.config_microp_scheme)) no(", "  if (false) no(", ["unit_dycore"]),
+    (DY, "  if (!off(c.config_microp_scheme) && !kessler) no(", "  if (false) no(", ["unit_dycore"]),
     (DY, "  if (!(c.config_dt > 0.0) || c.config_dt != std::floor(c.config_dt) || c.config_dt > 86400.0)",
      "  if (!(c.config_dt > 0.0) || c.config_dt > 86400.0)", ["unit_dycore"]),
     (DY, "  c.config_len_disp = init_cfg.config_len_disp;", '  c.config_len_disp = r("config_len_disp");', ["unit_dycore"]),
@@ -664,6 +670,117 @@ MUTATIONS += [
     (X, "    for (const auto& w : a.write_fields) (void)field_ref(in, w);", "", ["err_dycore_write_fields"]),
     (X, "    if (a.pos.size() != 2 || a.steps < 0 || a.namelist.empty() || !a.fields.empty())",
      "    if (a.pos.size() != 2 || a.namelist.empty() || !a.fields.empty())", ["err_dycore_no_steps"]),
+]
+
+# ---------------------------------------------------------------------------------------------------------------
+# the supercell: scalar transport (atm_advance_scalars.cpp), perturbation mixing (atm_dissipation_perturbation.cpp),
+# Kessler microphysics (atm_microphysics.cpp, src/physics/mp_kessler.hpp) and their wiring, against the SC step files
+AS, DP = "src/core_atmosphere/atm_advance_scalars.cpp", "src/core_atmosphere/atm_dissipation_perturbation.cpp"
+MP, KS = "src/core_atmosphere/atm_microphysics.cpp", "src/physics/mp_kessler.hpp"
+SCF = "u w rho_zz theta_m rho theta pressure_p qv qc qr"
+
+
+def SCT(steps, fields=SCF):
+    """dycore_SC_step<n>_<field> tests (tests/CMakeLists.txt)"""
+    return [f"dycore_SC_step{n}_{f}" for n in steps for f in fields.split()]
+
+
+# qc and qr are 0 in every cell of the SC reference's first 30 s (no cloud yet): the transport and Kessler mutants
+# are required to break qv (and theta_m / pressure_p where named); qc and qr have their own mutants below
+SCQ = lambda steps: SCT(steps, "qv")
+# the Kessler kernel's condensation, rain and sedimentation act only once cloud forms: their mutants are exact on the
+# ten steps (every column subsaturated: product = max(prod, -qc) = 0, qrprod = ern = 0) and must break the 30-min
+# state (label long)
+SCLONG = [f"dycore_SC_restart_{f}" for f in "theta_m qv qc qr".split()] + \
+    [f"dycore_SC_output30_{f}" for f in "qc qr".split()]
+MUTATIONS += [
+    # atm_advance_scalars_work (rk_steps 1, 2)
+    (AS, "        sw2(k, j) = m.adv_coefs(j, iEdge) + sign1(uhAvg(k, iEdge)) * m.adv_coefs_3rd(j, iEdge);",
+     "        sw2(k, j) = m.adv_coefs(j, iEdge) + m.adv_coefs_3rd(j, iEdge);", SCQ([1])),
+    (AS, "sw2(k, 10) * scalar_new(iScalar, k, ica[10]);", "sw2(k, 10) * scalar_new(iScalar, k, ica[9]);", SCQ([1])),
+    (AS, "          STC(iScalar, k) = STC(iScalar, k) - m.edgesOnCell_sign(i, iCell)",
+     "          STC(iScalar, k) = STC(iScalar, k) + m.edgesOnCell_sign(i, iCell)", SCQ([1])),
+    (AS, "      WDTN(iScalar, 2) = wwAvg(2, iCell) * (fnm(2) * scalar_new(iScalar, 2, iCell) + fnp(2) * scalar_new(iScalar, 2 - 1, iCell));",
+     "      WDTN(iScalar, 2) = wwAvg(2, iCell) * (fnm(2) * scalar_new(iScalar, 2, iCell) + fnp(2) * scalar_new(iScalar, 2, iCell));",
+     SCQ([1])),
+    (AS, "                                 coef_3rd_order);\n    for (int k = 1; k <= nVertLevels; ++k)  // :4920-4928",
+     "                                 1.0);\n    for (int k = 1; k <= nVertLevels; ++k)  // :4920-4928", SCQ([1])),
+    (AS, "  const real weight_time_new = 1.;                     // :4750",
+     "  const real weight_time_new = 0.5;                    // :4750", SCQ([1])),
+    (AS, "    atm_advance_scalars_work(cfg, m, s, f, rk_timestep[rk_step], horiz_flux_array);",
+     "    atm_advance_scalars_work(cfg, m, s, f, rk_timestep[3], horiz_flux_array);", SCQ([1])),
+    # atm_advance_scalars_mono_work (rk_step 3)
+    (AS, "          const int ii = uhAvg(k, iEdge) > 0 ? 1 : 2;", "          const int ii = uhAvg(k, iEdge) > 0 ? 2 : 1;", SCQ([1])),
+    (AS, "        for (int j = 1; j <= 6; ++j) {", "        for (int j = 1; j <= 5; ++j) {", SCQ([1, 2])),
+    (AS, "        flux_upwind_arr[k] = dt * (fmax0(wwAvg(k, iCell)) * scalar_old(k - 1, iCell) +",
+     "        flux_upwind_arr[k] = dt * (fmin0(wwAvg(k, iCell)) * scalar_old(k - 1, iCell) +", SCQ([1])),
+    (AS, "        scale_arr(k, SCALE_IN, iCell) = -(rdnw(k) * (fmin0(wdtn(k + 1, iCell)) - fmax0(wdtn(k, iCell))));",
+     "        scale_arr(k, SCALE_IN, iCell) = -(rdnw(k) * (fmin0(wdtn(k, iCell)) - fmax0(wdtn(k, iCell))));", SCQ([1])),
+    (AS, "        scale_arr(k, SCALE_IN, iCell) = fmin1(fmax0(scale_factor));",
+     "        scale_arr(k, SCALE_IN, iCell) = fmax0(scale_factor);", SCQ([1, 2])),
+    (AS, "          flux = fmax0(flux) * vmin(scale_arr(k, SCALE_OUT, cell1), scale_arr(k, SCALE_IN, cell2)) +",
+     "          flux = fmax0(flux) * vmin(scale_arr(k, SCALE_OUT, cell1), scale_arr(k, SCALE_OUT, cell2)) +", SCQ([1, 2])),
+    (AS, "        flux = fmax0(flux) * vmin(scale_arr(k - 1, SCALE_OUT, iCell), scale_arr(k, SCALE_IN, iCell)) +",
+     "        flux = fmax0(flux) * vmin(scale_arr(k, SCALE_OUT, iCell), scale_arr(k, SCALE_IN, iCell)) +", SCQ([1, 2])),
+    (AS, "          flux_arr(k, iEdge) = dt * flux_arr(k, iEdge) - flux_upwind;",
+     "          flux_arr(k, iEdge) = dt * flux_arr(k, iEdge) + flux_upwind;", SCQ([1])),
+    (AS, "      for (int k = 1; k <= nVertLevels; ++k) scalars_new(iScalar, k, iCell) = fmax0(scalar_new(k, iCell));",
+     "      for (int k = 1; k <= nVertLevels; ++k) scalars_new(iScalar, k, iCell) = scalar_new(k, iCell);", SCQ([1, 2])),
+    (AS, "            (scalar_new(k, iCell) + (-(rdnw(k) * (wdtn(k + 1, iCell) - wdtn(k, iCell))))) / rho_zz_new(k, iCell);",
+     "            (scalar_new(k, iCell) + (-(rdnw(k) * (wdtn(k + 1, iCell) - wdtn(k, iCell))))) / rho_zz_old(k, iCell);",
+     SCQ([1])),
+    # the call (TI:2504-2507) and the transport's checks
+    (DY, "        advance_scalars(cfg, m, s, f, rk_step, rk_timestep);", "        (void)rk_timestep;", SCQ([1])),
+    (AS, "    if (m.nAdvCellsForEdge(iEdge) != 10) no(", "    if (false) no(", ["unit_dycore"]),
+    (AS, "    if (m.nEdgesOnCell(iCell) != 6) no(", "    if (false) no(", ["unit_dycore"]),
+    (AS, "  if (!cfg.config_monotonic) no(", "  if (false) no(", ["unit_dycore"]),
+    (DY, "  if (s.scalar_names.size() > 1 && !c.config_scalar_advection) no(", "  if (false) no(", ["unit_dycore"]),
+    (DY, "  if (s.scalar_names != want) no(", "  if (false) no(", ["unit_dycore"]),
+    # vertical mixing of the perturbation (DM:850-882, 1442-1466)
+    (DP, "      u_mix[k] = u(k, iEdge) - u_init(k) * cosa + v_init(k) * sina;",
+     "      u_mix[k] = u(k, iEdge) - u_init(k) * cosa;", SCT([1], "u")),
+    (DP, "      u_mix[k] = u(k, iEdge) - u_init(k) * cosa + v_init(k) * sina;",
+     "      u_mix[k] = u(k, iEdge) - u_init(k) * sina + v_init(k) * cosa;", SCT([1], "u")),
+    (DP, "              (((theta_m(k + 1, iCell) - t_init(k + 1, iCell)) - (theta_m(k, iCell) - t_init(k, iCell))) / (zp - z0) -",
+     "              (((theta_m(k + 1, iCell) - t_init(k, iCell)) - (theta_m(k, iCell) - t_init(k, iCell))) / (zp - z0) -",
+     SCT([1], "theta_m")),
+    (DS, "      u_vertical_mixing_perturbation(m, a, u, rho_edge, tend_u_euler);\n      return;",
+     "      return;", SCT([1], "u")),
+    (DS, "      theta_vertical_mixing_perturbation(m, a, theta_m, rho_zz, tend_theta_euler);\n      return;",
+     "      return;", SCT([1], "theta_m")),
+    # Kessler microphysics and its interface
+    (DY, "    driver_microphysics(m, s, f.theta_m2, f.rho_zz2, f.scalars2, d, f.rt_diabatic_tend, f.mp);", "",
+     SCT([1], "theta_m qv")),
+    (MP, "      rt_diabatic_tend(k, i) = (theta_m(k, i) - rt_diabatic_tend(k, i)) / dt_dyn;",
+     "      rt_diabatic_tend(k, i) = 0.0;", SCT([2], "theta_m")),
+    (MP, "      exner(k, i) = libm::pow(zz(k, i) * (R_d / P0) * (rtheta_p(k, i) + rtheta_b(k, i)), rcv);",
+     "      exner(k, i) = libm::mvec_pow(zz(k, i) * (R_d / P0) * (rtheta_p(k, i) + rtheta_b(k, i)), rcv);",
+     SCT([2], "theta_m")),
+    (MP, "      P(th_p, i, k) = theta_m(k, i) / (1.0 + R_v / R_d * fmax0(P(qv_p, i, k)));",
+     "      P(th_p, i, k) = theta_m(k, i) / (1.0 + rvord * fmax0(P(qv_p, i, k)));", SCT([1], "theta_m")),
+    (MP, "      theta_m(k, i) = P(th_p, i, k) * (1.0 + rvord * P(qv_p, i, k));",
+     "      theta_m(k, i) = P(th_p, i, k) * (1.0 + rvord * scalars(index_qv, k, i));", SCT([1], "theta_m")),
+    (MP, "      rtheta_p(k, i) = rho_zz(k, i) * theta_m(k, i) - rtheta_b(k, i);",
+     "      rtheta_p(k, i) = rho_zz(k, i) * theta_m(k, i);", SCT([2], "theta_m")),
+    (MP, "      pressure_p(k, i) = zz(k, i) * R_d * (exner(k, i) * rtheta_p(k, i) + (exner(k, i) - exner_b(k, i)) * rtheta_b(k, i));",
+     "      pressure_p(k, i) = zz(k, i) * R_d * (exner(k, i) * rtheta_p(k, i) + (exner(k, i) - exner_b(k, i)) * rtheta_p(k, i));",
+     SCT([1], "pressure_p")),
+    (MP, "      scalars(index_qc, k, i) = P(qc_p, i, k);", "      scalars(index_qc, k, i) = P(qc_p, i, k) + 1.0e-12;",
+     SCT(range(1, 11), "qc")),
+    (MP, "      scalars(index_qr, k, i) = P(qr_p, i, k);", "      scalars(index_qr, k, i) = P(qr_p, i, k) + 1.0e-12;",
+     SCT(range(1, 11), "qr")),
+    (MP, "  mp.dt_microp = mp.dt_dyn;     // MGR:708", "  mp.dt_microp = 2.0 * mp.dt_dyn;  // MGR:708", SCLONG),
+    (KS, "CPPMPAS_HD inline bool lane(int i, int n) { return n > 1 && !((n & 1) && i == n - 1); }",
+     "CPPMPAS_HD inline bool lane(int i, int n) { return false && n > 1 && !((n & 1) && i == n - 1); }", SCLONG),
+    (KS, "CPPMPAS_HD inline double rpow(double a, double b) { return ::cppmpas::libm::pow(a, b); }",
+     "CPPMPAS_HD inline double rpow(double a, double b) { return ::cppmpas::libm::mvec_pow(a, b); }", SCLONG),
+    (MP, "  if (mp.mp_top_level != nVertLevels)", "  if (false)", ["unit_microphysics"]),
+    (MP, "    if (layer_height <= config_microphysics_top) mp.mp_top_level = k;", "", ["unit_microphysics"]),
+    (KS, "      if (es_cap) es = min(es, real(0.99) * pressure);", "", ["unit_microphysics"]),
+    # dropped as equivalent on SC: "kk.es_cap = true" -> false (es <= 0.99*pressure in every SC column, so the cap
+    # never acts; unit_microphysics shows the cap itself); the source update of TI:5208 deleted (scalar_tend is 0,
+    # it only turns a -0.0 of time level 1 into +0.0, and no -0.0 reaches it); fmax0(qv) -> qv in th_p (qv >= +0);
+    # sincos -> sin / cos of angleEdge in u_mix (the SC angleEdge values, multiples of pi/6, give the same bits)
 ]
 
 

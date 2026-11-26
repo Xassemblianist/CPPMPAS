@@ -345,6 +345,9 @@ foreach(f IN LISTS DYCORE_OUTPUT_FIELDS)
 endforeach()
 # SC, 601 steps (label "long", about 45 minutes): the forecast run writes output.nc at 30 min (record 1, after step
 # 600) and restart.0000-01-01_00.30.03.nc (after step 601); surface_pressure is microphysics_to_MPAS's (PI:950-964)
+# output.nc from mpas842-dbl-sc-002 (the same run of the same recipe; its fields are identical to sc-001's at
+# tolerance 0, and the workstation copy of sc-001 holds no output.nc)
+set(OUT_SC ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-002/SC/forecast/output.nc)
 set(DYCORE_SC_RESTART_FIELDS xtime Time u w rho_zz theta_m pressure_p rho theta exner ru rw rtheta_p rho_p qv qc qr
   surface_pressure)
 set(DYCORE_SC_OUTPUT_FIELDS xtime u w rho theta divergence vorticity ke uReconstructZonal uReconstructMeridional
@@ -361,7 +364,7 @@ foreach(f IN LISTS DYCORE_SC_RESTART_FIELDS)
   set_tests_properties(dycore_SC_restart_${f} PROPERTIES FIXTURES_REQUIRED dycore_long_SC LABELS long)
 endforeach()
 foreach(f IN LISTS DYCORE_SC_OUTPUT_FIELDS)
-  add_test(NAME dycore_SC_output30_${f} COMMAND ${PY} ${T}/compare_arrays.py ${REF_SC}/forecast/output.nc
+  add_test(NAME dycore_SC_output30_${f} COMMAND ${PY} ${T}/compare_arrays.py ${OUT_SC}
     ${W}/dycore_long_SC/state.0000-01-01_00.30.00.nc ${f} --record 1)
   set_tests_properties(dycore_SC_output30_${f} PROPERTIES FIXTURES_REQUIRED dycore_long_SC LABELS long)
 endforeach()
