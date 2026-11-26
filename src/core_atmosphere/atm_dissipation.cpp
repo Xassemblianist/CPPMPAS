@@ -3,12 +3,14 @@
 // Reference object code (bin/atmosphere_model of the mpas-build asset 153c7206...): u_dissipation_3d (0x25bf50),
 // w_dissipation_3d (0x25a1d0) and scalar_dissipation_3d_les (0x256140) have no FMA and no libm call on these paths
 // (u_dissipation_3d's one sincos@plt is DM:860-861, the perturbation branch, not taken); every statement is the
-// Fortran one evaluated left to right.
+// Fortran one evaluated left to right. Each loop over edges / cells is a kernel, one thread per element
+// (core/backend.hpp), the k loop and the edgesOnCell loop inside the thread in MPAS's order.
 #include "core_atmosphere/atm_dissipation.hpp"
 
 #include <algorithm>
 
 #include "core/error.hpp"
+#include "core/views.hpp"
 
 namespace cppmpas {
 
@@ -17,7 +19,9 @@ void u_dissipation_3d(const Mesh& m, const DissipationArgs& a, const FArray<real
                       const FArray<real>& vorticity, const FArray<real>& rho_edge, FArray<real>& tend_u_euler) {
   const int nVertLevels = m.nVertLevels;
   const real tau_12_factor = 0.0;  // DM:686-687, les_model_opt = LES_MODEL_NONE
-  for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge) {  // DM:690-724
+  parallel_for(1, m.nEdges, [=, m = view(m), eddy_visc_horz = view(eddy_visc_horz), delsq_u = view(delsq_u),
+                             divergence = view(divergence), vorticity = view(vorticity), rho_edge = view(rho_edge),
+                             tend_u_euler = view(tend_u_euler)] CPPMPAS_LAMBDA(int iEdge) {  // DM:690-724
     const int cell1 = m.cellsOnEdge(1, iEdge);
     const int cell2 = m.cellsOnEdge(2, iEdge);
     const int vertex1 = m.verticesOnEdge(1, iEdge);
@@ -35,12 +39,13 @@ void u_dissipation_3d(const Mesh& m, const DissipationArgs& a, const FArray<real
       tend_u_euler(k, iEdge) =
           tend_u_euler(k, iEdge) + rho_edge(k, iEdge) * kdiffu * u_diffusion_les * m.meshScalingDel2(iEdge);
     }
-  }
+  });
   if (a.h_mom_eddy_visc4 > 0.0) throw Error("u_dissipation_3d: the 4th-order filter (DM:728-811) is not ported");
   if (a.v_mom_eddy_visc2 > 0.0) {  // DM:816
     if (!a.config_mix_full)
       throw Error("u_dissipation_3d: vertical mixing of the perturbation state (DM:848-884) is not ported");
-    for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge) {  // DM:823-844
+    parallel_for(1, m.nEdges, [=, m = view(m), u = view(u), rho_edge = view(rho_edge),
+                               tend_u_euler = view(tend_u_euler)] CPPMPAS_LAMBDA(int iEdge) {  // DM:823-844
       const int cell1 = m.cellsOnEdge(1, iEdge);
       const int cell2 = m.cellsOnEdge(2, iEdge);
       for (int k = 2; k <= nVertLevels - 1; ++k) {
@@ -57,7 +62,7 @@ void u_dissipation_3d(const Mesh& m, const DissipationArgs& a, const FArray<real
                                       (u(k, iEdge) - u(k - 1, iEdge)) / (z0 - zm)) /
                                      (0.5 * (zp - zm));  // DM:840-842
       }
-    }
+    });
   } else {
     throw Error("u_dissipation_3d: v_mom_eddy_visc2 <= 0 (no vertical mixing, DM:816 not taken) is not verified");
   }
@@ -67,7 +72,9 @@ void w_dissipation_3d(const Mesh& m, const DissipationArgs& a, FArray<real>& del
                       const FArray<real>& rho_edge, const FArray<real>& rho_zz, const FArray<real>& eddy_visc_horz,
                       FArray<real>& tend_w_euler) {
   const int nVertLevels = m.nVertLevels;
-  for (int iCell = 1; iCell <= m.nCells; ++iCell) {  // DM:1032-1067
+  parallel_for(1, m.nCells, [=, m = view(m), delsq_w = view(delsq_w), w = view(w), rho_edge = view(rho_edge),
+                             eddy_visc_horz = view(eddy_visc_horz),
+                             tend_w_euler = view(tend_w_euler)] CPPMPAS_LAMBDA(int iCell) {  // DM:1032-1067
     for (int k = 1; k <= nVertLevels; ++k) delsq_w(k, iCell) = 0.0;
     for (int k = 1; k <= nVertLevels + 1; ++k) tend_w_euler(k, iCell) = 0.0;
     const real r_areaCell = m.invAreaCell(iCell);
@@ -85,10 +92,11 @@ void w_dissipation_3d(const Mesh& m, const DissipationArgs& a, FArray<real>& del
         tend_w_euler(k, iCell) = tend_w_euler(k, iCell) + w_turb_flux;
       }
     }
-  }
+  });
   if (a.h_mom_eddy_visc4 > 0.0) throw Error("w_dissipation_3d: the 4th-order filter (DM:1073-1100) is not ported");
   if (a.v_mom_eddy_visc2 > 0.0) {  // DM:1102-1119
-    for (int iCell = 1; iCell <= m.nCells; ++iCell) {
+    parallel_for(1, m.nCells, [=, m = view(m), w = view(w), rho_zz = view(rho_zz),
+                               tend_w_euler = view(tend_w_euler)] CPPMPAS_LAMBDA(int iCell) {
       for (int k = 2; k <= nVertLevels; ++k) {
         tend_w_euler(k, iCell) = tend_w_euler(k, iCell) + a.v_mom_eddy_visc2 * 0.5 *
                                                               (rho_zz(k, iCell) + rho_zz(k - 1, iCell)) *
@@ -96,7 +104,7 @@ void w_dissipation_3d(const Mesh& m, const DissipationArgs& a, FArray<real>& del
                                                                (w(k, iCell) - w(k - 1, iCell)) * m.rdzw(k - 1)) *
                                                               m.rdzu(k);  // DM:1111-1113
       }
-    }
+    });
   } else {
     throw Error("w_dissipation_3d: v_mom_eddy_visc2 <= 0 (no vertical mixing, DM:1102 not taken) is not verified");
   }
@@ -106,7 +114,9 @@ void scalar_dissipation_3d_les(const Mesh& m, const DissipationArgs& a, FArray<r
                                const FArray<real>& theta_m, const FArray<real>& rho_edge, const FArray<real>& rho_zz,
                                const FArray<real>& eddy_visc_horz, FArray<real>& tend_theta_euler) {
   const int nVertLevels = m.nVertLevels;
-  for (int iCell = 1; iCell <= m.nCells; ++iCell) {  // DM:1268-1300
+  parallel_for(1, m.nCells, [=, m = view(m), delsq_theta = view(delsq_theta), theta_m = view(theta_m),
+                             rho_edge = view(rho_edge), eddy_visc_horz = view(eddy_visc_horz),
+                             tend_theta_euler = view(tend_theta_euler)] CPPMPAS_LAMBDA(int iCell) {  // DM:1268-1300
     for (int k = 1; k <= nVertLevels; ++k) {
       delsq_theta(k, iCell) = 0.0;
       tend_theta_euler(k, iCell) = 0.0;
@@ -126,13 +136,14 @@ void scalar_dissipation_3d_les(const Mesh& m, const DissipationArgs& a, FArray<r
         tend_theta_euler(k, iCell) = tend_theta_euler(k, iCell) + theta_turb_flux;
       }
     }
-  }
+  });
   if (a.h_theta_eddy_visc4 > 0.0)
     throw Error("scalar_dissipation_3d_les: the 4th-order filter (DM:1306-1332) is not ported");
   if (a.v_theta_eddy_visc2 > 0.0) {  // DM:1414
     if (!a.config_mix_full)
       throw Error("scalar_dissipation_3d_les: mixing of the perturbation from t_init (DM:1442-1466) is not ported");
-    for (int iCell = 1; iCell <= m.nCells; ++iCell) {  // DM:1421-1438
+    parallel_for(1, m.nCells, [=, m = view(m), theta_m = view(theta_m), rho_zz = view(rho_zz),
+                               tend_theta_euler = view(tend_theta_euler)] CPPMPAS_LAMBDA(int iCell) {  // DM:1421-1438
       for (int k = 2; k <= nVertLevels - 1; ++k) {
         const real z1 = m.zgrid(k - 1, iCell);
         const real z2 = m.zgrid(k, iCell);
@@ -147,7 +158,7 @@ void scalar_dissipation_3d_les(const Mesh& m, const DissipationArgs& a, FArray<r
                                           (theta_m(k, iCell) - theta_m(k - 1, iCell)) / (z0 - zm)) /
                                          (0.5 * (zp - zm));  // DM:1434-1436
       }
-    }
+    });
   } else {
     throw Error("scalar_dissipation_3d_les: v_theta_eddy_visc2 <= 0 (DM:1414 not taken) is not verified");
   }

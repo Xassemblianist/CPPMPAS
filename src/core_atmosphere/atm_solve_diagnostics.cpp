@@ -13,6 +13,7 @@
 #include <utility>
 
 #include "core/error.hpp"
+#include "core_atmosphere/atm_views.hpp"
 
 namespace cppmpas {
 
@@ -102,30 +103,32 @@ void atm_compute_solve_diagnostics(real dt, real config_apvm_upwinding, const Me
       if (m.kiteForCell(i, iCell) < 1 || m.kiteForCell(i, iCell) > vertexDegree)
         fail("kiteForCell(" + std::to_string(i) + ", " + std::to_string(iCell) + ") = " +
              std::to_string(m.kiteForCell(i, iCell)) + " outside 1..vertexDegree (mpas_atm_core.F:1262-1264)");
-  auto& h_edge = d.rho_edge;
-  auto& vorticity = d.vorticity;
-  auto& divergence = d.divergence;
-  auto& ke = d.ke;
-  auto& v = d.v;
-  auto& pv_vertex = d.pv_vertex;
-  auto& pv_edge = d.pv_edge;
-  auto& pv_cell = d.pv_cell;
-  auto& gradPVt = d.gradPVt;
-  auto& gradPVn = d.gradPVn;
-  auto& ke_edge = w.ke_edge;
-  auto& ke_vertex = w.ke_vertex;
+  // kernel views of the arrays (core/views.hpp); each loop over elements is one kernel, one thread per element, with
+  // the k loop and the neighbour loops in the thread in MPAS's order (core/backend.hpp)
+  auto h_edge = d.rho_edge.view();
+  auto vorticity = d.vorticity.view();
+  auto divergence = d.divergence.view();
+  auto ke = d.ke.view();
+  auto v = d.v.view();
+  auto pv_vertex = d.pv_vertex.view();
+  auto pv_edge = d.pv_edge.view();
+  auto pv_cell = d.pv_cell.view();
+  auto gradPVt = d.gradPVt.view();
+  auto gradPVn = d.gradPVn.view();
+  auto ke_edge = w.ke_edge.view();
+  auto ke_vertex = w.ke_vertex.view();
 
   // TI:7136-7154 height (rho_zz) and kinetic energy times area at edges
-  for (int iEdge = edgeStart; iEdge <= edgeEnd; ++iEdge) {
+  parallel_for(edgeStart, edgeEnd, [=, m = view(m), h = view(h), u = view(u)] CPPMPAS_LAMBDA(int iEdge) {
     const int cell1 = m.cellsOnEdge(1, iEdge);
     const int cell2 = m.cellsOnEdge(2, iEdge);
     for (int k = 1; k <= nVertLevels; ++k) h_edge(k, iEdge) = 0.5 * (h(k, cell1) + h(k, cell2));
     const real efac = m.dcEdge(iEdge) * m.dvEdge(iEdge);
     for (int k = 1; k <= nVertLevels; ++k) ke_edge(k, iEdge) = efac * (u(k, iEdge) * u(k, iEdge));  // u**2 = u*u
-  }
+  });
 
   // TI:7160-7180 circulation and relative vorticity at vertices
-  for (int iVertex = vertexStart; iVertex <= vertexEnd; ++iVertex) {
+  parallel_for(vertexStart, vertexEnd, [=, m = view(m), u = view(u)] CPPMPAS_LAMBDA(int iVertex) {
     for (int k = 1; k <= nVertLevels; ++k) vorticity(k, iVertex) = 0.0;
     for (int i = 1; i <= vertexDegree; ++i) {
       const int iEdge = m.edgesOnVertex(i, iVertex);
@@ -133,10 +136,10 @@ void atm_compute_solve_diagnostics(real dt, real config_apvm_upwinding, const Me
       for (int k = 1; k <= nVertLevels; ++k) vorticity(k, iVertex) = vorticity(k, iVertex) + s * u(k, iEdge);
     }
     for (int k = 1; k <= nVertLevels; ++k) vorticity(k, iVertex) = vorticity(k, iVertex) * m.invAreaTriangle(iVertex);
-  }
+  });
 
   // TI:7187-7207 divergence at cell centres
-  for (int iCell = cellStart; iCell <= cellEnd; ++iCell) {
+  parallel_for(cellStart, cellEnd, [=, m = view(m), u = view(u)] CPPMPAS_LAMBDA(int iCell) {
     for (int k = 1; k <= nVertLevels; ++k) divergence(k, iCell) = 0.0;
     for (int i = 1; i <= m.nEdgesOnCell(iCell); ++i) {
       const int iEdge = m.edgesOnCell(i, iCell);
@@ -145,29 +148,30 @@ void atm_compute_solve_diagnostics(real dt, real config_apvm_upwinding, const Me
     }
     const real r = m.invAreaCell(iCell);
     for (int k = 1; k <= nVertLevels; ++k) divergence(k, iCell) = divergence(k, iCell) * r;
-  }
+  });
 
   // TI:7220-7239 kinetic energy at cell centres
-  for (int iCell = cellStart; iCell <= cellEnd; ++iCell) {
+  parallel_for(cellStart, cellEnd, [=, m = view(m)] CPPMPAS_LAMBDA(int iCell) {
     for (int k = 1; k <= nVertLevels; ++k) ke(k, iCell) = 0.0;
     for (int i = 1; i <= m.nEdgesOnCell(iCell); ++i) {
       const int iEdge = m.edgesOnCell(i, iCell);
       for (int k = 1; k <= nVertLevels; ++k) ke(k, iCell) = ke(k, iCell) + 0.25 * ke_edge(k, iEdge);
     }
     for (int k = 1; k <= nVertLevels; ++k) ke(k, iCell) = ke(k, iCell) * m.invAreaCell(iCell);
-  }
+  });
 
   // TI:7243-7301 hollingsworth = .true. (a parameter, TI:7125): AG's KE construction
-  for (int iVertex = vertexStart; iVertex <= vertexEnd; ++iVertex) {  // TI:7253-7266
+  parallel_for(vertexStart, vertexEnd, [=, m = view(m)] CPPMPAS_LAMBDA(int iVertex) {  // TI:7253-7266
     const real r = 0.25 * m.invAreaTriangle(iVertex);
     const int e1 = m.edgesOnVertex(1, iVertex), e2 = m.edgesOnVertex(2, iVertex), e3 = m.edgesOnVertex(3, iVertex);
     for (int k = 1; k <= nVertLevels; ++k)
       ke_vertex(k, iVertex) = (ke_edge(k, e1) + ke_edge(k, e2) + ke_edge(k, e3)) * r;
-  }
+  });
   const real ke_fact = 1.0 - .375;  // TI:7274
-  for (int iCell = cellStart; iCell <= cellEnd; ++iCell)  // TI:7278-7282
+  parallel_for(cellStart, cellEnd, [=] CPPMPAS_LAMBDA(int iCell) {  // TI:7278-7282
     for (int k = 1; k <= nVertLevels; ++k) ke(k, iCell) = ke_fact * ke(k, iCell);
-  for (int iCell = cellStart; iCell <= cellEnd; ++iCell) {  // TI:7286-7298
+  });
+  parallel_for(cellStart, cellEnd, [=, m = view(m)] CPPMPAS_LAMBDA(int iCell) {  // TI:7286-7298
     const real r = m.invAreaCell(iCell);
     for (int i = 1; i <= m.nEdgesOnCell(iCell); ++i) {
       const int iVertex = m.verticesOnCell(i, iCell);
@@ -175,7 +179,7 @@ void atm_compute_solve_diagnostics(real dt, real config_apvm_upwinding, const Me
       for (int k = 1; k <= nVertLevels; ++k)
         ke(k, iCell) = ke(k, iCell) + (1. - ke_fact) * m.kiteAreasOnVertex(j, iVertex) * ke_vertex(k, iVertex) * r;
     }
-  }
+  });
 
   // TI:7307-7331 tangential velocity (Thuburn et al. 2009): rk_step absent (init) or 3; at rk_steps 1 and 2 v keeps
   // the values it has (those of the last rk_step 3, or of the init), and TI:7428 below uses them
@@ -184,26 +188,28 @@ void atm_compute_solve_diagnostics(real dt, real config_apvm_upwinding, const Me
     if (*rk_step != 3) reconstruct_v = false;
   }
   if (reconstruct_v) {
-    for (int iEdge = edgeStart; iEdge <= edgeEnd; ++iEdge) {
+    parallel_for(edgeStart, edgeEnd, [=, m = view(m), u = view(u)] CPPMPAS_LAMBDA(int iEdge) {
       for (int k = 1; k <= nVertLevels; ++k) v(k, iEdge) = 0.0;
       for (int i = 1; i <= m.nEdgesOnEdge(iEdge); ++i) {
         const int eoe = m.edgesOnEdge(i, iEdge);
         for (int k = 1; k <= nVertLevels; ++k) v(k, iEdge) = v(k, iEdge) + m.weightsOnEdge(i, iEdge) * u(k, eoe);
       }
-    }
+    });
   }
 
   // TI:7341-7353 absolute vorticity at vertices
-  for (int iVertex = vertexStart; iVertex <= vertexEnd; ++iVertex)
+  parallel_for(vertexStart, vertexEnd, [=, m = view(m)] CPPMPAS_LAMBDA(int iVertex) {
     for (int k = 1; k <= nVertLevels; ++k) pv_vertex(k, iVertex) = (m.fVertex(iVertex) + vorticity(k, iVertex));
+  });
 
   // TI:7364-7369 pv at edges
-  for (int iEdge = edgeStart; iEdge <= edgeEnd; ++iEdge)
+  parallel_for(edgeStart, edgeEnd, [=, m = view(m)] CPPMPAS_LAMBDA(int iEdge) {
     for (int k = 1; k <= nVertLevels; ++k)
       pv_edge(k, iEdge) = 0.5 * (pv_vertex(k, m.verticesOnEdge(1, iEdge)) + pv_vertex(k, m.verticesOnEdge(2, iEdge)));
+  });
 
   // TI:7372-7434 APVM upwinding (config_apvm_upwinding > 0, checked above)
-  for (int iCell = cellStart; iCell <= cellEnd; ++iCell) {  // TI:7381-7397
+  parallel_for(cellStart, cellEnd, [=, m = view(m)] CPPMPAS_LAMBDA(int iCell) {  // TI:7381-7397
     for (int k = 1; k <= nVertLevels; ++k) pv_cell(k, iCell) = 0.0;
     const real r = m.invAreaCell(iCell);
     for (int i = 1; i <= m.nEdgesOnCell(iCell); ++i) {
@@ -212,9 +218,9 @@ void atm_compute_solve_diagnostics(real dt, real config_apvm_upwinding, const Me
       for (int k = 1; k <= nVertLevels; ++k)
         pv_cell(k, iCell) = pv_cell(k, iCell) + m.kiteAreasOnVertex(j, iVertex) * pv_vertex(k, iVertex) * r;
     }
-  }
+  });
   const real r = config_apvm_upwinding * dt;  // TI:7417
-  for (int iEdge = edgeStart; iEdge <= edgeEnd; ++iEdge) {  // TI:7420-7430
+  parallel_for(edgeStart, edgeEnd, [=, m = view(m), u = view(u)] CPPMPAS_LAMBDA(int iEdge) {  // TI:7420-7430
     const real r1 = 1.0 * m.invDvEdge(iEdge);
     const real r2 = 1.0 * m.invDcEdge(iEdge);
     const int v1 = m.verticesOnEdge(1, iEdge), v2 = m.verticesOnEdge(2, iEdge);
@@ -224,7 +230,7 @@ void atm_compute_solve_diagnostics(real dt, real config_apvm_upwinding, const Me
       gradPVn(k, iEdge) = (pv_cell(k, c2) - pv_cell(k, c1)) * r2;
       pv_edge(k, iEdge) = pv_edge(k, iEdge) - r * (v(k, iEdge) * gradPVt(k, iEdge) + u(k, iEdge) * gradPVn(k, iEdge));
     }
-  }
+  });
 }
 
 }  // namespace cppmpas
