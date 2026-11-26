@@ -56,8 +56,10 @@ add_library(cppmpas STATIC
   src/core/mesh.cpp
   src/core/namelist.cpp
   src/core_atmosphere/atm_init.cpp
+  src/core_atmosphere/atm_solve_diagnostics.cpp
   src/operators/geometry_utils.cpp
   src/operators/vector_operations.cpp
+  src/operators/vector_reconstruct.cpp
   src/io/netcdf_file.cpp
   src/io/registry.cpp
   src/io/mpas_reader.cpp

@@ -111,3 +111,40 @@ foreach(case MW SC JW)
   set_tests_properties(init_restart_${case} init_step0_${case} PROPERTIES FIXTURES_REQUIRED init_${case})
 endforeach()
 cppmpas_error_test(do_restart "config_do_restart = true: the restart start-up" init ${W}/mw_init.nc ${W}/x.nc --fields dss --namelist ${T}/data/namelist.do_restart)
+
+# ---------------------------------------------------------------------------------------------------------------
+# Every field atm_mpas_init_block computes, at the initial time, against the initdump stream of the references
+# mpas842-dbl-mw-003, -sc-002 and -jw-002 (the short run writes initdump.nc, output_interval="initial_only", at the
+# first stream write of atm_core_run, mpas_atm_core.F:701, after the init block; field list INITDUMP_FIELDS of
+# cppmpas-data ci/cases.py). One test per case and field, tolerance 0 (tests/compare_arrays.py: type, dimensions,
+# attributes, raw bytes).
+set(INITDUMP_FIELDS
+  xtime
+  invAreaCell invDvEdge invDcEdge invAreaTriangle edgesOnCell_sign edgesOnVertex_sign
+  zb_cell zb3_cell kiteForCell advCellsForEdge nAdvCellsForEdge adv_coefs adv_coefs_3rd
+  deformation_coef_c2 deformation_coef_s2 deformation_coef_cs deformation_coef_c deformation_coef_s
+  meshScalingDel2 meshScalingDel4 meshScalingRegionalCell meshScalingRegionalEdge
+  etp etm ewp ewm specZoneMaskCell specZoneMaskEdge specZoneMaskVertex nearestRelaxationCell
+  theta_m rho_zz ru rw rho_p rtheta_base rtheta_p exner exner_base pressure_p pressure_base
+  v rho_edge vorticity divergence ke pv_edge pv_vertex pv_cell gradPVt gradPVn
+  uReconstructX uReconstructY uReconstructZ uReconstructZonal uReconstructMeridional)
+string(REPLACE ";" "," INITDUMP_LIST "${INITDUMP_FIELDS}")
+set(DUMPREF_MW ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-003/MW)
+set(DUMPREF_SC ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-002/SC)
+set(DUMPREF_JW ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-002/JW)
+set(DUMPINIT_MW ${DUMPREF_MW}/init/mtn_wave_init.nc)
+set(DUMPINIT_SC ${DUMPREF_SC}/init/supercell_init.nc)
+set(DUMPINIT_JW ${DUMPREF_JW}/init/x1.40962.init.nc)
+foreach(case MW SC JW)
+  add_test(NAME initdump_run_${case} COMMAND ${CMAKE_COMMAND} -E env sh -c
+    "mkdir -p '${W}' && rm -f '${W}/initdump_${case}.nc' && '${EXE}' init '${DUMPINIT_${case}}' '${W}/initdump_${case}.nc' --namelist '${DUMPREF_${case}}/steps/namelist.atmosphere' --scalars ${SCAL_${case}} --fields ${INITDUMP_LIST}")
+  set_tests_properties(initdump_run_${case} PROPERTIES FIXTURES_SETUP initdump_${case})
+  add_test(NAME initdump_vars_${case} COMMAND ${PY} ${T}/initdump_vars.py ${DUMPREF_${case}}/steps/initdump.nc
+    ${INITDUMP_LIST})
+  foreach(f IN LISTS INITDUMP_FIELDS)
+    add_test(NAME initdump_${case}_${f} COMMAND ${PY} ${T}/compare_arrays.py ${DUMPREF_${case}}/steps/initdump.nc
+      ${W}/initdump_${case}.nc ${f})
+    set_tests_properties(initdump_${case}_${f} PROPERTIES FIXTURES_REQUIRED initdump_${case})
+  endforeach()
+endforeach()
+cppmpas_error_test(apvm_off "config_apvm_upwinding <= 0" init ${W}/mw_init.nc ${W}/x.nc --fields v --namelist ${T}/data/namelist.apvm_off)

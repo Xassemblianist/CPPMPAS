@@ -7,7 +7,9 @@
 #include "core/error.hpp"
 #include "core/libm.hpp"
 #include "operators/geometry_utils.hpp"
+#include "core_atmosphere/atm_solve_diagnostics.hpp"
 #include "operators/vector_operations.hpp"
+#include "operators/vector_reconstruct.hpp"
 
 namespace cppmpas {
 
@@ -560,17 +562,26 @@ void atm_init_coupled_diagnostics(const Mesh& m, State& s, Diag& d) {
 void atm_mpas_init_block(Mesh& m, State& s, Diag& d, const InitConfig& cfg, std::vector<std::string>& log) {
   if (cfg.config_do_restart) throw Error("atm_mpas_init_block: config_do_restart = true is not ported");
   allocate_init_fields(m, s, d);
+  allocate_solve_diag_fields(m, d);
   atm_compute_signs(m, log);                                                       // :427
   atm_compute_inverses(m);                                                         // :459-473
   atm_initialize_deformation_weights(m, m.nCells, m.on_a_sphere, m.sphere_radius);  // :478-480
   atm_adv_coef_compression(m);                                                     // :482
   atm_couple_coef_3rd_order(m, cfg);                                               // :484
-  // :492-499 ke_vertex / ke_edge are module work arrays of atm_compute_solve_diagnostics (later unit)
-  atm_init_coupled_diagnostics(m, s, d);  // :513-521 (cold start)
-  // :523-541 atm_compute_solve_diagnostics: later unit
+  SolveDiagWork work;
+  allocate_solve_diag_work(m, work);  // :492-499 module ke_vertex / ke_edge, garbage column zeroed
+  // :502-517 thread ranges: one thread, cellThreadStart(1) = 1, cellThreadEnd(1) = nCells etc.
+  // (mpas_atm_threading.F:114-125); :519 mpas_atm_pre_compute_solve_diagnostics only moves data for OpenACC
+  atm_init_coupled_diagnostics(m, s, d);  // :523-530 (cold start)
+  atm_compute_solve_diagnostics(cfg.config_dt, cfg.config_apvm_upwinding, m, s.rho_zz, s.u, d, work, 1, m.nCells, 1,
+                                m.nVertices, 1, m.nEdges);  // :532-535, time level 1, dt = config_dt, no rk_step
+  // :538 mpas_atm_post_compute_solve_diagnostics (OpenACC data only); :540-541 deallocate ke_vertex / ke_edge
   mpas_initialize_vectors(m);  // :543 mpas_rbf_interp_initialize
   mpas_init_reconstruct(m);    // :544
-  // :546-596 first mpas_reconstruct and (moist physics) physics initialisation: later units
+  // :552-563 (h2d / d2h are OpenACC copies)
+  mpas_reconstruct_2d(m, s.u, d.uReconstructX, d.uReconstructY, d.uReconstructZ, d.uReconstructZonal,
+                      d.uReconstructMeridional);
+  // :565-596 (moist physics) physics initialisation: later unit
   atm_compute_mesh_scaling(m, cfg);   // :599
   atm_compute_damping_coefs(m, cfg);  // :601
   mpas_atm_setup_bdy_masks(m);        // :606

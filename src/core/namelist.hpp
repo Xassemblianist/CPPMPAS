@@ -13,6 +13,8 @@
 namespace cppmpas {
 
 struct InitConfig {
+  real config_dt = 720.0;                          // Registry.xml:74
+  real config_apvm_upwinding = 0.5;                // Registry.xml:269
   real config_coef_3rd_order = 0.25;              // Registry.xml:244
   bool config_h_ScaleWithMesh = true;              // Registry.xml:274
   real config_zd = 22000.0;                        // Registry.xml:291

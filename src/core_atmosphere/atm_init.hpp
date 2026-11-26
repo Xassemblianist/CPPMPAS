@@ -2,9 +2,10 @@
 #pragma once
 // The computations MPAS-Atmosphere's atm_mpas_init_block (src/core_atmosphere/mpas_atm_core.F:366-617) makes before
 // the first time step, in MPAS's order, for a cold start (config_do_restart = .false.) on one rank.
-// Not included (later units): atm_compute_solve_diagnostics and the first mpas_reconstruct (CORE:524-541, 545-563),
-// and for moist physics (SC) physics_tables_init / physics_registry_init / physics_run_init / physics_init
-// (CORE:568-596). These do not change any field computed here.
+// Includes the initial atm_compute_solve_diagnostics (CORE:532-535, core_atmosphere/atm_solve_diagnostics.hpp) and the
+// first mpas_reconstruct (CORE:546-563, operators/vector_reconstruct.hpp).
+// Not included (later unit): for moist physics (SC) physics_tables_init / physics_registry_init / physics_run_init /
+// physics_init (CORE:565-596).
 #include <string>
 #include <vector>
 

@@ -85,6 +85,8 @@ InitConfig read_init_config(const std::string& path) {
     const auto it = kv.find(k);
     if (it != kv.end()) x = parse_logical(k, it->second);
   };
+  r("config_dt", c.config_dt);
+  r("config_apvm_upwinding", c.config_apvm_upwinding);
   r("config_coef_3rd_order", c.config_coef_3rd_order);
   l("config_h_scalewithmesh", c.config_h_ScaleWithMesh);
   r("config_zd", c.config_zd);
