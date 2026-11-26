@@ -26,8 +26,14 @@ checks against WRF, all at tolerance 0). CPPMPAS applies the same method to MPAS
 - The dynamical core for the mountain-wave configuration (`cppmpas run --steps N`): `atm_srk3` with the acoustic
   steps, divergence damping, the 2nd-order horizontal and full vertical mixing and the per-step diagnostics.
   **Verified at tolerance 0** against `mpas842-dbl-mw-001`: steps 1-10 in every field of the step files, the
-  restart at 30:06 and the output at 30 and 60 min. Every other configuration (scalar advection, Smagorinsky or
-  4th-order mixing, physics, Coriolis, ...) is a hard error until it is ported and verified.
+  restart at 30:06 and the output at 30 and 60 min.
+- The supercell configuration on top of it: monotonic scalar transport of qv, qc, qr (`atm_advance_scalars` /
+  `atm_advance_scalars_mono`), vertical mixing of the perturbation from the initial state, and Kessler
+  microphysics with MPAS's microphysics interface (the Kessler kernel is shared with CPPWRF). **Verified at
+  tolerance 0** against `mpas842-dbl-sc-001`: steps 1-10 in every field of the step files, and the output at
+  30 min and the restart at 30:03 (cloud and rain present) in every field the port holds.
+  Every other configuration (Smagorinsky or 4th-order mixing, other physics, Coriolis, ...) is a hard error until
+  it is ported and verified.
 - The namelist: every option of MPAS-Atmosphere's Registry is known; a value that no verified reference runs with is a
   hard error naming the option.
 - The MPAS reference itself is reproducible across machines: the MW reference built and run on an AMD EPYC and on an
