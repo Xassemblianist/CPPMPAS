@@ -13,6 +13,7 @@ of the dycore paths the GPU-only bugs do not single out (JW's Smagorinsky viscos
 restart run).
 """
 import importlib.util
+import os
 import re
 import subprocess
 import sys
@@ -91,7 +92,9 @@ def mutants():
 
 
 def build(b):
-    return subprocess.run(["cmake", "--build", str(b), "-j4"], capture_output=True, text=True)
+    # -j4 on the shared workstation; GPU_MUT_JOBS on a machine of its own
+    return subprocess.run(["cmake", "--build", str(b), "-j" + os.environ.get("GPU_MUT_JOBS", "4")],
+                          capture_output=True, text=True)
 
 
 def main():
