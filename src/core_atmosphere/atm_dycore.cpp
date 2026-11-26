@@ -19,6 +19,7 @@
 
 #include "core/error.hpp"
 #include "core/libm.hpp"
+#include "core_atmosphere/atm_advance_scalars.hpp"
 #include "core_atmosphere/atm_dissipation.hpp"
 #include "operators/vector_reconstruct.hpp"
 
@@ -104,14 +105,13 @@ void check_dycore_supported(const DycoreConfig& c, const Mesh& m, const State& s
   if (c.config_time_integration_order != 2)  // TI:2066, 2210 (order 3 not verified)
     no("config_time_integration_order = " + std::to_string(c.config_time_integration_order));
   if (c.config_split_dynamics_transport) no("config_split_dynamics_transport = true");  // TI:2054, 2674
-  if (c.config_scalar_advection) no("config_scalar_advection = true (atm_advance_scalars, TI:2504-2507)");
+  if (c.config_scalar_advection) check_advance_scalars_supported(c, m);  // TI:2504-2507 (SC)
   if (c.config_positive_definite) no("config_positive_definite = true");
   if (c.config_horiz_mixing != "2d_fixed") no("config_horiz_mixing = '" + c.config_horiz_mixing + "'");  // TI:6346
   if (c.config_les_model != "none") no("config_les_model = '" + c.config_les_model + "'");
   if (c.config_mpas_cam_coef > 0.0) no("config_mpas_cam_coef > 0 (TI:6390)");
   if (c.config_rayleigh_damp_u) no("config_rayleigh_damp_u = true (TI:6608)");
   if (c.config_mix_scalars) no("config_mix_scalars = true (DM:1334)");
-  if (!c.config_mix_full) no("config_mix_full = false (DM:848, 1442)");
   if (c.config_h_mom_eddy_visc4 > 0.0) no("config_h_mom_eddy_visc4 > 0 (DM:728, 1073)");
   if (c.config_h_theta_eddy_visc4 > 0.0) no("config_h_theta_eddy_visc4 > 0 (DM:1306)");
   if (!(c.config_v_mom_eddy_visc2 > 0.0)) no("config_v_mom_eddy_visc2 <= 0 (DM:816, 1102 not taken)");
@@ -121,7 +121,8 @@ void check_dycore_supported(const DycoreConfig& c, const Mesh& m, const State& s
   if (c.config_physics_suite != "none") no("config_physics_suite = '" + c.config_physics_suite + "'");
   // mpas_atmphys_control.F:157-165: with the suite 'none', 'suite' is 'off'
   const auto off = [](const std::string& x) { return x == "suite" || x == "off"; };
-  if (!off(c.config_microp_scheme)) no("config_microp_scheme = '" + c.config_microp_scheme + "' (TI:2806)");
+  const bool kessler = c.config_microp_scheme == "mp_kessler";  // TI:2806 (SC, atm_microphysics.cpp)
+  if (!off(c.config_microp_scheme) && !kessler) no("config_microp_scheme = '" + c.config_microp_scheme + "' (TI:2806)");
   if (!off(c.config_convection_scheme)) no("config_convection_scheme = '" + c.config_convection_scheme + "'");
   if (!off(c.config_pbl_scheme)) no("config_pbl_scheme = '" + c.config_pbl_scheme + "'");
   if (!off(c.config_radt_lw_scheme) || !off(c.config_radt_sw_scheme)) no("radiation schemes");
@@ -129,7 +130,9 @@ void check_dycore_supported(const DycoreConfig& c, const Mesh& m, const State& s
   if (!(c.config_dt > 0.0) || c.config_dt != std::floor(c.config_dt) || c.config_dt > 86400.0)
     no("config_dt that is not a whole number of seconds in 1..86400");
   if (c.config_number_of_sub_steps < 2) no("config_number_of_sub_steps < 2");
-  if (s.scalar_names.size() != 1 || s.scalar_names[0] != "qv") no("scalars other than qv alone");
+  const std::vector<std::string> want = kessler ? std::vector<std::string>{"qv", "qc", "qr"} : std::vector<std::string>{"qv"};
+  if (s.scalar_names != want) no(kessler ? "scalars other than qv, qc, qr with Kessler" : "scalars other than qv alone");
+  if (s.scalar_names.size() > 1 && !c.config_scalar_advection) no("moist scalars without scalar advection");
   // odd nVertLevels: the last level of the rk_step-3 Exner pow is scalar pow@plt (TI:4439), never exercised
   if (m.nVertLevels < 4 || m.nVertLevels % 2 != 0) no("nVertLevels = " + std::to_string(m.nVertLevels) +
                                                       " (only an even nVertLevels >= 4 is verified)");
@@ -440,6 +443,7 @@ void atm_compute_dyn_tend(const DycoreConfig& cfg, const Mesh& m, const State& s
   da.h_theta_eddy_visc4 = h_theta_eddy_visc4;
   da.v_theta_eddy_visc2 = v_theta_eddy_visc2;
   da.prandtl_inv = prandtl_inv;
+  da.state_init = &s;  // u_init, v_init, t_init (config_mix_full = .false., DM:850-882, 1442-1466)
   if (rk_step == 1)  // :6582-6601
     u_dissipation_3d(m, da, eddy_visc_horz, f.delsq_u, u, d.divergence, d.vorticity, rho_edge, tend_u_euler);
 
@@ -868,7 +872,8 @@ void atm_srk3(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreF
         atm_divergence_damping_3d(cfg, m, s, f, rk_sub_timestep[rk_step]);              // :2401
       }
       atm_recover_large_step_variables(m, s, d, f, rk_timestep[rk_step], number_sub_steps[rk_step], rk_step);  // :2427
-      // :2504 scalar advection off (check_dycore_supported)
+      if (cfg.config_scalar_advection && !cfg.config_split_dynamics_transport)  // :2504-2507
+        advance_scalars(cfg, m, s, f, rk_step, rk_timestep);
       // :2543-2551 ke_vertex / ke_edge re-allocated, garbage column zeroed
       for (int k = 1; k <= nVertLevels; ++k) {
         f.sdw.ke_vertex(k, m.nVertices + 1) = 0.0;
@@ -885,7 +890,12 @@ void atm_srk3(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreF
   // :2799-2800 where (scalars_2 < 0.0) scalars_2 = 0.0, the whole array (garbage column included)
   for (std::size_t i = 0; i < f.scalars2.size(); ++i)
     if (f.scalars2.data()[i] < 0.0) f.scalars2.data()[i] = 0.0;
-  // :2806 microphysics off; :2880 summarize_timestep writes only to the log
+  // :2806-2817 microphysics (pre_ / post_microphysics are OpenACC-only) on time level 2
+  if (cfg.config_microp_scheme != "off" && cfg.config_microp_scheme != "suite") {
+    if (!f.mp.active) throw Error("atm_srk3: config_microp_scheme = '" + cfg.config_microp_scheme + "' without microphysics_init");
+    driver_microphysics(m, s, f.theta_m2, f.rho_zz2, f.scalars2, d, f.rt_diabatic_tend, f.mp);
+  }
+  // :2880 summarize_timestep writes only to the log
 }
 
 void atm_timestep(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreFields& f, real dt,

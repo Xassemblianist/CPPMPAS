@@ -10,12 +10,16 @@
 // Ported and verified (MW, mpas842-dbl-mw-001 steps 1-10): SRK3 of order 2, coupled dynamics-transport
 // (config_split_dynamics_transport = false), no scalar advection, 2d_fixed horizontal mixing with mix_full vertical
 // mixing, no 4th-order filters, no LES, no Rayleigh damping of u, no CAM top filter, physics suite 'none', no LBCs,
-// no IAU, fEdge = 0, an even nVertLevels >= 4. Every other configuration is refused by check_dycore_supported.
+// no IAU, fEdge = 0, an even nVertLevels >= 4. Supercell (SC, mpas842-dbl-sc-001 steps 1-10) adds: coupled
+// monotonic scalar transport of qv, qc, qr (atm_advance_scalars.hpp), vertical mixing of the perturbation from the
+// initial state (config_mix_full = .false., atm_dissipation_perturbation.cpp) and Kessler microphysics at the end of
+// the step (atm_microphysics.hpp). Every other configuration is refused by check_dycore_supported.
 #include <string>
 #include <vector>
 
 #include "core/mesh.hpp"
 #include "core/namelist.hpp"
+#include "core_atmosphere/atm_microphysics.hpp"
 #include "core_atmosphere/atm_solve_diagnostics.hpp"
 
 namespace cppmpas {
@@ -75,6 +79,7 @@ struct DycoreFields {
   FArray<real> qtot, dpdz, delsq_theta, delsq_w, delsq_divergence, delsq_u, delsq_vorticity;
   SolveDiagWork sdw;
   int moist_start = 1, moist_end = 1, index_qv = 1;
+  MicrophysicsFields mp;  // the Kessler path (atm_microphysics.hpp); inactive unless microphysics_init set it
 };
 void allocate_dycore_fields(const Mesh& mesh, const State& state, DycoreFields& f);
 
