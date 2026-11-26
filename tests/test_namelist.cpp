@@ -234,8 +234,14 @@ int main(int argc, char** argv) {
         loc = l;
         break;
       }
-    expect(loc != nullptr, "a locale with decimal point ',' is installed (de_DE, fr_FR or tr_TR)");
-    if (loc) {
+    if (!loc) {
+      // No such locale on this machine: the check cannot run, so the test reports a skip (ctest SKIP_RETURN_CODE 77),
+      // never a pass.
+      std::printf("SKIP no locale with decimal point ',' is installed (de_DE, fr_FR or tr_TR)\n");
+      std::remove(path.c_str());
+      return 77;
+    }
+    {
       const InitConfig c = read("config_zd = 10500.0", "config_zd = 10500.0");
       expect(bits(c.config_len_disp) == bits(577.35) && bits(c.config_xnutr) == bits(0.1),
              std::string("reference reals in LC_NUMERIC=") + loc);

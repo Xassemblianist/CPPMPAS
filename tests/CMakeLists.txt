@@ -208,9 +208,10 @@ add_executable(test_namelist test_namelist.cpp)
 target_link_libraries(test_namelist PRIVATE cppmpas)
 add_test(NAME unit_namelist COMMAND ${CMAKE_COMMAND} -E env sh -c
   "mkdir -p '${W}' && '$<TARGET_FILE:test_namelist>' '${REF_MW}/steps/namelist.atmosphere' '${W}'")
-# reals in a process locale whose decimal point is ',' (needs a de_DE, fr_FR or tr_TR locale: fails without one)
+# reals in a process locale whose decimal point is ',' (needs a de_DE, fr_FR or tr_TR locale: reported as skipped, not passed, without one)
 add_test(NAME unit_namelist_locale COMMAND ${CMAKE_COMMAND} -E env sh -c
   "mkdir -p '${W}' && '$<TARGET_FILE:test_namelist>' '${REF_MW}/steps/namelist.atmosphere' '${W}' locale")
+set_tests_properties(unit_namelist_locale PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME namelist_gen_errors COMMAND ${PY} ${T}/check_gen_namelist.py ${CMAKE_SOURCE_DIR}/tools/gen_namelist_table.py
   ${CPPMPAS_MPAS_REGISTRY} ${REF_MW}/steps/namelist.atmosphere ${W}/gen_namelist)
 # --scalars must be the scalars the namelist's packages activate
