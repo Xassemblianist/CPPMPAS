@@ -7,6 +7,7 @@
 // (mpas_block_creator.F:1649, 1680).
 #include <array>
 #include <cstddef>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -40,13 +41,18 @@ template <class T> class FArray {
     std::size_t n = 1;
     for (int e : extents) {
       if (e < 0) throw Error("FArray: negative extent");
+      if (e != 0 && n > std::numeric_limits<std::size_t>::max() / static_cast<std::size_t>(e))
+        throw Error("FArray: the number of elements overflows");
       n *= static_cast<std::size_t>(e);
     }
     ext_ = std::move(extents);
     data_.assign(n, fill);
   }
   int rank() const { return static_cast<int>(ext_.size()); }
-  int extent(int d) const { return d < rank() ? ext_[d] : 1; }  // d is 0-based
+  int extent(int d) const {  // d is 0-based
+    if (d < 0) throw Error("FArray: negative dimension index");
+    return d < rank() ? ext_[d] : 1;
+  }
   const std::vector<int>& extents() const { return ext_; }
   std::size_t size() const { return data_.size(); }
   bool allocated() const { return !ext_.empty(); }

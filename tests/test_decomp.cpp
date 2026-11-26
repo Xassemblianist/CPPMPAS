@@ -5,10 +5,14 @@
 //
 // first-seen edge order: 4 1 2 5 3 6 7 (mpas_block_decomp.F:662-676). With owned cells {2}, the owned edges keep
 // their order at the front and the others go to the end backwards (mpas_block_decomp.F:596-609).
+#include <sys/mman.h>
+
 #include <cstdio>
+#include <string>
 #include <vector>
 
 #include "core/decomp.hpp"
+#include "core/error.hpp"
 
 using namespace cppmpas;
 
@@ -18,6 +22,19 @@ static void expect(bool ok, const char* what) {
     std::printf("FAIL %s\n", what);
     ++fails;
   }
+}
+template <class F> static bool throws_with(F f, const std::string& text) {
+  try {
+    f();
+  } catch (const Error& e) {
+    return std::string(e.what()).find(text) != std::string::npos;
+  }
+  return false;
+}
+// n ints of address space, untouched pages not backed by memory (a 2^31-element array costs a few pages here)
+static int* sparse_ints(std::size_t n) {
+  void* p = mmap(nullptr, n * sizeof(int), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+  return p == MAP_FAILED ? nullptr : static_cast<int*>(p);
 }
 
 int main() {
@@ -67,6 +84,64 @@ int main() {
   const std::vector<std::pair<int, int>> one = {{5, 1}}, none;
   expect(mpas_binary_search(one, 1, 5) == 1 && mpas_binary_search(one, 1, 4) == 2 && mpas_binary_search(none, 0, 4) == 1,
          "binary search: n = 1 and n = 0");
+
+  // offsets past 2^31 elements (maxEdges * nCells > INT_MAX): gfortran indexes edgesOnCell(j, i) in 64 bits
+  {
+    const int big = 1 << 30;  // maxEdges (or maxCells) = 2^30: element (1, 3) is at offset 2^31
+    const std::size_t n = (std::size_t(1) << 31) + 1;
+    int* a = sparse_ints(n);
+    expect(a != nullptr, "mmap of 2^31 ints");
+    if (a) {
+      a[std::size_t(1) << 31] = 42;
+      const std::vector<int> nE = {0, 0, 1};
+      expect(block_decomp_all_edges_in_block(big, 3, nE.data(), a) == std::vector<int>({42}),
+             "edgesOnCell(1, 3) at offset 2^31");
+      a[0] = 1;  // cellsOnEdge (maxCells = 2^30, 3 edges): the first cell of every edge is cell 1
+      a[std::size_t(1) << 30] = 1;
+      a[std::size_t(1) << 31] = 1;
+      std::vector<int> ids = {7, 8, 9};
+      const std::vector<int> cells = {1};
+      expect(block_decomp_partitioned_edge_list(1, cells.data(), big, 3, a, ids.data()) == 4 &&
+                 ids == std::vector<int>({7, 8, 9}),
+             "cellsOnEdge(1, 3) at offset 2^31");
+      munmap(a, n * sizeof(int));
+    }
+  }
+
+  // arguments the public routines refuse
+  expect(throws_with([] { (void)block_decomp_one_block_cell_list(-1); }, "nCellsGlobal < 0"), "cell list of -1 cells");
+  {
+    const std::vector<int> nE = {3, 4};
+    expect(throws_with([&] { (void)block_decomp_all_edges_in_block(3, 2, nE.data(), edgesOnCell.data()); },
+                       "nEdgesOnCell(2) outside 0..maxEdges"),
+           "nEdgesOnCell > maxEdges");
+    const std::vector<int> nN = {3, -1};
+    expect(throws_with([&] { (void)block_decomp_all_edges_in_block(3, 2, nN.data(), edgesOnCell.data()); },
+                       "nEdgesOnCell(2) outside 0..maxEdges"),
+           "nEdgesOnCell < 0");
+    std::vector<int> l2 = list;
+    expect(throws_with([&] { (void)block_decomp_partitioned_edge_list(3, all.data(), 2, -1, cellsOnEdge.data(), l2.data()); },
+                       "negative dimension"),
+           "partitioned edge list of -1 edges");
+  }
+  expect(throws_with([&] { (void)mpas_binary_search(sorted, 4, 5); }, "n2 outside 0..size"), "binary search past the list");
+  expect(throws_with([&] { (void)mpas_binary_search(sorted, -1, 5); }, "n2 outside 0..size"), "binary search, n2 < 0");
+  {
+    FArray<int> c2({3, 4}, 0);
+    expect(throws_with([&] { postread_reindex(c2, 3, 3, idx, 9); }, "dimension outside its array"),
+           "postread_reindex: indexSpaceDim past indexToID");
+    expect(throws_with([&] { postread_reindex(c2, 4, 3, idx, 7); }, "dimension outside its array"),
+           "postread_reindex: innerDim past the field");
+  }
+
+  // FArray: an element count that overflows size_t, a negative dimension index
+  expect(throws_with([] { FArray<char> x({1 << 30, 1 << 30, 1 << 30, 1 << 30}); }, "number of elements overflows"),
+         "FArray: 2^120 elements");
+  {
+    FArray<int> x({2, 3});
+    expect(throws_with([&] { (void)x.extent(-1); }, "negative dimension index"), "FArray::extent(-1)");
+  }
+
   if (fails == 0) std::printf("OK decomp unit test\n");
   return fails ? 1 : 0;
 }

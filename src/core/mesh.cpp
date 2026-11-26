@@ -81,7 +81,8 @@ void build_one_rank_order(Mesh& m, const std::vector<int>& nEdgesOnCell, const s
         throw Error(std::string("mesh: ") + what + " ID " + std::to_string(g) + " out of range 1.." +
                     std::to_string(nFile));
       for (int j = 1; j <= degree; ++j)
-        cellsOnLocal[(j - 1) + degree * (i - 1)] = cellsOnX[(j - 1) + degree * (g - 1)];
+        cellsOnLocal[static_cast<std::size_t>(j - 1) + static_cast<std::size_t>(degree) * (i - 1)] =
+            cellsOnX[static_cast<std::size_t>(j - 1) + static_cast<std::size_t>(degree) * (g - 1)];
     }
     // mpas_block_creator.F:391-393 -> mpas_block_decomp_partitioned_edge_list
     const int ghostStart = block_decomp_partitioned_edge_list(m.nCells, cellList.data(), degree, nLocal,
