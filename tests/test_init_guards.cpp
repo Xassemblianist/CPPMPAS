@@ -9,7 +9,8 @@
 //  * atm_start_time_stamp: YYYY-MM-DD_hh:mm:ss only;
 //  * mpas_atm_run_compatibility (mpas_atm_core.F:1578-1617): the two limited-area errors and the warnings;
 //  * atm_compute_solve_diagnostics refuses config_apvm_upwinding <= 0 (no APVM, mpas_atm_time_integration.F:7372);
-//  * init_block_verified_fields: everything for an even nVertLevels, not the pow tail of an odd one;
+//  * init_block_verified_fields: everything for an even nVertLevels >= 4, not the pow-dependent fields of an odd
+//    one or of nVertLevels <= 2;
 //  * atm_core_init sets xtime = config_start_time, blank-padded to StrLen (mpas_atm_core.F:261-262), whatever the
 //    init file held.
 //
@@ -287,6 +288,7 @@ int main(int argc, char** argv) {
     };
     const auto even = init_block_verified_fields(70), odd = init_block_verified_fields(71);
     const auto scaled = init_block_verified_fields(70, true);
+    const auto two = init_block_verified_fields(2);  // even, but the reference's scalar pow loop (nVertLevels <= 2)
     // exactly the computed fields, each once; minus the four pow-tail fields for an odd nVertLevels, minus the four
     // meshScaling* fields for a scaled mesh
     auto exactly = [&](const std::vector<std::string>& l, const std::vector<std::string>& minus) {
@@ -300,6 +302,8 @@ int main(int argc, char** argv) {
     expect(exactly(even, {}), "verified fields: all computed fields for an even nVertLevels");
     expect(exactly(odd, {"exner", "exner_base", "pressure_p", "pressure_base"}),
            "verified fields: all but the pow tail (exner, exner_base, pressure_p, pressure_base) for an odd nVertLevels");
+    expect(exactly(two, {"exner", "exner_base", "pressure_p", "pressure_base"}),
+           "verified fields: all but the pow-dependent fields for nVertLevels = 2 (scalar pow loop, no reference)");
     expect(exactly(scaled, {"meshScalingDel2", "meshScalingDel4", "meshScalingRegionalCell", "meshScalingRegionalEdge"}),
            "verified fields: all but meshScaling* for a scaled mesh");
   }

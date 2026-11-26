@@ -492,8 +492,9 @@ void mpas_atm_setup_bdy_masks(Mesh& m) {
 // src/core_atmosphere/dynamics/mpas_atm_time_integration.F:7440-7665, cellStart..cellEnd = 1..nCells,
 // edgeStart..edgeEnd = 1..nEdges (one thread). The exner / exner_base loop (:7633-7638) is vectorised over k:
 // levels (1,2), (3,4), ... call _ZGVbN2vv_pow (one lane each), an odd last level pow@plt (reference executable,
-// atm_init_coupled_diagnostics +0x41b0 ... +0x43af; the scalar loop +0x4a37 is taken only for nVertLevels = 1 or
-// overlapping arrays).
+// atm_init_coupled_diagnostics +0x41b0 ... +0x43af). The scalar loop +0x4a37 (pow@plt on every level) is taken for
+// nVertLevels <= 2 (+0x3ff0: cmpl $0x1 against nVertLevels - 1, jbe, so the vector loop needs at least 3 levels) or
+// overlapping arrays.
 void atm_init_coupled_diagnostics(const Mesh& m, State& s, Diag& d) {
   const int nVertLevels = m.nVertLevels;
   int index_qv = 0;
@@ -553,8 +554,8 @@ void atm_init_coupled_diagnostics(const Mesh& m, State& s, Diag& d) {
       d.exner(k, iCell) = vector ? libm::mvec_pow(xe, rcv) : libm::pow(xe, rcv);
       d.exner_base(k, iCell) = vector ? libm::mvec_pow(xb, rcv) : libm::pow(xb, rcv);
     };
-    if (nVertLevels == 1) {
-      lane(1, false);
+    if (nVertLevels <= 2) {
+      for (int k = 1; k <= nVertLevels; ++k) lane(k, false);
       continue;
     }
     int k = 1;
@@ -730,8 +731,8 @@ std::vector<std::string> init_block_verified_fields(int nVertLevels, bool scaled
   std::vector<std::string> v = {"edgeNormalVectors", "localVerticalUnitVectors", "cellTangentPlane",
                                 "coeffs_reconstruct", "dss", "nominalMinDc"};
   const std::vector<std::string>& all = init_block_computed_fields();
-  // exner and what uses it: the last level of an odd nVertLevels goes through the scalar pow
-  // (atm_init_coupled_diagnostics), which no reference exercises
+  // exner and what uses it: the last level of an odd nVertLevels, and every level of nVertLevels <= 2, go through the
+  // scalar pow (atm_init_coupled_diagnostics), which no reference exercises
   const std::vector<std::string> pow_tail = {"exner", "exner_base", "pressure_p", "pressure_base"};
   // the mesh scaling pows (atm_compute_mesh_scaling) only ever had the argument 1 in a reference (JW)
   const std::vector<std::string> scaling = {"meshScalingDel2", "meshScalingDel4", "meshScalingRegionalCell",
@@ -739,7 +740,7 @@ std::vector<std::string> init_block_verified_fields(int nVertLevels, bool scaled
   for (const auto& n : all) {
     if (std::find(v.begin(), v.end(), n) != v.end()) continue;
     if (scaled_mesh && std::find(scaling.begin(), scaling.end(), n) != scaling.end()) continue;
-    if (nVertLevels % 2 != 0 && std::find(pow_tail.begin(), pow_tail.end(), n) != pow_tail.end()) continue;
+    if ((nVertLevels % 2 != 0 || nVertLevels <= 2) && std::find(pow_tail.begin(), pow_tail.end(), n) != pow_tail.end()) continue;
     v.push_back(n);
   }
   return v;

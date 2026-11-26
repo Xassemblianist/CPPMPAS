@@ -244,8 +244,13 @@ MUTATIONS = [
     (S, "      gradPVn(k, iEdge) = (pv_cell(k, c2) - pv_cell(k, c1)) * r2;",
      "      gradPVn(k, iEdge) = (pv_vertex(k, c2) - pv_vertex(k, c1)) * r2;", D("gradPVn", "MW SC JW")),
     (S, "  if (!(config_apvm_upwinding > 0.0))", "  if (false)", ["unit_init_guards"]),
-    (A, "    if (nVertLevels % 2 != 0 && std::find(pow_tail.begin(), pow_tail.end(), n) != pow_tail.end()) continue;",
+    (A, "    if ((nVertLevels % 2 != 0 || nVertLevels <= 2) && std::find(pow_tail.begin(), pow_tail.end(), n) != pow_tail.end()) continue;",
      "    if (false && std::find(pow_tail.begin(), pow_tail.end(), n) != pow_tail.end()) continue;", ["unit_init_guards"]),
+    (A, "    if ((nVertLevels % 2 != 0 || nVertLevels <= 2) && std::find(pow_tail.begin(), pow_tail.end(), n) != pow_tail.end()) continue;",
+     "    if ((nVertLevels % 2 != 0) && std::find(pow_tail.begin(), pow_tail.end(), n) != pow_tail.end()) continue;", ["unit_init_guards"]),
+    # The scalar pow loop for nVertLevels <= 2 (atm_init_coupled_diagnostics) has no mutant: every reference has
+    # nVertLevels >= 26, so no test can tell it from the vector loop; the fields it feeds are refused unless
+    # --unverified (the two mutants above).
     # mpas_reconstruct
     (RC, "uReconstructX(k, iCell) + coeffs_reconstruct(1, i, iCell) * u(k, iEdge);",
      "uReconstructX(k, iCell) + coeffs_reconstruct(2, i, iCell) * u(k, iEdge);", D("uReconstructX uReconstructZonal", "MW SC JW")),
