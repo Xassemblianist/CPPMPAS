@@ -14,6 +14,7 @@ Values are written normalised: reals as Python's shortest round-trip repr of the
 usage: gen_namelist_table.py <Registry.xml> <namelist.atmosphere>... > src/core/namelist_table.inc
 """
 import importlib.util
+import math
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -33,10 +34,15 @@ def normalise(typ, text, where):
     if typ == "real":
         if not REAL.fullmatch(text):
             sys.exit(f"{where}: '{text}' is not a real")
-        return repr(float(re.sub("[dD]", "e", text)))
+        x = float(re.sub("[dD]", "e", text))
+        if not math.isfinite(x):
+            sys.exit(f"{where}: '{text}' overflows a double")
+        return repr(x)
     if typ == "integer":
         if not INT.fullmatch(text):
             sys.exit(f"{where}: '{text}' is not an integer")
+        if not -2**31 <= int(text) <= 2**31 - 1:
+            sys.exit(f"{where}: '{text}' is outside a 32-bit integer")
         return str(int(text))
     if typ == "logical":
         if text.lower() not in LOGICAL:
@@ -50,7 +56,7 @@ def read_namelist(path):
     'option = value' per line inside '&record' ... '/'."""
     out, rec = {}, None
     for n, line in enumerate(Path(path).read_text().splitlines(), 1):
-        t = line.split("!")[0].strip()
+        t = re.match(r"(?:[^!'\"]|'[^']*'|\"[^\"]*\")*", line).group(0).strip()  # up to a '!' outside quotes
         if not t:
             continue
         if t.startswith("&"):
@@ -64,7 +70,10 @@ def read_namelist(path):
             sys.exit(f"{path}:{n}: not read: {line}")
         quoted = m.group(2)[0] in "'\""
         text = m.group(3) if m.group(3) is not None else m.group(4) if m.group(4) is not None else m.group(2)
-        out[(rec, m.group(1).lower())] = (text, quoted)
+        key = (rec, m.group(1).lower())
+        if key in out:
+            sys.exit(f"{path}:{n}: {key[1]} is set twice")
+        out[key] = (text, quoted)
     return out
 
 
@@ -103,6 +112,8 @@ def main():
             text, quoted = ref.get((rec.lower(), name.lower()), (default, typ == "character"))
             if typ == "character" and not quoted:
                 sys.exit(f"{p}: {name} = {text}: a character value must be quoted")
+            if typ != "character" and quoted:
+                sys.exit(f"{p}: {name} = '{text}': a {typ} value must not be quoted")
             v = normalise(typ, text, f"{p}: {name}")
             if v not in acc:
                 acc.append(v)

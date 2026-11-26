@@ -2,9 +2,14 @@
 #include "core/namelist.hpp"
 
 #include <cctype>
+#include <cerrno>
+#include <climits>
+#include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <vector>
 
@@ -57,6 +62,8 @@ std::string normalise(const NmlOption& o, const NmlValue& v, const std::string& 
   };
   if (t == "character") {
     if (!v.quoted) throw bad("a quoted character value");
+    // character(len=StrKIND) (gen_inc.c:824, StrKIND = 512): a longer value is cut by the read; not handled
+    if (v.text.size() > 512) throw bad("at most StrKIND = 512 characters long");
     return v.text;
   }
   if (v.quoted) throw bad(t == "real" ? "a real (it is quoted)" : t == "integer" ? "an integer (it is quoted)"
@@ -70,7 +77,12 @@ std::string normalise(const NmlOption& o, const NmlValue& v, const std::string& 
   }
   if (t == "integer") {
     if (!std::regex_match(v.text, kInt)) throw bad("an integer");
-    return std::to_string(std::stol(v.text));
+    // a default integer (gen_inc.c:814) is 32 bits: gfortran's read fails on a larger value (ierr > 0: MPAS
+    // stops, gen_inc.c:910-911)
+    errno = 0;
+    const long long x = std::strtoll(v.text.c_str(), nullptr, 10);
+    if (errno == ERANGE || x < INT_MIN || x > INT_MAX) throw bad("a 32-bit integer (out of range)");
+    return std::to_string(x);
   }
   const std::string l = lower(v.text);
   if (l == "t" || l == ".t." || l == "true" || l == ".true.") return "true";
@@ -78,8 +90,16 @@ std::string normalise(const NmlOption& o, const NmlValue& v, const std::string& 
   throw bad("a logical");
 }
 
+// Reals are the same when their doubles have the same bits (as gfortran's read gives them: strtod, a real that
+// underflows to 0 included): -0.0 is not 0.0, the results differ in the sign of zero.
 bool same_value(const NmlOption& o, const std::string& a, const std::string& b) {
-  if (std::string(o.type) == "real") return std::strtod(a.c_str(), nullptr) == std::strtod(b.c_str(), nullptr);
+  if (std::string(o.type) == "real") {
+    const double x = std::strtod(a.c_str(), nullptr), y = std::strtod(b.c_str(), nullptr);
+    std::uint64_t bx, by;
+    std::memcpy(&bx, &x, sizeof x);
+    std::memcpy(&by, &y, sizeof y);
+    return bx == by;
+  }
   return a == b;
 }
 
@@ -104,6 +124,7 @@ std::map<std::string, NmlValue> read_namelist_file(const std::string& path) {
   const std::string s = all.str();
   std::map<std::string, NmlValue> kv;
   std::string record;  // empty: outside a group
+  std::set<std::string> groups;  // the groups already read
   std::size_t i = 0;
   int line = 1;
   const auto where = [&] { return path + ":" + std::to_string(line); };
@@ -127,7 +148,6 @@ std::map<std::string, NmlValue> read_namelist_file(const std::string& path) {
     while (i < s.size() && (std::isalnum(static_cast<unsigned char>(s[i])) || s[i] == '_')) ++i;
     return s.substr(a, i - a);
   };
-  std::string key;  // the name whose value comes next
   for (;;) {
     skip();
     if (i >= s.size()) break;
@@ -138,6 +158,9 @@ std::map<std::string, NmlValue> read_namelist_file(const std::string& path) {
       record = lower(word());
       if (record.empty() || record == "end") throw Error(where() + ": '&' without a namelist group name");
       if (!is_record(record)) throw Error(where() + ": &" + record + " is not a namelist record of MPAS-Atmosphere");
+      // MPAS rewinds and reads each record once (gen_inc.c:855-857): only the first group of a name is read
+      if (!groups.insert(record).second)
+        throw Error(where() + ": group &" + record + " appears twice (MPAS reads only the first one; not handled)");
       continue;
     }
     if (c == '/') {
@@ -146,15 +169,22 @@ std::map<std::string, NmlValue> read_namelist_file(const std::string& path) {
       continue;
     }
     if (c == '&' || c == '$') throw Error(where() + ": group &" + record + " is not closed with '/'");
+    const int name_line = line;
+    const auto at = [&] { return path + ":" + std::to_string(name_line); };
     const std::string name = lower(word());
     if (name.empty()) throw Error(where() + ": unexpected '" + std::string(1, c) + "' in &" + record);
     skip();
-    if (i >= s.size() || s[i] != '=') throw Error(where() + ": " + name + " without '= value' (arrays are not handled)");
+    if (i >= s.size() || s[i] != '=') throw Error(at() + ": " + name + " without '= value' (arrays are not handled)");
     ++i;
     if (!find_option(record, name))
-      throw Error(where() + ": " + name + " is not an option of the namelist record &" + record + " of MPAS-Atmosphere");
-    if (kv.count(name)) throw Error(where() + ": option " + name + " is set twice");
-    while (i < s.size() && (s[i] == ' ' || s[i] == '\t')) ++i;
+      throw Error(at() + ": " + name + " is not an option of the namelist record &" + record + " of MPAS-Atmosphere");
+    if (kv.count(name)) throw Error(at() + ": option " + name + " is set twice");
+    // the value may be on a later line (gfortran reads it there); a comment before it is refused (gfortran's read then
+    // ends with an end-of-file status and MPAS keeps the defaults of the rest of the record)
+    while (i < s.size() && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n')) {
+      if (s[i] == '\n') ++line;
+      ++i;
+    }
     NmlValue v;
     v.record = record;
     if (i < s.size() && (s[i] == '\'' || s[i] == '"')) {
@@ -259,7 +289,25 @@ InitConfig read_init_config(const std::string& path) {
   r("config_epssm", c.config_epssm);
   l("config_positive_definite", c.config_positive_definite);
   l("config_apply_lbcs", c.config_apply_lbcs);
+  t("config_les_model", c.config_les_model);
+  t("config_physics_suite", c.config_physics_suite);
+  t("config_microp_scheme", c.config_microp_scheme);
+  t("config_convection_scheme", c.config_convection_scheme);
+  t("config_pbl_scheme", c.config_pbl_scheme);
   return c;
+}
+
+std::vector<std::string> active_scalars(const InitConfig& c) {
+  if (c.config_physics_suite != "none")
+    throw Error("active scalars: config_physics_suite = '" + c.config_physics_suite + "' is not handled");
+  if (c.config_les_model != "none") throw Error("active scalars: config_les_model = '" + c.config_les_model + "' is not handled");
+  // mpas_atmphys_control.F:157-159: with the suite 'none', 'suite' means 'off'
+  const auto off = [](const std::string& s) { return s == "suite" || s == "off"; };
+  if (!off(c.config_convection_scheme) || !off(c.config_pbl_scheme))
+    throw Error("active scalars: convection / PBL schemes are not handled");
+  if (off(c.config_microp_scheme)) return {"qv"};
+  if (c.config_microp_scheme == "mp_kessler") return {"qv", "qc", "qr"};
+  throw Error("active scalars: config_microp_scheme = '" + c.config_microp_scheme + "' is not handled");
 }
 
 }  // namespace cppmpas

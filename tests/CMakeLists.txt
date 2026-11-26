@@ -190,6 +190,19 @@ add_test(NAME namelist_MW COMMAND ${PY} ${T}/check_namelist.py ${EXE} ${REF_MW}/
 add_executable(test_init_guards test_init_guards.cpp)
 target_link_libraries(test_init_guards PRIVATE cppmpas)
 add_test(NAME unit_init_guards COMMAND test_init_guards ${INIT_MW} ${REF_MW}/steps/namelist.atmosphere)
+# the namelist reader's values and refusals (bit patterns of reals, 32-bit integers, groups, StrKIND), the scalars the
+# namelist activates, and the table generator's refusals
+add_executable(test_namelist test_namelist.cpp)
+target_link_libraries(test_namelist PRIVATE cppmpas)
+add_test(NAME unit_namelist COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "mkdir -p '${W}' && '$<TARGET_FILE:test_namelist>' '${REF_MW}/steps/namelist.atmosphere' '${W}'")
+add_test(NAME namelist_gen_errors COMMAND ${PY} ${T}/check_gen_namelist.py ${CMAKE_SOURCE_DIR}/tools/gen_namelist_table.py
+  ${CPPMPAS_MPAS_REGISTRY} ${REF_MW}/steps/namelist.atmosphere ${W}/gen_namelist)
+# --scalars must be the scalars the namelist's packages activate
+cppmpas_error_test(scalars_extra "--scalars must be qv: the scalars the namelist activates" init ${INIT_MW} ${W}/x.nc
+  --namelist ${REF_MW}/steps/namelist.atmosphere --scalars qv,qc,qr --fields dss)
+cppmpas_error_test(scalars_missing "--scalars must be qv,qc,qr: the scalars the namelist activates" init ${INIT_SC}
+  ${W}/x.nc --namelist ${REF_SC}/steps/namelist.atmosphere --fields dss)
 
 # ---------------------------------------------------------------------------------------------------------------
 # Every field atm_mpas_init_block computes, at the initial time, against the initdump stream of the references

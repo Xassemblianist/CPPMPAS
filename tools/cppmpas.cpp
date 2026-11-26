@@ -186,6 +186,13 @@ int run(int argc, char** argv) {
                   "[--unverified]");
     a.init = true;
     InitConfig cfg = read_init_config(a.namelist);
+    // the scalars MPAS allocates are those the namelist's packages activate (Registry.xml:1701-1748)
+    const std::vector<std::string> want = active_scalars(cfg);
+    if (a.scalars != want) {
+      std::string w;
+      for (const auto& x : want) w += (w.empty() ? "" : ",") + x;
+      throw Error("--scalars must be " + w + ": the scalars the namelist activates (MPAS allocates exactly those)");
+    }
     MpasInput in = load(a, a.pos[0]);
     // an array this port computes that is not yet proven against MPAS needs --unverified (CONSTITUTION.md 3.1)
     const auto& computed = init_block_computed_fields();

@@ -10,6 +10,7 @@
 // for the options whose default no reference runs with (config_dt, ...).
 #include <map>
 #include <string>
+#include <vector>
 
 #include "core/precision.hpp"
 
@@ -33,6 +34,11 @@ struct InitConfig {
   real config_epssm = 0.0;                         // Registry.xml:259
   bool config_positive_definite = false;           // Registry.xml:234
   bool config_apply_lbcs = false;                  // Registry.xml:349
+  std::string config_les_model = "none";           // Registry.xml:149
+  std::string config_physics_suite = "mesoscale_reference";  // Registry.xml:2351
+  std::string config_microp_scheme = "suite";      // Registry.xml:2356
+  std::string config_convection_scheme = "suite";  // Registry.xml:2361
+  std::string config_pbl_scheme = "suite";         // Registry.xml:2371
 };
 
 // One assignment of a namelist file: its record and the value as written (quotes removed, quoted = it had them).
@@ -47,5 +53,11 @@ std::map<std::string, NmlValue> read_namelist_file(const std::string& path);
 std::map<std::string, std::string> effective_namelist(const std::string& path);
 // InitConfig from a namelist.atmosphere file (empty path: the Registry defaults), after effective_namelist's checks.
 InitConfig read_init_config(const std::string& path);
+// The constituents of the var_array scalars the namelist activates, in Registry order (Registry.xml:1701-1748: qv
+// always; qc, qr ... through their packages, mpas_atmphys_packages.F). Handled: config_physics_suite = 'none', which
+// turns 'suite' into 'off' (mpas_atmphys_control.F:155-165), config_les_model = 'none', convection and PBL off, and
+// microphysics off (qv) or mp_kessler (mp_kessler_in, mpas_atmphys_packages.F:88-89: qv, qc, qr). Anything else is
+// an error.
+std::vector<std::string> active_scalars(const InitConfig& cfg);
 
 }  // namespace cppmpas
