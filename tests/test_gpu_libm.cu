@@ -10,7 +10,11 @@
 //      (and an sNaN quieted), for -x and -1 * x alike, while the host flips the sign bit; the function then sees
 //      the other sign and returns it. This is the hardware's / nvcc's negation, not the libm port: the result is the
 //      same with and without libm::arg's device barrier (CPPMPAS_NO_DEVICE_ARG_BARRIER, measured);
-//  (B) both arguments of pow are NaN: glibc's x + y returns y's NaN on x86 (SSE addsd), the device's x's.
+//  (B) both arguments of atan2, pow or mvec_pow are NaN: glibc returns x + y, which is either argument's NaN
+//      depending on which operand the compiler puts first (SSE addsd keeps its destination's); on the host that is a
+//      register choice of the host compiler (measured: pow differs with g++ 14 on the sm_120 build, atan2 and
+//      mvec_pow with g++ 13 on the L4 build), so at most one payload difference per function is allowed there.
+// The sign differences (case A) are the device's and are counted exactly (the same on sm_120 and sm_89).
 // No MPAS field compared by the GPU tests holds a NaN (they compare raw bytes at tolerance 0, unweakened).
 //
 // usage: test_gpu_libm [n_random]    exit 0 ok, 1 mismatch, 77 no CUDA device
@@ -144,7 +148,8 @@ int main(int argc, char** argv) {
       } else if (std::isnan(h)) {
         ++nan_total[f];
         const bool neg_nan = i >= n && (std::isnan(xs[i % n]) || std::isnan(ys[i % n]));          // case (A)
-        const bool two_nan = std::isnan(xs[i % n]) && std::isnan(ys[i % n]) && (f == 5 || f == 10);  // case (B)
+        const bool two_nan =
+            std::isnan(xs[i % n]) && std::isnan(ys[i % n]) && (f == 4 || f == 5 || f == 10);  // case (B)
         if (bits(h) != bits(g) && !neg_nan && !(two_nan && (bits(h) >> 63) == (bits(g) >> 63))) {
           ++unexplained;
           std::printf("UNEXPLAINED NaN difference: %s x=%a y=%a neg=%d host %016llx gpu %016llx\n", kName[f],
@@ -190,15 +195,16 @@ int main(int argc, char** argv) {
   for (int k = 0; k < 3; ++k)
     std::printf("device %-7s of +qNaN: %016llx (host %016llx)\n", how[k], (unsigned long long)bits(ng[k]),
                 (unsigned long long)bits(nh[k]));
-  // the counts measured on the sm_120 card (cases A and B above), per function: sign, payload
+  // the sign counts measured on the sm_120 and sm_89 cards (case A), exactly; at most one payload difference per
+  // function of case B (the host compiler's operand order), none elsewhere
   const long want_sign[kFuncs] = {4, 4, 4, 4, 7, 6, 4, 4, 4, 4, 6, 4};
-  const long want_payload[kFuncs] = {0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0};
+  const long max_payload[kFuncs] = {0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0};
   long recorded_bad = 0;
   for (int f = 0; f < kFuncs; ++f)
-    if (nan_sign_diff[f] != want_sign[f] || nan_payload_diff[f] != want_payload[f]) {
+    if (nan_sign_diff[f] != want_sign[f] || nan_payload_diff[f] > max_payload[f]) {
       ++recorded_bad;
-      std::printf("%s: NaN sign / payload differences %ld / %ld, recorded %ld / %ld\n", kName[f], nan_sign_diff[f],
-                  nan_payload_diff[f], want_sign[f], want_payload[f]);
+      std::printf("%s: NaN sign / payload differences %ld / %ld, recorded %ld / at most %ld\n", kName[f],
+                  nan_sign_diff[f], nan_payload_diff[f], want_sign[f], max_payload[f]);
     }
   const bool dev_neg_keeps_sign = (bits(ng[0]) >> 63) == 0 && (bits(ng[2]) >> 63) == 0;
   std::printf("device -x of a NaN keeps its sign: %s (recorded: yes)\n", dev_neg_keeps_sign ? "yes" : "no");
