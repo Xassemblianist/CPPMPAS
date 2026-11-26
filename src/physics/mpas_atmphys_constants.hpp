@@ -13,6 +13,7 @@ constexpr real rv = 461.6;                // :48
 constexpr real cp = 7.0 * rgas / 2.0;     // :50
 constexpr real rvord = rv / rgas;         // :51
 constexpr real gravity = 9.80616;         // :46
+constexpr real pii = 3.141592653589793;    // :43
 
 constexpr real R_d = rgas;                // mpas_atmphys_constants.F:11
 constexpr real P0 = 100000.;              // :40
