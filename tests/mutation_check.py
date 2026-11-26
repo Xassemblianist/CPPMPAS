@@ -187,10 +187,12 @@ MUTATIONS = [
     (NL, "  if (!record.empty()) throw", "  if (false) throw", ["namelist_MW"]),
     (NL, "  if (l == \"f\" || l == \".f.\" ||", "  if (l == \"f\" ||", ["namelist_MW"]),
     (NL, "  r(\"config_len_disp\", c.config_len_disp);", "", ["init_run_MW", "init_run_SC", "init_run_JW"]),
+    # without config_start_time the clock starts at the Registry default (2010-10-23_00:00:00), which is not the
+    # time of the init file: cppmpas run refuses it (check_stream_time, mpas_stream_manager.F:3776-3786) before it
+    # writes a step file, so the run fixtures fail and the xtime tests do not run; the xtime values are broken by
+    # the value mutants of the writer and of atm_timestep instead
     (NL, "  t(\"config_start_time\", c.config_start_time);", "",
-     ["init_step0_MW", "init_step0_SC", "init_step0_JW"] + [f"dycore_MW_step{n}_xtime" for n in range(11)] +
-     ["dycore_MW_restart_xtime", "dycore_MW_output30_xtime", "dycore_MW_output60_xtime"] + [f"dycore_JW_step{n}_xtime" for n in range(11)] +
-     ["dycore_JW_restart_xtime", "dycore_JW_output24h_xtime"]),
+     ["init_step0_MW", "init_step0_SC", "init_step0_JW", "dycore_run_MW", "dycore_run_JW"]),
     ("tools/gen_namelist_table.py", "            if v not in acc:", "            if True:", ["namelist_table_current"]),
     # the reference init files already hold xtime = config_start_time: the init_step0_* comparison cannot see it
     (A, "  s.xtime = stamp;", "", ["unit_init_guards"]),
