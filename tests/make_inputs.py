@@ -119,6 +119,11 @@ def main():
     write_init(mw, out / "mw_init.nc", 4, 1)
     write_init(sc, out / "sc_init.nc", 3, 2)
 
+    # meshDensity other than 1 in one cell: with config_h_ScaleWithMesh the meshScaling* arrays are not verified
+    def dense(d):
+        d["meshDensity"][0] = 2.0
+    write_init(mw, out / "mw_init_dense.nc", 4, 1, modify=dense)
+
     # broken inputs (each must be rejected with a clear message)
     def grid_variant(name, fmt=None, modify=None, drop=(), drop_dims=()):
         with nc.Dataset(mw) as g:

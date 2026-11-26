@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Unit tests of the guards and atm_core_init steps of src/core_atmosphere/atm_init.cpp and
 // src/operators/vector_operations.cpp on a reference init file:
-//  * atm_initialize_deformation_weights refuses nEdgesOnCell > 24 (MPAS's cell_list is dimension(25)) before it
-//    copies, and the periodic plane;
+//  * atm_initialize_deformation_weights refuses nEdgesOnCell outside 1..maxEdges, and > 24 (MPAS's cell_list is
+//    dimension(25)) before it copies, and the periodic plane;
 //  * mpas_initialize_vectors refuses a boundary edge (cellsOnEdge = nCells+1);
 //  * mpas_atm_setup_bdy_masks refuses a limited-area mask;
 //  * atm_core_init_len_disp (mpas_atm_core.F:155-201): both branches and the error;
@@ -16,6 +16,7 @@
 // usage: test_init_guards <init file> <its namelist.atmosphere>
 #include <algorithm>
 #include <cstdio>
+#include <exception>
 #include <string>
 #include <vector>
 
@@ -67,16 +68,34 @@ int main(int argc, char** argv) {
   {
     MpasInput in = fresh();
     Mesh& m = in.mesh;
+    // nEdgesOnCell outside 1..maxEdges would index past a column of the (maxEdges, nCells+1) arrays
+    for (int bad : {0, -1, m.maxEdges + 1}) {
+      m.nEdgesOnCell(1) = bad;
+      expect(throws_with([&] { atm_initialize_deformation_weights(m, m.nCells, m.on_a_sphere, m.sphere_radius); },
+                         "nEdgesOnCell(1) outside 1..maxEdges"),
+             "nEdgesOnCell outside 1..maxEdges is refused");
+    }
+    // MPAS's dimension(25): a mesh with maxEdges = 25. cellsOnCell gets 25 rows; cell 1's added neighbours are
+    // nCells+1, so the cell is skipped (:1710-1716) and no other array is read past its old maxEdges rows
+    const int rows = m.maxEdges;
+    m.maxEdges = 25;
+    FArray<int> wide({25, m.nCells + 1}, m.nCells + 1);
+    for (int i = 1; i <= m.nCells + 1; ++i)
+      for (int j = 1; j <= rows; ++j) wide(j, i) = m.cellsOnCell(j, i);
+    m.cellsOnCell = wide;
     m.nEdgesOnCell(1) = 25;  // n = 26 > 25: the copy would write cell_list(26)
     expect(throws_with([&] { atm_initialize_deformation_weights(m, m.nCells, m.on_a_sphere, m.sphere_radius); },
                        "nEdgesOnCell > 24 overflows"),
            "nEdgesOnCell = 25 is refused");
-    // n = 25 passes the check: the routine then runs on slots past maxEdges (other cells' entries of the same
-    // arrays, no error expected from them); only the overflow message matters here
-    m.nEdgesOnCell(1) = 24;
-    expect(!throws_with([&] { atm_initialize_deformation_weights(m, m.nCells, m.on_a_sphere, m.sphere_radius); },
-                        "nEdgesOnCell > 24 overflows"),
-           "nEdgesOnCell = 24 (n = 25) is accepted");
+    m.nEdgesOnCell(1) = 24;  // n = 25: accepted, no error of any kind
+    bool ok = true;
+    try {
+      atm_initialize_deformation_weights(m, m.nCells, m.on_a_sphere, m.sphere_radius);
+    } catch (const std::exception& e) {
+      std::printf("  unexpected error: %s\n", e.what());
+      ok = false;
+    }
+    expect(ok, "nEdgesOnCell = 24 (n = 25) is accepted");
     MpasInput p = fresh();
     p.mesh.is_periodic = true;
     expect(throws_with([&] { atm_initialize_deformation_weights(p.mesh, p.mesh.nCells, p.mesh.on_a_sphere,
@@ -176,7 +195,7 @@ int main(int argc, char** argv) {
     expect(has(log, "config_epssm in the &nhyd_model namelist group is no longer supported"), "config_epssm warning");
     expect(has(log, "config_positive_definite = true will enable monotonic advection"), "positive definite warning");
     MpasInput g = fresh();
-    g.mesh.bdyMaskCell = FArray<int>();  // as after a grid read
+    g.mesh.bdyMaskCell = FArray<int>();  // never allocated (a Mesh filled by a library caller)
     InitConfig c0;
     expect(throws_with([&] { mpas_atm_run_compatibility(g.mesh, c0, log); }, "bdyMaskCell was not read"),
            "mpas_atm_run_compatibility without bdyMaskCell is an error");
@@ -224,6 +243,10 @@ int main(int argc, char** argv) {
     expect(mesh_scaling_unverified(in.mesh, cfg), "meshDensity(nCells) = 2: the mesh scaling is not verified");
     cfg.config_h_ScaleWithMesh = false;
     expect(!mesh_scaling_unverified(in.mesh, cfg), "config_h_ScaleWithMesh = false: nothing is scaled");
+    cfg.config_h_ScaleWithMesh = true;
+    in.mesh.meshDensity = FArray<real>();
+    expect(throws_with([&] { (void)mesh_scaling_unverified(in.mesh, cfg); }, "meshDensity was not read"),
+           "mesh_scaling_unverified without meshDensity");
     const auto v = init_block_verified_fields(70, true);
     bool none = true;
     for (const auto& n : v) none = none && n.rfind("meshScaling", 0) != 0;

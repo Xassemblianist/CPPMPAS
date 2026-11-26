@@ -150,8 +150,13 @@ void atm_initialize_deformation_weights(Mesh& m, int nCells, bool on_a_sphere, r
                 "y_period) is not verified");
 
   for (int iCell = 1; iCell <= nCells; ++iCell) {
-    // :1702-1706; MPAS's dimension(25) holds the cell and at most 24 neighbours: checked before the copy
-    const int n = m.nEdgesOnCell(iCell) + 1;
+    // :1702-1706; MPAS's dimension(25) holds the cell and at most 24 neighbours: checked before the copy. The
+    // (maxEdges, nCells+1) arrays hold nEdgesOnCell in 1..maxEdges (checked by the reader; this routine is public)
+    const int ne = m.nEdgesOnCell(iCell);
+    if (ne < 1 || ne > m.maxEdges)
+      throw Error("atm_initialize_deformation_weights: nEdgesOnCell(" + std::to_string(iCell) +
+                  ") outside 1..maxEdges");
+    const int n = ne + 1;
     if (n > 25) throw Error("atm_initialize_deformation_weights: nEdgesOnCell > 24 overflows MPAS's dimension(25)");
     cell_list.at(1) = iCell;
     for (int i = 2; i <= n; ++i) cell_list.at(i) = m.cellsOnCell(i - 1, iCell);
@@ -713,6 +718,8 @@ const std::vector<std::string>& init_block_computed_fields() {
 
 bool mesh_scaling_unverified(const Mesh& m, const InitConfig& cfg) {
   if (!cfg.config_h_ScaleWithMesh) return false;
+  if (!m.meshDensity.allocated() || m.meshDensity.extent(0) < m.nCells)
+    throw Error("mesh_scaling_unverified: meshDensity was not read");
   for (int iCell = 1; iCell <= m.nCells; ++iCell)
     if (m.meshDensity(iCell) != 1.0) return true;
   return false;

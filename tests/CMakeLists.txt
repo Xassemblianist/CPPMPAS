@@ -192,6 +192,11 @@ cppmpas_error_test(unverified "field exner is computed by a port not yet verifie
 add_test(NAME init_unverified_SC COMMAND ${CMAKE_COMMAND} -E env sh -c
   "rm -f '${W}/init_unverified_SC.nc' && '${EXE}' init '${W}/sc_init.nc' '${W}/init_unverified_SC.nc' --namelist '${REF_SC}/steps/namelist.atmosphere' --scalars qv,qc,qr --fields pv_edge,exner --unverified && test -s '${W}/init_unverified_SC.nc' && rm '${W}/init_unverified_SC.nc'")
 set_tests_properties(init_unverified_SC PROPERTIES FIXTURES_REQUIRED inputs)
+# meshDensity = 2 in one cell and config_h_ScaleWithMesh = true (the MW namelist with JW's value): the meshScaling*
+# arrays need --unverified (mesh_scaling_unverified in tools/cppmpas.cpp)
+add_test(NAME err_scaled_mesh COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "sed 's/config_h_ScaleWithMesh = false/config_h_ScaleWithMesh = true/' '${REF_MW}/steps/namelist.atmosphere' > '${W}/namelist_scaled' && grep -q 'config_h_ScaleWithMesh = true' '${W}/namelist_scaled' && ${Python3_EXECUTABLE} -I '${T}/expect_error.py' 'field meshScalingDel2 is computed by a port not yet verified against MPAS output; --unverified writes it anyway' '${EXE}' init '${W}/mw_init_dense.nc' '${W}/x.nc' --namelist '${W}/namelist_scaled' --scalars qv --fields meshScalingDel2")
+set_tests_properties(err_scaled_mesh PROPERTIES FIXTURES_REQUIRED inputs)
 # guards and atm_core_init steps on the MW reference init file
 add_executable(test_init_guards test_init_guards.cpp)
 target_link_libraries(test_init_guards PRIVATE cppmpas)
