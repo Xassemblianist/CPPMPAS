@@ -188,7 +188,7 @@ double real_att(const NcFile& f, const std::string& name) {
 }
 
 // Fortran's trim: trailing blanks only (SMIOLf_inquire_att copies every byte of the attribute, NULs included,
-// smiolf.F90:1630-1631)
+// smiolf.F90:1632-1633)
 std::string rtrim(std::string s) {
   while (!s.empty() && s.back() == ' ') s.pop_back();
   return s;

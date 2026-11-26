@@ -25,7 +25,8 @@ set(JW ${C}/jw_baroclinic_wave/x1.40962.grid.nc)
 add_test(NAME make_inputs COMMAND ${PY} ${T}/make_inputs.py ${C} ${W})
 set_tests_properties(make_inputs PROPERTIES FIXTURES_SETUP inputs)
 add_test(NAME unit_io_core COMMAND ${CMAKE_COMMAND} -E env sh -c
-  "mkdir -p '${W}' && '$<TARGET_FILE:test_io_core>' '${W}' '${MW}'")
+  "mkdir -p '${W}' && '$<TARGET_FILE:test_io_core>' '${W}' '${MW}' '${W}/mw_init_long_parent.nc'")
+set_tests_properties(unit_io_core PROPERTIES FIXTURES_REQUIRED inputs)
 
 # tools/mpas_compare.py: its unit tests and its mutation check (tests/compare)
 add_test(NAME compare_unit COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${T}/compare)
