@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Show that every GPU test (label gpu, tests/CMakeLists.txt) can fail: apply one one-line bug at a time to the source
-of the CUDA build, rebuild cppmpas_gpu and test_gpu_libm, run every GPU test, record the tests that failed (a test
-that did not run, was skipped or passed does not count), restore the source. At the end every GPU test must have
-been killed by at least one mutant. Run it through the gate on the machine with the GPU, in a CUDA build
-(-DCPPMPAS_ENABLE_CUDA=ON) whose CPU fixtures (initdump_*, dycore_MW) the vs_cpu tests use.
+"""Show that the GPU tests (label gpu, tests/CMakeLists.txt) can fail: apply one one-line bug at a time to the source
+of the CUDA build, rebuild, run the GPU tests the mutant must break, require each of them to fail (a test that did not
+run, was skipped, timed out or passed does not count), restore the source. The tests must pass on the unmutated
+source first, and the tests that killed a mutant must pass again on the restored source. Run it on the machine with
+the GPU, in a CUDA build (-DCPPMPAS_ENABLE_CUDA=ON) whose CPU fixtures (initdump_*, dycore_*) the vs_cpu tests use.
 
-usage: gpu_mutation_check.py <source dir> <build dir> [--long] [i,j,...]
-  --long  include the label-long GPU tests (301 and 600 steps) in every mutant's run
-The mutants: GPU-only bugs (the launch, the skip path, device math, FMA contraction) and the CPU harness's mutants
-(tests/mutation_check.py, by index) of the arrays that no GPU-only bug reaches (xtime, Time, the zone masks, ...).
+usage: gpu_mutation_check.py <source dir> <build dir> [i,j,...]
+The mutants: GPU-only bugs (the launch wrappers, kernel_fail, the stack limit, the skip path, device math, FMA
+contraction, the CUDA flag policy) and mutants of tests/mutation_check.py, found by their fragment, for the GPU tests
+of the dycore paths the GPU-only bugs do not single out (JW's Smagorinsky viscosity and 4th-order filters, the
+restart run).
 """
 import importlib.util
 import re
@@ -23,46 +24,93 @@ mc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mc)
 
 B, BC, X, L = "src/core/backend.hpp", "src/core/backend_cuda.cu", "tools/cppmpas.cpp", "src/core/libm.hpp"
+CM = "CMakeLists.txt"
+MW10 = [f"gpu_dycore_MW_step{s}_{f}" for s in (1, 10) for f in ("u", "theta_m")] + ["gpu_dycore_MW_vs_cpu"]
+JW10 = [f"gpu_dycore_JW_step{s}_{f}" for s in (1, 10) for f in ("u", "theta_m")] + ["gpu_dycore_JW_vs_cpu"]
+# (file, original fragment, mutated fragment, GPU tests that must fail)
 GPU_MUTATIONS = [
-    # a kernel skips its last element (one thread per element, CUDA only)
-    (B, "  if (i <= long(last)) k(int(i));", "  if (i < long(last)) k(int(i));"),
-    # a whole-array kernel skips its last element
-    (B, "  if (i < n) k(i);", "  if (i + 1 < n) k(i);"),
+    # a kernel skips the last element of its range
+    (B, "  if (i <= long(last)) k(int(i));", "  if (i < long(last)) k(int(i));", ["gpu_device", "gpu_backend"]),
+    # a whole-array kernel skips the last element (the garbage element of an MPAS array: only gpu_backend sees it)
+    (B, "  if (i < n) k(i);", "  if (i + 1 < n) k(i);", ["gpu_backend"]),
     # the one-thread kernel does nothing
-    (B, "template <class K> __global__ void kserial(K k) { k(); }", "template <class K> __global__ void kserial(K k) { (void)k; }"),
+    (B, "template <class K> __global__ void kserial(K k) { k(); }",
+     "template <class K> __global__ void kserial(K k) { (void)k; }", ["gpu_backend"] + MW10),
     # every launch reports a kernel failure
-    (BC, "  if (g_err && g_err->set) {", "  if (g_err) {"),
+    (BC, "  if (g_err && g_err->set) {", "  if (g_err) {", ["gpu_device", "gpu_backend"]),
     # no device: exit 0 instead of the skip status
-    (X, "      return gpu::kNoDeviceExit;", "      return 0;"),
-    # device math: CUDA's pow in place of the libmvec lane (the host keeps glibc's pow)
-    (L, "  return ::cppwrf::glibc::mvec::pow(arg(x), arg(y));", "  return ::pow(x, y);"),
-    # FMA contraction in the device code
-    ("CMakeLists.txt", '" --fmad=false --ftz=false', '" --fmad=true --ftz=false'),
+    (X, "      return gpu::kNoDeviceExit;", "      return 0;", ["gpu_skip_without_device"]),
+    # device math: CUDA's pow in place of the libmvec lane on the device only (the host keeps glibc's)
+    (L, "  return ::cppwrf::glibc::mvec::pow(arg(x), arg(y));",
+     "#if defined(__CUDA_ARCH__)\n  return ::pow(x, y);\n#else\n  return ::cppwrf::glibc::mvec::pow(arg(x), arg(y));\n#endif",
+     ["gpu_libm", "gpu_initdump_MW_exner", "gpu_initdump_JW_exner"] + MW10),
+    # FMA contraction in the device code: nvcc's default --fmad=true (the strict flag left out)
+    (CM, "$<$<COMPILE_LANGUAGE:CUDA>:--fmad=false;--ftz=false;", "$<$<COMPILE_LANGUAGE:CUDA>:--ftz=false;",
+     ["cmake_cuda_strict_flags_last"] + MW10 + JW10),
+    # kernel_fail does not end the thread: the statements after it run
+    (B, '  detail::record_kernel_error(head, true, value, tail);\n  end_thread();',
+     '  detail::record_kernel_error(head, true, value, tail);', ["gpu_backend"]),
+    # a launch before anything initialised the runtime has no kernel error slot
+    (B, "template <class Kern> void reserve_once(Kern* kernel) {\n  gpu::ensure_ready();",
+     "template <class Kern> void reserve_once(Kern* kernel) {", ["gpu_backend"]),
+    # the stack limit set to a kernel's frame even when it is smaller (lowered)
+    (BC, "  if (a.localSizeBytes <= limit) {  // the limit is never lowered", "  if (false) {", ["gpu_backend"]),
+    # the Release CUDA flags overwritten (the user's CMAKE_CUDA_FLAGS_RELEASE and CMake's -DNDEBUG dropped)
+    (CM, "  enable_language(CUDA)\n", "  enable_language(CUDA)\n  set(CMAKE_CUDA_FLAGS_RELEASE \"-O3\")\n",
+     ["cmake_cuda_strict_flags_last"]),
+    # host fast-math through -Xcompiler not refused
+    (CM, "|-Ofast|-f(fast-math|unsafe-math-optimizations|", "|-Ofast|-f(unsafe-math-optimizations|",
+     ["cmake_rejects_cuda_6_CMAKE_CUDA_FLAGS", "cmake_rejects_cuda_6_CMAKE_CUDA_FLAGS_RELEASE"]),
 ]
-# tests/mutation_check.py mutants (by index) for what the GPU-only bugs do not reach: config_start_time (xtime of the
-# steps), the epssm coefficients (serial kernel), the zone masks and nearestRelaxationCell (whole-array kernels), the
-# xtime writer, the Time of the steps
-CPU_MUTANTS = [84, 158, 160, 161, 162, 163, 178, 321]
+# tests/mutation_check.py mutants by a piece of their original fragment, with the GPU tests they must break
+CPU_MUTANTS = [
+    # JW: smagorinsky_2d's eddy viscosity from u twice instead of u and v
+    ("smagorinsky_2d(m, f.eddy_visc_horz, f.u2, d.v,", JW10),
+    # JW: the del4 vorticity of u_dissipation_3d (DM:735-751)
+    ("        const real edge_sign = m.invAreaTriangle(iVertex) * m.dcEdge(iEdge) * m.edgesOnVertex_sign(i, iVertex);",
+     JW10),
+    # the RBF reconstruction coefficients and the local vertical unit vectors (init block, not in the initdump set)
+    ("    alpha = alpha / static_cast<real>(pointCount);", ["gpu_init_restart_MW", "gpu_init_restart_JW"]),
+    ("      mpas_unit_vec_in_r3(v);\n      for (int d = 1; d <= 3; ++d) lvu(d, iCell) = v[d - 1];",
+     ["gpu_init_restart_JW"]),
+    # the restart run: the coupled fields of the restart stream recomputed instead of kept (mpas_atm_core.F:522)
+    ("  if (!cfg.config_do_restart || (cfg.config_do_restart && cfg.config_do_DAcycling)) atm_in",
+     ["gpu_dycore_restart0_MW_rho_zz", "gpu_dycore_restart0_MW_exner", "gpu_dycore_restart0_MW_ru"]),
+]
 
 
-def gpu_tests(build, long_too):
-    args = ["ctest", "--test-dir", str(build), "-N", "-L", "gpu"] + ([] if long_too else ["-LE", "long"])
-    out = subprocess.run(args, capture_output=True, text=True, check=True).stdout
-    return re.findall(r"^\s*Test\s+#\d+: (\S+)$", out, re.M)
+def cpu_mutant(piece):
+    hits = [m for m in mc.MUTATIONS if piece in m[1]]
+    if len(hits) != 1:
+        raise SystemExit(f"tests/mutation_check.py: {len(hits)} mutants with the fragment {piece!r}")
+    return hits[0][:3]
+
+
+def mutants():
+    return [m for m in GPU_MUTATIONS] + [cpu_mutant(p) + (t,) for p, t in CPU_MUTANTS]
+
+
+def build(b):
+    return subprocess.run(["cmake", "--build", str(b), "-j4"], capture_output=True, text=True)
 
 
 def main():
-    argv = [a for a in sys.argv[1:] if a != "--long"]
-    long_too = "--long" in sys.argv
-    src, build = Path(argv[0]), Path(argv[1])
-    muts = GPU_MUTATIONS + [mc.MUTATIONS[i][:3] for i in CPU_MUTANTS]
-    if len(argv) > 2:
-        muts = [muts[int(i)] for i in argv[2].split(",")]
-    tests = gpu_tests(build, long_too)
-    print(f"{len(tests)} GPU tests")
-    covered, bad = set(), []
-    targets = ["--target", "cppmpas_gpu", "--target", "test_gpu_libm", "--target", "cppmpas"]
-    for path, old, new in muts:
+    if len(sys.argv) not in (3, 4):
+        raise SystemExit(__doc__)
+    src, b = Path(sys.argv[1]), Path(sys.argv[2])
+    muts = mutants()
+    if len(sys.argv) == 4:
+        muts = [muts[int(i)] for i in sys.argv[3].split(",")]
+    bad, covered = [], set()
+    r0 = build(b)
+    if r0.returncode != 0:
+        raise SystemExit("the unmutated source does not build")
+    needed = sorted({t for *_, ts in muts for t in ts})
+    r = mc.ctest(b, mc.any_of(needed))
+    broken = mc.not_passing(r.stdout, needed)
+    for t in sorted(broken):
+        bad.append(f"{t} does not pass on the unmutated source (status {mc.test_status(r.stdout, t)!r})")
+    for path, old, new, tests in muts:
         p = src / path
         orig = p.read_text()
         if orig.count(old) != 1:
@@ -70,30 +118,31 @@ def main():
             continue
         try:
             p.write_text(orig.replace(old, new))
-            b = subprocess.run(["cmake", "--build", str(build), "-j14"] + targets, capture_output=True, text=True)
-            if b.returncode != 0:
-                bad.append(f"{path}: mutant does not build: {new.strip()}")
-                print(b.stdout[-2000:], b.stderr[-2000:])
+            rb = build(b)
+            if rb.returncode != 0:
+                bad.append(f"{path}: mutant does not build: {new.strip()[:80]}")
+                print(rb.stdout[-1500:], rb.stderr[-1500:])
                 continue
-            args = ["ctest", "--test-dir", str(build), "-j8", "-L", "gpu"] + ([] if long_too else ["-LE", "long"])
-            r = subprocess.run(args, capture_output=True, text=True)
-            # the CPU fixtures the vs_cpu tests need run as fixtures (-L selects their dependents' setups too)
-            killed = [t for t in tests if mc.killed(mc.test_status(r.stdout, t)) and
-                      "Skipped" not in (mc.test_status(r.stdout, t) or "")]
-            covered.update(killed)
-            print(f"MUTANT {path}: {new.strip()[:80]}\n  killed {len(killed)} of {len(tests)}: "
-                  + " ".join(sorted(killed)[:12]) + (" ..." if len(killed) > 12 else ""))
-            if not killed:
-                bad.append(f"{path}: {new.strip()} killed no GPU test")
+            r = mc.ctest(b, mc.any_of(tests))
+            for t in tests:
+                status = mc.test_status(r.stdout, t)
+                k = mc.is_kill(r.returncode, status, t, broken)
+                print(f"{'KILLED' if k else 'SURVIVED'} {t:40s} by {path}: {new.strip()[:70]!r}", flush=True)
+                if k:
+                    covered.add(t)
+                else:
+                    bad.append(f"{t} survived {path}: {new.strip()[:80]} (status {status!r})")
         finally:
             p.write_text(orig)
-    subprocess.run(["cmake", "--build", str(build), "-j14"] + targets, capture_output=True, text=True, check=True)
-    survivors = [t for t in tests if t not in covered]
-    for t in survivors:
-        bad.append(f"{t} survived every mutant")
-    for b in bad:
-        print("PROBLEM", b)
-    print(f"{len(covered)} of {len(tests)} GPU tests killed by at least one mutant")
+    if build(b).returncode != 0:
+        bad.append("the restored source does not build")
+    if covered:
+        r = mc.ctest(b, mc.any_of(sorted(covered)))
+        for t in sorted(mc.not_passing(r.stdout, covered)):
+            bad.append(f"{t} does not pass on the restored source: its kills are not trusted")
+    for x in bad:
+        print("PROBLEM", x)
+    print(f"{len(covered)} GPU tests killed by at least one mutant; {len(bad)} problems")
     return 1 if bad else 0
 
 

@@ -488,6 +488,16 @@ foreach(case MW SC JW)
   add_test(NAME gpu_initdump_vs_cpu_${case} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py
     ${W}/initdump_${case}.nc ${W}/gpu_initdump_${case}.nc ${INITDUMP_LIST})
   cppmpas_gpu_props(gpu_initdump_vs_cpu_${case} FIXTURES_REQUIRED "gpu_initdump_${case};initdump_${case}")
+  # the init-block fields of the restart stream the initdump set leaves out (mpas_initialize_vectors, the RBF
+  # coefficients, dss, nominalMinDc, the base state) and the t = 0 state, as init_restart / init_step0 on the CPU
+  add_test(NAME gpu_init_run_${case} COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+    "mkdir -p '${W}' && rm -f '${W}/gpu_init_${case}.nc' && '${GEXE}' init '${INIT_${case}}' '${W}/gpu_init_${case}.nc' --namelist '${REF_${case}}/steps/namelist.atmosphere' --scalars ${SCAL_${case}} --fields ${INIT_RESTART_FIELDS},${INIT_STEP0_FIELDS}")
+  cppmpas_gpu_props(gpu_init_run_${case} FIXTURES_SETUP gpu_init_${case})
+  add_test(NAME gpu_init_restart_${case} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py ${RST_${case}}
+    ${W}/gpu_init_${case}.nc ${INIT_RESTART_FIELDS})
+  add_test(NAME gpu_init_step0_${case} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py
+    ${REF_${case}}/steps/step.0000-01-01_00.00.00.nc ${W}/gpu_init_${case}.nc ${INIT_STEP0_FIELDS})
+  cppmpas_gpu_props(gpu_init_restart_${case} gpu_init_step0_${case} FIXTURES_REQUIRED gpu_init_${case})
 endforeach()
 # the dycore on the GPU: ten MW steps, every step file against MPAS (per field, and the whole directory through
 # tools/mpas_compare.py) and the whole directory against the CPU build's
@@ -533,4 +543,58 @@ foreach(f IN LISTS DYCORE_OUTPUT_FIELDS)
   add_test(NAME gpu_dycore_MW_output60_${f} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py ${REF_MW}/forecast/output.nc
     ${W}/gpu_dycore_60min_MW/state.0000-01-01_01.00.00.nc ${f} --record 2)
   cppmpas_gpu_props(gpu_dycore_MW_output60_${f} FIXTURES_REQUIRED gpu_dycore_60min_MW LABELS long)
+endforeach()
+# the JW baroclinic wave on the GPU: ten steps against MPAS and the CPU build, and (label long) the 24 h output and
+# the 24:07:30 restart
+add_test(NAME gpu_dycore_run_JW COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/gpu_dycore_JW' && mkdir -p '${W}/gpu_dycore_JW' && '${GEXE}' run '${INIT_JW}' '${W}/gpu_dycore_JW' --namelist '${REF_JW}/steps/namelist.atmosphere' --steps 10")
+cppmpas_gpu_props(gpu_dycore_run_JW FIXTURES_SETUP gpu_dycore_JW)
+set_tests_properties(gpu_dycore_run_JW PROPERTIES TIMEOUT 900)
+set(step 0)
+foreach(stamp IN LISTS DYCORE_JW_STAMPS)
+  foreach(f IN LISTS DYCORE_MW_FIELDS)
+    add_test(NAME gpu_dycore_JW_step${step}_${f} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py
+      ${REF_JW}/steps/step.0000-01-01_${stamp}.nc ${W}/gpu_dycore_JW/step.0000-01-01_${stamp}.nc ${f})
+    cppmpas_gpu_props(gpu_dycore_JW_step${step}_${f} FIXTURES_REQUIRED gpu_dycore_JW)
+  endforeach()
+  math(EXPR step "${step} + 1")
+endforeach()
+add_test(NAME gpu_dycore_JW_mpas_compare COMMAND ${GPU} -- ${PY} ${T}/dycore_compare.py ${CPPMPAS_MPAS_COMPARE}
+  ${REF_JW}/steps ${W}/gpu_dycore_JW ${W}/gpu_dycore_JW_compare.json 110)
+add_test(NAME gpu_dycore_JW_vs_cpu COMMAND ${GPU} -- ${PY} ${T}/dycore_compare.py ${CPPMPAS_MPAS_COMPARE}
+  ${W}/dycore_JW ${W}/gpu_dycore_JW ${W}/gpu_dycore_JW_vs_cpu.json 110)
+cppmpas_gpu_props(gpu_dycore_JW_mpas_compare FIXTURES_REQUIRED gpu_dycore_JW)
+cppmpas_gpu_props(gpu_dycore_JW_vs_cpu FIXTURES_REQUIRED "gpu_dycore_JW;dycore_JW")
+add_test(NAME gpu_dycore_run_long_JW COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/gpu_dycore_long_JW' && mkdir -p '${W}/gpu_dycore_long_JW' && '${GEXE}' run '${INIT_JW}' '${W}/gpu_dycore_long_JW' --namelist '${REF_JW}/steps/namelist.atmosphere' --steps 193 --every 0 --write-at 192,193 --write-fields ${DYCORE_LONG_LIST}")
+cppmpas_gpu_props(gpu_dycore_run_long_JW FIXTURES_SETUP gpu_dycore_long_JW LABELS long)
+set_tests_properties(gpu_dycore_run_long_JW PROPERTIES TIMEOUT 3600)
+foreach(f IN LISTS DYCORE_RESTART_FIELDS)
+  add_test(NAME gpu_dycore_JW_restart_${f} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py ${RST_JW}
+    ${W}/gpu_dycore_long_JW/state.0000-01-02_00.07.30.nc ${f})
+  cppmpas_gpu_props(gpu_dycore_JW_restart_${f} FIXTURES_REQUIRED gpu_dycore_long_JW LABELS long)
+endforeach()
+foreach(f IN LISTS DYCORE_OUTPUT_FIELDS)
+  add_test(NAME gpu_dycore_JW_output24h_${f} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py ${REF_JW}/forecast/output.nc
+    ${W}/gpu_dycore_long_JW/state.0000-01-02_00.00.00.nc ${f} --record 1)
+  cppmpas_gpu_props(gpu_dycore_JW_output24h_${f} FIXTURES_REQUIRED gpu_dycore_long_JW LABELS long)
+endforeach()
+# the MW restart run on the GPU: from the reference's 00:30:06 restart file, step 0 against the restart stream and
+# (label long) 01:00:00 against output.nc record 2
+add_test(NAME gpu_dycore_restart0_run_MW COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/gpu_dycore_restart0_MW' && mkdir -p '${W}/gpu_dycore_restart0_MW' && '${GEXE}' run '${RST_MW}' '${W}/gpu_dycore_restart0_MW' --namelist '${NML_RST_MW}' --steps 0 --every 0 --write-at 0 --write-fields ${DYCORE_RESTART0_LIST}")
+cppmpas_gpu_props(gpu_dycore_restart0_run_MW FIXTURES_SETUP gpu_dycore_restart0_MW)
+foreach(f IN LISTS DYCORE_RESTART0_FIELDS)
+  add_test(NAME gpu_dycore_restart0_MW_${f} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py ${RST_MW}
+    ${W}/gpu_dycore_restart0_MW/state.0000-01-01_00.30.06.nc ${f})
+  cppmpas_gpu_props(gpu_dycore_restart0_MW_${f} FIXTURES_REQUIRED gpu_dycore_restart0_MW)
+endforeach()
+add_test(NAME gpu_dycore_restart_run_long_MW COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/gpu_dycore_restart_long_MW' && mkdir -p '${W}/gpu_dycore_restart_long_MW' && '${GEXE}' run '${RST_MW}' '${W}/gpu_dycore_restart_long_MW' --namelist '${NML_RST_MW}' --steps 299 --every 0 --write-at 299 --write-fields ${DYCORE_OUTPUT_LIST}")
+cppmpas_gpu_props(gpu_dycore_restart_run_long_MW FIXTURES_SETUP gpu_dycore_restart_long_MW LABELS long)
+set_tests_properties(gpu_dycore_restart_run_long_MW PROPERTIES TIMEOUT 1800)
+foreach(f IN LISTS DYCORE_OUTPUT_FIELDS)
+  add_test(NAME gpu_dycore_restart_MW_output60_${f} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py
+    ${REF_MW}/forecast/output.nc ${W}/gpu_dycore_restart_long_MW/state.0000-01-01_01.00.00.nc ${f} --record 2)
+  cppmpas_gpu_props(gpu_dycore_restart_MW_output60_${f} FIXTURES_REQUIRED gpu_dycore_restart_long_MW LABELS long)
 endforeach()
