@@ -46,6 +46,7 @@ struct DycoreConfig {
   real config_coef_3rd_order = 0.25;        // :244
   real config_smagorinsky_coef = 0.125;     // :249
   bool config_mix_full = true;              // :254
+  bool config_h_ScaleWithMesh = true;       // :274 (from the InitConfig)
   real config_smdiv = 0.1;                  // :264
   real config_apvm_upwinding = 0.5;         // :269
   real config_mpas_cam_coef = 0;            // :301
@@ -53,7 +54,10 @@ struct DycoreConfig {
   bool config_apply_lbcs = false;           // :349
   std::string config_IAU_option;            // :424
   std::string config_physics_suite, config_microp_scheme, config_convection_scheme, config_pbl_scheme;
-  std::string config_radt_lw_scheme, config_radt_sw_scheme;
+  std::string config_radt_lw_scheme, config_radt_sw_scheme, config_radt_cld_scheme;
+  std::string config_lsm_scheme, config_sfclayer_scheme, config_gwdo_scheme;
+  bool config_oml1d = false;
+  std::string config_calendar_type;
 };
 DycoreConfig read_dycore_config(const std::string& namelist_path, const InitConfig& init_cfg);
 
@@ -84,6 +88,10 @@ void allocate_dycore_fields(const Mesh& mesh, const State& state, DycoreFields& 
 
 // Refuses (Error naming the option or the property) every configuration whose code path is not ported and verified.
 void check_dycore_supported(const DycoreConfig& cfg, const Mesh& mesh, const State& state);
+// Refuses mesh, state, diag and dycore arrays without the extents the routines below index (every exported routine
+// calls it: no routine reads or writes outside an array), an nVertLevels the dycore is not verified for, and a mesh
+// with boundary or specified-zone cells (bdyMask* / specZoneMask* != 0: the LBC branches are not ported).
+void check_dycore_arrays(const Mesh& m, const State& s, const Diag& d, const DycoreFields& f);
 
 // The routines of atm_srk3 in its order (TI line ranges in atm_dycore.cpp). time level 1 = state, 2 = f.*2.
 void atm_rk_integration_setup(const Mesh& m, State& s, Diag& d, DycoreFields& f);

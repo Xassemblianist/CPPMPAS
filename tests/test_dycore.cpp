@@ -88,14 +88,26 @@ int main(int argc, char** argv) {
       {"config_horiz_mixing = '2d_smag'", [](DycoreConfig& c) { c.config_horiz_mixing = "2d_smag"; }},
       {"config_horiz_mixing = '2d_fixed '", [](DycoreConfig& c) { c.config_horiz_mixing = "2d_fixed "; }},
       {"config_les_model = '3d_smagorinsky'", [](DycoreConfig& c) { c.config_les_model = "3d_smagorinsky"; }},
-      {"config_mpas_cam_coef > 0", [](DycoreConfig& c) { c.config_mpas_cam_coef = 0.2; }},
+      {"config_mpas_cam_coef != 0", [](DycoreConfig& c) { c.config_mpas_cam_coef = 0.2; }},
+      {"config_mpas_cam_coef != 0", [](DycoreConfig& c) { c.config_mpas_cam_coef = std::nan(""); }},
+      {"config_apvm_upwinding <= 0", [](DycoreConfig& c) { c.config_apvm_upwinding = 0.0; }},
+      {"not finite", [](DycoreConfig& c) { c.config_len_disp = std::nan(""); }},
+      {"not finite", [](DycoreConfig& c) { c.config_smdiv = HUGE_VAL; }},
+      {"not finite", [](DycoreConfig& c) { c.config_visc4_2dsmag = std::nan(""); }},
+      {"config_lsm_scheme = 'sf_noah'", [](DycoreConfig& c) { c.config_lsm_scheme = "sf_noah"; }},
+      {"config_sfclayer_scheme = 'sf_mynn'", [](DycoreConfig& c) { c.config_sfclayer_scheme = "sf_mynn"; }},
+      {"config_gwdo_scheme = 'bl_ysu_gwdo'", [](DycoreConfig& c) { c.config_gwdo_scheme = "bl_ysu_gwdo"; }},
+      {"radiation schemes", [](DycoreConfig& c) { c.config_radt_cld_scheme = "cld_fraction"; }},
+      {"config_oml1d = true", [](DycoreConfig& c) { c.config_oml1d = true; }},
+      {"config_calendar_type = 'gregorian_noleap'", [](DycoreConfig& c) { c.config_calendar_type = "gregorian_noleap"; }},
       {"config_rayleigh_damp_u = true", [](DycoreConfig& c) { c.config_rayleigh_damp_u = true; }},
       {"config_mix_scalars = true", [](DycoreConfig& c) { c.config_mix_scalars = true; }},
       {"config_mix_full = false", [](DycoreConfig& c) { c.config_mix_full = false; }},
-      {"config_h_mom_eddy_visc4 > 0", [](DycoreConfig& c) { c.config_h_mom_eddy_visc4 = 1.0; }},
-      {"config_h_theta_eddy_visc4 > 0", [](DycoreConfig& c) { c.config_h_theta_eddy_visc4 = 1.0; }},
+      {"config_h_mom_eddy_visc4 != 0", [](DycoreConfig& c) { c.config_h_mom_eddy_visc4 = 1.0; }},
+      {"config_h_mom_eddy_visc4 != 0", [](DycoreConfig& c) { c.config_h_mom_eddy_visc4 = std::nan(""); }},
+      {"config_h_theta_eddy_visc4 != 0", [](DycoreConfig& c) { c.config_h_theta_eddy_visc4 = 1.0; }},
       {"config_v_mom_eddy_visc2 < 0", [](DycoreConfig& c) { c.config_v_mom_eddy_visc2 = -1.0; }},
-      {"config_v_mom_eddy_visc2 < 0", [](DycoreConfig& c) { c.config_v_mom_eddy_visc2 = std::nan(""); }},
+      {"not finite", [](DycoreConfig& c) { c.config_v_mom_eddy_visc2 = std::nan(""); }},
       {"config_v_theta_eddy_visc2 < 0", [](DycoreConfig& c) { c.config_v_theta_eddy_visc2 = -1.0; }},
       {"config_apply_lbcs = true", [](DycoreConfig& c) { c.config_apply_lbcs = true; }},
       {"config_IAU_option = 'on'", [](DycoreConfig& c) { c.config_IAU_option = "on"; }},
@@ -170,6 +182,128 @@ int main(int argc, char** argv) {
            "refuses qv, qc, qr");
   }
 
+  // config_h_ScaleWithMesh with a meshDensity other than 1 (review F4): the mesh scaling pow is not verified
+  {
+    Mesh m = in.mesh;
+    m.meshDensity(5) = 2.0;
+    DycoreConfig c = mw;
+    expect(!c.config_h_ScaleWithMesh, "MW: config_h_ScaleWithMesh = false");
+    try {
+      check_dycore_supported(c, m, in.state);
+    } catch (const Error& e) {
+      expect(false, std::string("meshDensity != 1 without mesh scaling refused: ") + e.what());
+    }
+    c.config_h_ScaleWithMesh = true;
+    expect(throws_with([&] { check_dycore_supported(c, m, in.state); }, "config_h_ScaleWithMesh = true with a meshDensity"),
+           "refuses config_h_ScaleWithMesh with meshDensity != 1");
+    try {
+      check_dycore_supported(c, in.mesh, in.state);  // meshDensity = 1: the scaling is 1 (JW)
+    } catch (const Error& e) {
+      expect(false, std::string("config_h_ScaleWithMesh with meshDensity = 1 refused: ") + e.what());
+    }
+    State s0 = in.state;
+    s0.u_init = FArray<real>();
+    expect(throws_with([&] { check_dycore_supported(mw, in.mesh, s0); }, "without u_init"), "refuses a state without u_init");
+  }
+  // the arrays and arguments of the exported routines (review F6, F17)
+  {
+    MpasInput t = in;
+    DycoreFields tf;
+    allocate_dycore_fields(t.mesh, t.state, tf);
+    try {
+      check_dycore_arrays(t.mesh, t.state, t.diag, tf);
+    } catch (const Error& e) {
+      expect(false, std::string("MW arrays refused: ") + e.what());
+    }
+    auto refuses = [&](const std::function<void(MpasInput&, DycoreFields&)>& change, const std::string& text,
+                       const std::string& what) {
+      MpasInput t2 = t;
+      DycoreFields f2 = tf;
+      change(t2, f2);
+      expect(throws_with([&] { check_dycore_arrays(t2.mesh, t2.state, t2.diag, f2); }, text), "refuses " + what);
+    };
+    refuses([](MpasInput& x, DycoreFields&) { x.mesh.bdyMaskCell(3) = 1; }, "specified-zone cells", "bdyMaskCell != 0");
+    refuses([](MpasInput& x, DycoreFields&) { x.mesh.specZoneMaskCell(3) = 1.0; }, "specified-zone cells",
+            "specZoneMaskCell != 0");
+    refuses([](MpasInput& x, DycoreFields&) { x.mesh.bdyMaskEdge(4) = 2; }, "specified-zone edges", "bdyMaskEdge != 0");
+    refuses([](MpasInput& x, DycoreFields&) { x.mesh.specZoneMaskEdge(4) = 1.0; }, "specified-zone edges",
+            "specZoneMaskEdge != 0");
+    refuses([](MpasInput&, DycoreFields& f) { f.cqu.allocate({3, 3}, 0.0); }, "dycore edge field", "a short cqu");
+    refuses([](MpasInput&, DycoreFields& f) { f.coftz = FArray<real>(); }, "dycore w-level field", "no coftz");
+    refuses([](MpasInput& x, DycoreFields&) { x.diag.ru = FArray<real>(); }, "diag ru / rw", "no ru");
+    refuses([](MpasInput& x, DycoreFields&) { x.state.Time = FArray<real>(); }, "u_init / v_init / Time", "no Time");
+    refuses([](MpasInput& x, DycoreFields&) { x.mesh.zgrid.allocate({x.mesh.nVertLevels, x.mesh.nCells}, 0.0); },
+            "zz / dss / zxu / zgrid", "a zgrid without its top level");
+    refuses([](MpasInput& x, DycoreFields&) { x.mesh.nAdvCellsForEdge(9) = 99; }, "nAdvCellsForEdge or nEdgesOnEdge",
+            "nAdvCellsForEdge outside advCellsForEdge");
+    refuses([](MpasInput& x, DycoreFields&) { x.mesh.nEdgesOnCell(9) = x.mesh.maxEdges + 1; }, "nEdgesOnCell outside",
+            "nEdgesOnCell > maxEdges");
+    refuses([](MpasInput& x, DycoreFields&) { x.mesh.nVertLevels = 2; }, "nVertLevels = 2", "nVertLevels 2");
+    refuses([](MpasInput&, DycoreFields& f) { f.moist_end = 2; }, "moist_end outside", "moist_end beyond the scalars");
+    // every exported routine checks before it touches an array
+    MpasInput t2 = t;
+    DycoreFields f2 = tf;
+    f2.ru_p.allocate({2, 2}, 0.0);
+    const std::string short_f = "dycore edge field";
+    expect(throws_with([&] { atm_rk_integration_setup(t2.mesh, t2.state, t2.diag, f2); }, short_f), "setup checks");
+    expect(throws_with([&] { atm_compute_moist_coefficients(t2.mesh, f2); }, short_f), "moist coefficients check");
+    expect(throws_with([&] { physics_get_tend(t2.mesh, t2.state, f2); }, short_f), "physics_get_tend checks");
+    expect(throws_with([&] { atm_compute_vert_imp_coefs(t2.mesh, t2.state, t2.diag, f2, 1.0); }, short_f),
+           "vert_imp_coefs checks");
+    expect(throws_with([&] { atm_compute_dyn_tend(mw, t2.mesh, t2.state, t2.diag, f2, 1, 6.0); }, short_f),
+           "dyn_tend checks");
+    expect(throws_with([&] { atm_set_smlstep_pert_variables(t2.mesh, f2); }, short_f), "smlstep checks");
+    expect(throws_with([&] { atm_advance_acoustic_step(t2.mesh, t2.state, t2.diag, f2, 1.0, 1); }, short_f),
+           "acoustic step checks");
+    expect(throws_with([&] { atm_divergence_damping_3d(mw, t2.mesh, t2.state, f2, 1.0); }, short_f),
+           "divergence damping checks");
+    expect(throws_with([&] { atm_recover_large_step_variables(t2.mesh, t2.state, t2.diag, f2, 1.0, 3, 1); }, short_f),
+           "recover checks");
+    expect(throws_with([&] { atm_rk_dynamics_substep_finish(t2.mesh, t2.state, t2.diag, f2, 1, 1); }, short_f),
+           "substep_finish checks");
+    expect(throws_with([&] { atm_srk3(mw, t2.mesh, t2.state, t2.diag, f2, 6.0); }, short_f), "atm_srk3 checks");
+    // arguments as atm_srk3 passes them
+    expect(throws_with([&] { atm_compute_dyn_tend(mw, t.mesh, t.state, t.diag, tf, 0, 6.0); }, "rk_step outside 1..3"),
+           "dyn_tend rk_step 0");
+    expect(throws_with([&] { atm_compute_dyn_tend(mw, t.mesh, t.state, t.diag, tf, 4, 6.0); }, "rk_step outside 1..3"),
+           "dyn_tend rk_step 4");
+    {
+      DycoreConfig c = mw;
+      c.config_mix_scalars = true;
+      expect(throws_with([&] { atm_compute_dyn_tend(c, t.mesh, t.state, t.diag, tf, 2, 6.0); }, "config_mix_scalars"),
+             "dyn_tend checks the configuration at every rk_step");
+    }
+    expect(throws_with([&] { atm_recover_large_step_variables(t.mesh, t.state, t.diag, tf, 1.0, 0, 1); }, "ns < 1"),
+           "recover ns 0");
+    expect(throws_with([&] { atm_recover_large_step_variables(t.mesh, t.state, t.diag, tf, 1.0, 3, 0); }, "rk_step outside"),
+           "recover rk_step 0");
+    expect(throws_with([&] { atm_recover_large_step_variables(t.mesh, t.state, t.diag, tf, 1.0, 3, 4); }, "rk_step outside"),
+           "recover rk_step 4");
+    expect(throws_with([&] { atm_advance_acoustic_step(t.mesh, t.state, t.diag, tf, 1.0, 0); }, "small_step < 1"),
+           "acoustic small_step 0");
+    expect(throws_with([&] { atm_rk_dynamics_substep_finish(t.mesh, t.state, t.diag, tf, 1, 0); }, "dynamics substeps"),
+           "substep_finish dynamics_split 0");
+    expect(throws_with([&] { atm_rk_dynamics_substep_finish(t.mesh, t.state, t.diag, tf, 2, 2); }, "dynamics substeps"),
+           "substep_finish substep 2 of 2");
+    // allocate_dycore_fields: dimensions and scalars
+    {
+      Mesh m = t.mesh;
+      m.nCells = 0;
+      DycoreFields f0;
+      expect(throws_with([&] { allocate_dycore_fields(m, t.state, f0); }, "mesh dimensions outside"), "allocate nCells 0");
+      State s0 = t.state;
+      s0.scalars = FArray<real>();
+      expect(throws_with([&] { allocate_dycore_fields(t.mesh, s0, f0); }, "scalars are not allocated"),
+             "allocate without scalars");
+    }
+    // atm_compute_output_diagnostics
+    {
+      State s0 = t.state;
+      s0.theta = FArray<real>();
+      expect(throws_with([&] { atm_compute_output_diagnostics(t.mesh, s0); }, "not allocated with MPAS's extents"),
+             "output diagnostics without theta");
+    }
+  }
   // Time (F3 of the dycore review): time level 1 is the Time of the input stream (Registry.xml:615), time level 2
   // starts as its copy (mpas_atm_core.F:213-218), atm_timestep sets Time(2) = Time(1) + dt (TI:1844-1849) and the
   // shift makes it time level 1
