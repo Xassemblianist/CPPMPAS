@@ -54,8 +54,7 @@ that says why.
    tolerance 0 in the automated suite. Unproven ports may exist in the code only behind an explicit
    "unverified" switch that is off by default.
 2. **A test counts only if it can fail.** Each new check is shown to fail on a deliberate one-line bug before it is
-   trusted. A check that did not run is a failure, not a pass. One deliberate bug per new check, shown once; full
-   mutation sweeps only at release.
+   trusted. A check that did not run is a failure, not a pass.
 3. **Find differences by bisection.** By configuration (one option at a time), by time (output every step, first
    differing step and field), then by dumps of internal arrays in both codes at the same point.
 4. **Proofs run on reproducible infrastructure.** Reference runs and the CPU suite run in the pinned environment on
