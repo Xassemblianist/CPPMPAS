@@ -65,6 +65,7 @@ add_library(cppmpas STATIC
   src/io/netcdf_file.cpp
   src/io/registry.cpp
   src/io/mpas_reader.cpp
+  src/io/mpas_restart.cpp
   src/io/mpas_writer.cpp
 )
 target_include_directories(cppmpas PUBLIC ${CMAKE_SOURCE_DIR}/src ${NETCDF_INCDIR})

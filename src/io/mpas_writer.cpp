@@ -205,7 +205,8 @@ void write_history(MpasInput& in, const std::string& path, const std::vector<std
                    const HistoryOptions& opt) {
   if (fields.empty()) throw Error("history: no fields to write");
   const Mesh& m = in.mesh;
-  // every field is checked before the file is created: no partial file is left behind
+  // every field is checked before the file is created: no partial file is left behind, and a file already at path
+  // is not lost to a refused request
   // MPAS_io_put_att_text (mpas_io.F:6036-6045, 6208-6210): trim, cut at StrKIND, trim; SMIOL then writes
   // strlen of the C string (smiol.c:1731), which ends at the first NUL
   auto trimmed = [](std::string s) {
@@ -223,12 +224,17 @@ void write_history(MpasInput& in, const std::string& path, const std::vector<std
     std::replace(t.begin(), t.end(), '_', ' ');
     time_units = trimmed("seconds since " + t);
   }
+  std::set<std::string> names;
   for (const auto& n : fields) {
+    if (!names.insert(n).second) throw Error("history: field " + n + " is listed twice");
+    const FieldRef ref = field_ref(in, n);  // a name the Registry does not define, or one without a port, is an error
     const RegistryVar& rv = registry_var(n);
-    const FieldRef ref = field_ref(in, n);  // a field without a port is an error
     // a character field MPAS writes always holds a value (xtime from the clock, initial_time from the init file)
     const bool held = ref.c ? !ref.c->empty() : ref.i ? ref.i->allocated() : ref.r->allocated();
     if (!held) throw Error("write " + n + ": the field was neither read nor computed");
+    if (ref.c && ref.c->size() > kStrLen) throw Error("write " + n + ": value longer than StrLen = 64");
+    for (const auto& d : file_dims(rv))
+      if (d != "Time") (void)file_dim(m, d);  // a dimension CPPMPAS does not handle is an error
     for (const auto& kv : rv.attrs)
       if (kv.first == "_FillValue") throw Error("history: numeric _FillValue attributes are not handled (" + n + ")");
   }
@@ -242,6 +248,7 @@ void write_history(MpasInput& in, const std::string& path, const std::vector<std
       define_dims(f, dims, defined,
                   [&](const std::string& d) { return d == "Time" ? NC_UNLIMITED : file_dim(m, d); });
       f.def_var(n, nc_type_of(rv), dims);
+      // MPAS trims these too (mpas_io_streams.F:4341); no attribute of a field CPPMPAS writes ends in a blank
       for (const auto& [k, v] : rv.attrs) {
         // mpas_atm_core.F:271-274: Time's units are 'seconds since ' // initial_time with '_' -> ' ' (written trimmed)
         if (n == "Time" && k == "units") {
@@ -257,7 +264,7 @@ void write_history(MpasInput& in, const std::string& path, const std::vector<std
     f.put_att_text("", "version", "8.4.2");
     f.put_att_text("", "source", "MPAS");        // mpas_atm_core_interface.F:56
     f.put_att_text("", "Conventions", "MPAS");   // mpas_atm_core_interface.F:55
-    f.put_att_text("", "git_version", opt.git_version);
+    f.put_att_text("", "git_version", trimmed(opt.git_version));
     f.put_att_text("", "on_a_sphere", yes_no(m.on_a_sphere));
     f.put_att_double("", "sphere_radius", m.sphere_radius);
     f.put_att_text("", "is_periodic", yes_no(m.is_periodic));

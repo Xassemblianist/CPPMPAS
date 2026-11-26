@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <locale.h>
 #include <regex>
 #include <set>
 #include <sstream>
@@ -18,6 +19,16 @@
 namespace cppmpas {
 
 namespace {
+
+// libgfortran's read converts a real with strtod while the thread's locale is "C" (uselocale(c_locale) for the data
+// transfer, io/transfer.c), whatever the process locale is. strtod_l in the "C" locale is the same conversion, and a
+// library caller may have set LC_NUMERIC to a locale whose decimal point is ','
+double c_strtod(const std::string& s) {
+  static const locale_t c = newlocale(LC_ALL_MASK, "C", static_cast<locale_t>(nullptr));
+  // newlocale fails only when memory runs out; strtod_l with a null locale is undefined
+  if (c == static_cast<locale_t>(nullptr)) throw Error("namelist: cannot create the \"C\" locale to read reals");
+  return strtod_l(s.c_str(), nullptr, c);
+}
 
 std::string lower(std::string s) {
   for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -94,7 +105,7 @@ std::string normalise(const NmlOption& o, const NmlValue& v, const std::string& 
 // underflows to 0 included): -0.0 is not 0.0, the results differ in the sign of zero.
 bool same_value(const NmlOption& o, const std::string& a, const std::string& b) {
   if (std::string(o.type) == "real") {
-    const double x = std::strtod(a.c_str(), nullptr), y = std::strtod(b.c_str(), nullptr);
+    const double x = c_strtod(a), y = c_strtod(b);
     std::uint64_t bx, by;
     std::memcpy(&bx, &x, sizeof x);
     std::memcpy(&by, &y, sizeof y);
@@ -128,7 +139,7 @@ std::map<std::string, NmlValue> read_namelist_file(const std::string& path) {
   std::size_t i = 0;
   int line = 1;
   const auto where = [&] { return path + ":" + std::to_string(line); };
-  const auto skip = [&] {  // blanks, commas, new lines, comments
+  const auto skip = [&](int* commas = nullptr) {  // blanks, commas (counted), new lines, comments
     while (i < s.size()) {
       const char c = s[i];
       if (c == '\n') {
@@ -137,6 +148,7 @@ std::map<std::string, NmlValue> read_namelist_file(const std::string& path) {
       } else if (c == '!') {
         while (i < s.size() && s[i] != '\n') ++i;
       } else if (std::isspace(static_cast<unsigned char>(c)) || (c == ',' && !record.empty())) {
+        if (c == ',' && commas) ++*commas;
         ++i;
       } else {
         break;
@@ -173,7 +185,11 @@ std::map<std::string, NmlValue> read_namelist_file(const std::string& path) {
     const auto at = [&] { return path + ":" + std::to_string(name_line); };
     const std::string name = lower(word());
     if (name.empty()) throw Error(where() + ": unexpected '" + std::string(1, c) + "' in &" + record);
-    skip();
+    // gfortran reads one ',' between the name and '=', and fails on a second ("Equal sign must follow namelist
+    // object name": MPAS stops, gen_inc.c:910-911)
+    int commas = 0;
+    skip(&commas);
+    if (commas > 1) throw Error(at() + ": more than one ',' between " + name + " and '='");
     if (i >= s.size() || s[i] != '=') throw Error(at() + ": " + name + " without '= value' (arrays are not handled)");
     ++i;
     if (!find_option(record, name))
@@ -212,6 +228,11 @@ std::map<std::string, NmlValue> read_namelist_file(const std::string& path) {
       if (v.text.empty()) throw Error(where() + ": " + name + " has no value");
       if (v.text.find('*') != std::string::npos) throw Error(where() + ": repeat counts are not handled (" + name + ")");
     }
+    // a character value ends with a separator (blank, ',', '/', '!', end of line): gfortran fails on 'a'name = ...
+    // ("Invalid string input": MPAS stops)
+    if (v.quoted && i < s.size() && !std::isspace(static_cast<unsigned char>(s[i])) && s[i] != ',' && s[i] != '/' &&
+        s[i] != '!')
+      throw Error(where() + ": no separator after the character value of " + name);
     // the next item must be another name, the end of the group, or the end of a line / a separator
     std::size_t j = i;
     while (j < s.size() && (s[j] == ' ' || s[j] == '\t')) ++j;
@@ -243,16 +264,22 @@ std::map<std::string, std::string> effective_namelist(const std::string& path) {
       v = normalise(o, it->second, src);
       shown = it->second.quoted ? "'" + it->second.text + "'" : it->second.text;
     }
+    // the accepted value it matches is the normalised one (a real: the reference's spelling of the same double)
     bool ok = false;
+    std::string match;
     const auto acc = accepted_values(o);
-    for (const auto& a : acc) ok |= same_value(o, v, a);
+    for (const auto& a : acc)
+      if (!ok && same_value(o, v, a)) {
+        ok = true;
+        match = a;
+      }
     if (!ok) {
       std::string list;
       for (const auto& a : acc) list += (list.empty() ? "" : ", ") + a;
       throw Error(src + ": namelist option " + o.name + " = " + shown +
                   " has no verified port (verified against the MPAS references: " + list + ")");
     }
-    out[key] = v;
+    out[key] = match;
   }
   return out;
 }
@@ -262,7 +289,7 @@ InitConfig read_init_config(const std::string& path) {
   const auto kv = effective_namelist(path);
   auto r = [&](const char* k, real& x) {
     const auto it = kv.find(k);
-    if (it != kv.end()) x = std::strtod(it->second.c_str(), nullptr);
+    if (it != kv.end()) x = c_strtod(it->second);
   };
   auto l = [&](const char* k, bool& x) {
     const auto it = kv.find(k);

@@ -6,13 +6,18 @@
 //  * integers: a value outside a 32-bit integer is an error (gfortran's read fails, MPAS stops);
 //  * logicals and names in any case; character values in ' or ", '' inside; at most StrKIND = 512 characters;
 //  * a second group of the same name is an error (MPAS reads only the first, gen_inc.c:855-857);
+//  * separators: what gfortran reads (a comment before =, ", ," between assignments) and where its read fails
+//    (two commas before =, no separator after a character value); effective_namelist normalises reals;
 //  * the line of an error is the line of the option's name;
-//  * active_scalars of the accepted physics options.
+//  * active_scalars of the accepted physics options;
+//  * with the argument 'locale' only: reals read the same when the process's LC_NUMERIC has ',' as its decimal
+//    point (a de_DE, fr_FR or tr_TR locale must be installed).
 //
-// usage: test_namelist <reference namelist.atmosphere (MW)> <scratch dir>
+// usage: test_namelist <reference namelist.atmosphere (MW)> <scratch dir> [locale]
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <clocale>
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -40,10 +45,11 @@ static std::uint64_t bits(double x) {
 }
 
 int main(int argc, char** argv) {
-  if (argc != 3) {
-    std::printf("usage: test_namelist <namelist.atmosphere> <scratch dir>\n");
+  if (argc != 3 && !(argc == 4 && std::string(argv[3]) == "locale")) {
+    std::printf("usage: test_namelist <namelist.atmosphere> <scratch dir> [locale]\n");
     return 2;
   }
+  const bool locale_only = argc == 4;  // the ',' locale check alone: it needs such a locale installed
   std::string ref;
   {
     std::ifstream in(argv[1]);
@@ -83,6 +89,7 @@ int main(int argc, char** argv) {
            std::string(name) + ": want '" + text + "', got: " + e);
   };
 
+  if (!locale_only) {
   // --- the reference itself
   {
     const InitConfig c = read("config_zd = 10500.0", "config_zd = 10500.0");
@@ -132,7 +139,8 @@ int main(int argc, char** argv) {
           "config_physics_suite = '" + std::string(513, 'x') + "'", "is not at most StrKIND = 512 characters long");
   // --- groups
   {
-    variant("&damping", "&damping\n    config_xnutr = 0.1\n/\n&damping");
+    // disjoint keys: config_zd in the first group, config_xnutr in the second (merged, they would read without error)
+    variant("    config_xnutr = 0.1\n", "/\n&damping\n    config_xnutr = 0.1\n");
     std::string e = "(no error)";
     try {
       (void)read_namelist_file(path);
@@ -160,6 +168,22 @@ int main(int argc, char** argv) {
     expect(e.find(path + ":" + std::to_string(line) + ": config_not_an_option is not an option") != std::string::npos,
            "error line: " + e);
   }
+  // --- separators as gfortran reads them: a comment between the name and '=' and ', ,' between assignments are
+  // read; two ',' before '=' and a character value followed by a name with no separator make gfortran's read fail
+  expect(bits(read("config_zd = 10500.0", "config_zd ! c\n = 10500.0").config_zd) == bits(10500.0),
+         "a comment between the name and '='");
+  expect(bits(read("config_zd = 10500.0\n", "config_zd = 10500.0, ,").config_xnutr) == bits(0.1),
+         "', ,' between assignments");
+  refused("two commas before '='", "config_zd = 10500.0", "config_zd , , = 10500.0",
+          "more than one ',' between config_zd and '='");
+  refused("no separator after a character value", "config_physics_suite = 'none'",
+          "config_physics_suite = 'none'config_microp_scheme = 'suite'",
+          "no separator after the character value of config_physics_suite");
+  // --- effective_namelist gives the normalised value: a real as the reference spells the same double
+  {
+    variant("config_zd = 10500.0", "config_zd = 1.05d4");
+    expect(effective_namelist(path).at("config_zd") == "10500.0", "effective_namelist: 1.05d4 -> 10500.0");
+  }
   // --- active scalars
   {
     InitConfig c;
@@ -175,6 +199,57 @@ int main(int argc, char** argv) {
       threw = true;
     }
     expect(threw, "mp_wsm6 is not handled");
+    // each of the other physics choices is an error
+    auto refuses = [&](InitConfig x, const std::string& text) {
+      try {
+        (void)active_scalars(x);
+      } catch (const Error& e) {
+        return std::string(e.what()).find(text) != std::string::npos;
+      }
+      return false;
+    };
+    InitConfig d;
+    d.config_physics_suite = "none";
+    InitConfig x = d;
+    x.config_physics_suite = "mesoscale_reference";
+    expect(refuses(x, "config_physics_suite = 'mesoscale_reference' is not handled"), "a physics suite is not handled");
+    x = d;
+    x.config_les_model = "3d_smagorinsky";
+    expect(refuses(x, "config_les_model = '3d_smagorinsky' is not handled"), "an LES model is not handled");
+    x = d;
+    x.config_convection_scheme = "cu_ntiedtke";
+    expect(refuses(x, "convection / PBL schemes are not handled"), "a convection scheme is not handled");
+    x = d;
+    x.config_pbl_scheme = "bl_ysu";
+    expect(refuses(x, "convection / PBL schemes are not handled"), "a PBL scheme is not handled");
+  }
+  }
+  if (locale_only) {
+  // --- a process locale whose decimal point is ',' (a library caller's setlocale): reals still read as gfortran
+  // reads them (its transfer runs in the "C" locale), not cut at the '.'
+  {
+    const char* loc = nullptr;
+    for (const char* l : {"de_DE.UTF-8", "de_DE.utf8", "fr_FR.UTF-8", "tr_TR.UTF-8", "de_DE", "fr_FR"})
+      if (std::setlocale(LC_NUMERIC, l) && std::strcmp(std::localeconv()->decimal_point, ",") == 0) {
+        loc = l;
+        break;
+      }
+    if (!loc) {
+      // No such locale on this machine: the check cannot run, so the test reports a skip (ctest SKIP_RETURN_CODE 77),
+      // never a pass.
+      std::printf("SKIP no locale with decimal point ',' is installed (de_DE, fr_FR or tr_TR)\n");
+      std::remove(path.c_str());
+      return 77;
+    }
+    {
+      const InitConfig c = read("config_zd = 10500.0", "config_zd = 10500.0");
+      expect(bits(c.config_len_disp) == bits(577.35) && bits(c.config_xnutr) == bits(0.1),
+             std::string("reference reals in LC_NUMERIC=") + loc);
+      refused("577.99 in a ',' locale", "config_len_disp = 577.35", "config_len_disp = 577.99",
+              "config_len_disp = 577.99 has no verified port");
+    }
+    std::setlocale(LC_NUMERIC, "C");
+  }
   }
   std::remove(path.c_str());
   if (fails == 0) std::printf("OK namelist unit test\n");
