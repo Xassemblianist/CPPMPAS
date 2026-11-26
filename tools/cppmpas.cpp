@@ -185,11 +185,11 @@ int run(int argc, char** argv) {
       throw Error("usage: cppmpas init <init> <out> --fields a,b,... [--namelist file] [--scalars ...] [--file-id ID] "
                   "[--unverified]");
     a.init = true;
-    const InitConfig cfg = read_init_config(a.namelist);
+    InitConfig cfg = read_init_config(a.namelist);
     MpasInput in = load(a, a.pos[0]);
     // an array this port computes that is not yet proven against MPAS needs --unverified (CONSTITUTION.md 3.1)
     const auto& computed = init_block_computed_fields();
-    const auto verified = init_block_verified_fields(in.mesh.nVertLevels);
+    const auto verified = init_block_verified_fields(in.mesh.nVertLevels, mesh_scaling_unverified(in.mesh, cfg));
     for (const auto& f : a.fields) {
       const bool is_computed = std::find(computed.begin(), computed.end(), f) != computed.end();
       if (is_computed && !a.unverified && std::find(verified.begin(), verified.end(), f) == verified.end())

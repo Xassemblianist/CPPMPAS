@@ -349,7 +349,7 @@ void atm_compute_mesh_scaling(Mesh& m, const InitConfig& cfg) {
   fill_all(m.meshScalingDel2, 1.0);  // :1153-1154
   fill_all(m.meshScalingDel4, 1.0);
   if (cfg.config_h_ScaleWithMesh) {
-    for (int iEdge = 1; iEdge <= nEdges; ++iEdge) {  // :1155-1162
+    for (int iEdge = 1; iEdge <= nEdges; ++iEdge) {  // :1156-1161
       const int cell1 = m.cellsOnEdge(1, iEdge);
       const int cell2 = m.cellsOnEdge(2, iEdge);
       m.meshScalingDel2(iEdge) = 1.0 / libm::pow((m.meshDensity(cell1) + m.meshDensity(cell2)) / 2.0, 0.25);
@@ -359,7 +359,7 @@ void atm_compute_mesh_scaling(Mesh& m, const InitConfig& cfg) {
   fill_all(m.meshScalingRegionalCell, 1.0);  // :1167-1168
   fill_all(m.meshScalingRegionalEdge, 1.0);
   if (cfg.config_h_ScaleWithMesh) {
-    for (int iEdge = 1; iEdge <= nEdges; ++iEdge) {  // :1169-1174
+    for (int iEdge = 1; iEdge <= nEdges; ++iEdge) {  // :1170-1174
       const int cell1 = m.cellsOnEdge(1, iEdge);
       const int cell2 = m.cellsOnEdge(2, iEdge);
       m.meshScalingRegionalEdge(iEdge) = 1.0 / libm::pow((m.meshDensity(cell1) + m.meshDensity(cell2)) / 2.0, 0.25);
@@ -632,12 +632,21 @@ void atm_core_init_len_disp(Mesh& m, InitConfig& cfg, std::vector<std::string>& 
 
 // mpas_atm_core.F:238-239: startTimeStamp, the start time of the clock (atm_simulation_clock_init, :329-338, from
 // config_start_time) as mpas_get_time's dateTimeString. Only a start time already in that form is handled:
-// 'file' (start time from the restart_timestamp file) and other spellings need the clock port.
+// 'file' (start time from the restart_timestamp file) and other spellings need the clock port, as do fields out of
+// their range (month 13, day 32, hour 24, ...), which ESMF_TimeSet normalises or refuses (mpas_set_time's error is
+// not checked, :338). February 29 is refused as well (the calendar's leap-year rule is not ported).
 std::string atm_start_time_stamp(const InitConfig& cfg) {
-  static const std::regex canonical(R"(\d{4}-\d{2}-\d{2}_\d{2}:\d{2}:\d{2})");
-  if (!std::regex_match(cfg.config_start_time, canonical))
+  static const std::regex canonical(R"((\d{4})-(\d{2})-(\d{2})_(\d{2}):(\d{2}):(\d{2}))");
+  std::smatch f;
+  if (!std::regex_match(cfg.config_start_time, f, canonical))
     throw Error("config_start_time = '" + cfg.config_start_time +
                 "': only YYYY-MM-DD_hh:mm:ss is handled (the MPAS clock / timekeeping is not ported)");
+  const auto v = [&](int i) { return std::stoi(f[i].str()); };
+  static const int days[13] = {0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  const int mo = v(2);
+  if (mo < 1 || mo > 12 || v(3) < 1 || v(3) > days[mo] || v(4) > 23 || v(5) > 59 || v(6) > 59)
+    throw Error("config_start_time = '" + cfg.config_start_time +
+                "': a field out of its range is not handled (the MPAS clock / timekeeping is not ported)");
   return cfg.config_start_time;
 }
 
@@ -648,6 +657,7 @@ void mpas_atm_run_compatibility(const Mesh& m, const InitConfig& cfg, std::vecto
   log.push_back("");
   log.push_back("Checking consistency of limited-area settings...");
   log.push_back(std::string(" - config_apply_lbcs = ") + (cfg.config_apply_lbcs ? "T" : "F"));
+  if (!m.bdyMaskCell.allocated()) throw Error("mpas_atm_run_compatibility: bdyMaskCell was not read");
   int maxmask = -2147483647;
   for (int iCell = 1; iCell <= m.nCellsSolve(); ++iCell) maxmask = std::max(maxmask, m.bdyMaskCell(iCell));
   log.push_back(" - Maximum value in bdyMaskCell = " + std::to_string(maxmask));
@@ -657,6 +667,9 @@ void mpas_atm_run_compatibility(const Mesh& m, const InitConfig& cfg, std::vecto
   if (cfg.config_apply_lbcs && maxmask == 0)
     throw Error("config_apply_lbcs = true, but no boundary cells found in the bdyMaskCell field. Please ensure that "
                 "config_apply_lbcs = false for global simulations.");
+  // mpas_atm_boundaries.F:852-868 (the lbc_in stream's input interval) needs the stream manager
+  if (cfg.config_apply_lbcs)
+    throw Error("mpas_atm_run_compatibility: config_apply_lbcs = true (limited-area, lbc_in stream) is not ported");
   // mpas_atm_dynamics_checks, dynamics/mpas_atm_time_integration.F:134-208 (warnings only)
   log.push_back("");
   log.push_back("Checking consistency of dynamics settings...");
@@ -669,10 +682,11 @@ void mpas_atm_run_compatibility(const Mesh& m, const InitConfig& cfg, std::vecto
 }
 
 // atm_core_init, mpas_atm_core.F:155-262: the parts that touch fields, around atm_mpas_init_block
-void atm_core_init(Mesh& m, State& s, Diag& d, const InitConfig& cfg_in, std::vector<std::string>& log) {
-  InitConfig cfg = cfg_in;
-  atm_core_init_len_disp(m, cfg, log);                // :155-201
+// cfg is MPAS's config pool: config_len_disp keeps the value :190-192 gives it.
+void atm_core_init(Mesh& m, State& s, Diag& d, InitConfig& cfg, std::vector<std::string>& log) {
+  // the clock is set up from config_start_time before atm_core_init (mpas_subdriver.F:288): checked first
   const std::string stamp = atm_start_time_stamp(cfg);  // :238-239
+  atm_core_init_len_disp(m, cfg, log);                // :155-201
   mpas_atm_run_compatibility(m, cfg, log);            // :247-251
   atm_mpas_init_block(m, s, d, cfg, log);             // :259
   s.xtime = stamp;                                    // :261-262, xtime = startTimeStamp (blank-padded)
@@ -697,7 +711,14 @@ const std::vector<std::string>& init_block_computed_fields() {
   return v;
 }
 
-std::vector<std::string> init_block_verified_fields(int nVertLevels) {
+bool mesh_scaling_unverified(const Mesh& m, const InitConfig& cfg) {
+  if (!cfg.config_h_ScaleWithMesh) return false;
+  for (int iCell = 1; iCell <= m.nCells; ++iCell)
+    if (m.meshDensity(iCell) != 1.0) return true;
+  return false;
+}
+
+std::vector<std::string> init_block_verified_fields(int nVertLevels, bool scaled_mesh) {
   // restart / step-0 tests (init_restart_*, init_step0_*) and every field of the initdump stream (initdump_*_*)
   std::vector<std::string> v = {"edgeNormalVectors", "localVerticalUnitVectors", "cellTangentPlane",
                                 "coeffs_reconstruct", "dss", "nominalMinDc"};
@@ -705,8 +726,12 @@ std::vector<std::string> init_block_verified_fields(int nVertLevels) {
   // exner and what uses it: the last level of an odd nVertLevels goes through the scalar pow
   // (atm_init_coupled_diagnostics), which no reference exercises
   const std::vector<std::string> pow_tail = {"exner", "exner_base", "pressure_p", "pressure_base"};
+  // the mesh scaling pows (atm_compute_mesh_scaling) only ever had the argument 1 in a reference (JW)
+  const std::vector<std::string> scaling = {"meshScalingDel2", "meshScalingDel4", "meshScalingRegionalCell",
+                                            "meshScalingRegionalEdge"};
   for (const auto& n : all) {
     if (std::find(v.begin(), v.end(), n) != v.end()) continue;
+    if (scaled_mesh && std::find(scaling.begin(), scaling.end(), n) != scaling.end()) continue;
     if (nVertLevels % 2 != 0 && std::find(pow_tail.begin(), pow_tail.end(), n) != pow_tail.end()) continue;
     v.push_back(n);
   }

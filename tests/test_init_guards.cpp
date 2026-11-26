@@ -14,11 +14,13 @@
 //    init file held.
 //
 // usage: test_init_guards <init file> <its namelist.atmosphere>
+#include <algorithm>
 #include <cstdio>
 #include <string>
 #include <vector>
 
 #include "core/error.hpp"
+#include "core/namelist.hpp"
 #include "core_atmosphere/atm_init.hpp"
 #include "core_atmosphere/atm_solve_diagnostics.hpp"
 #include "io/mpas_reader.hpp"
@@ -69,7 +71,12 @@ int main(int argc, char** argv) {
     expect(throws_with([&] { atm_initialize_deformation_weights(m, m.nCells, m.on_a_sphere, m.sphere_radius); },
                        "nEdgesOnCell > 24 overflows"),
            "nEdgesOnCell = 25 is refused");
-    m.nEdgesOnCell(1) = 24;  // n = 25 passes the check (and then reads cellsOnCell past maxEdges: not run)
+    // n = 25 passes the check: the routine then runs on slots past maxEdges (other cells' entries of the same
+    // arrays, no error expected from them); only the overflow message matters here
+    m.nEdgesOnCell(1) = 24;
+    expect(!throws_with([&] { atm_initialize_deformation_weights(m, m.nCells, m.on_a_sphere, m.sphere_radius); },
+                        "nEdgesOnCell > 24 overflows"),
+           "nEdgesOnCell = 24 (n = 25) is accepted");
     MpasInput p = fresh();
     p.mesh.is_periodic = true;
     expect(throws_with([&] { atm_initialize_deformation_weights(p.mesh, p.mesh.nCells, p.mesh.on_a_sphere,
@@ -128,9 +135,19 @@ int main(int argc, char** argv) {
     InitConfig cfg;
     cfg.config_start_time = "0000-01-01_00:00:00";
     expect(atm_start_time_stamp(cfg) == "0000-01-01_00:00:00", "canonical start time");
+    cfg.config_start_time = "2010-12-31_23:59:59";
+    expect(atm_start_time_stamp(cfg) == "2010-12-31_23:59:59", "last second of a year");
+    cfg.config_start_time = "2010-02-28_00:00:00";
+    expect(atm_start_time_stamp(cfg) == "2010-02-28_00:00:00", "February 28");
     for (const char* bad : {"file", "0000-01-01", "0000-01-01_00:00:00.5", "2010-10-23 00:00:00"}) {
       cfg.config_start_time = bad;
       expect(throws_with([&] { (void)atm_start_time_stamp(cfg); }, "only YYYY-MM-DD_hh:mm:ss is handled"), bad);
+    }
+    for (const char* bad : {"0000-13-01_00:00:00", "0000-00-01_00:00:00", "0000-01-00_00:00:00", "0000-01-32_00:00:00",
+                            "0000-04-31_00:00:00", "2000-02-29_00:00:00", "0000-01-01_24:00:00", "0000-01-01_00:60:00",
+                            "0000-01-01_00:00:60"}) {
+      cfg.config_start_time = bad;
+      expect(throws_with([&] { (void)atm_start_time_stamp(cfg); }, "a field out of its range is not handled"), bad);
     }
   }
   // --- mpas_atm_run_compatibility
@@ -143,6 +160,10 @@ int main(int argc, char** argv) {
     cfg.config_apply_lbcs = true;
     expect(throws_with([&] { mpas_atm_run_compatibility(in.mesh, cfg, log); }, "config_apply_lbcs = true, but no"),
            "config_apply_lbcs on a global mesh is an error");
+    in.mesh.bdyMaskCell(in.mesh.nCells) = 1;
+    expect(throws_with([&] { mpas_atm_run_compatibility(in.mesh, cfg, log); }, "lbc_in stream) is not ported"),
+           "config_apply_lbcs with boundary cells: the lbc_in check is not ported");
+    in.mesh.bdyMaskCell(in.mesh.nCells) = 0;
     cfg.config_apply_lbcs = false;
     in.mesh.bdyMaskCell(in.mesh.nCells) = 1;
     expect(throws_with([&] { mpas_atm_run_compatibility(in.mesh, cfg, log); }, "Boundary cells found"),
@@ -154,6 +175,11 @@ int main(int argc, char** argv) {
     mpas_atm_run_compatibility(in.mesh, cfg, log);
     expect(has(log, "config_epssm in the &nhyd_model namelist group is no longer supported"), "config_epssm warning");
     expect(has(log, "config_positive_definite = true will enable monotonic advection"), "positive definite warning");
+    MpasInput g = fresh();
+    g.mesh.bdyMaskCell = FArray<int>();  // as after a grid read
+    InitConfig c0;
+    expect(throws_with([&] { mpas_atm_run_compatibility(g.mesh, c0, log); }, "bdyMaskCell was not read"),
+           "mpas_atm_run_compatibility without bdyMaskCell is an error");
   }
 
   // --- atm_core_init: xtime
@@ -166,6 +192,51 @@ int main(int argc, char** argv) {
     std::string want = cfg.config_start_time;
     want.resize(64, ' ');
     expect(in.state.xtime == want, "atm_core_init: xtime = config_start_time, blank-padded");
+  }
+
+  // --- atm_core_init: config_len_disp = nominalMinDc reaches the caller's config (mpas_atm_core.F:190-192 sets the
+  // pool's config_len_disp); a bad start time is refused before anything changes
+  {
+    MpasInput in = read_mpas_init(path, {"qv"});
+    InitConfig cfg = read_init_config(argv[2]);
+    in.mesh.nominalMinDc(1) = 600.25;
+    cfg.config_len_disp = 0.0;
+    std::vector<std::string> log;
+    atm_core_init(in.mesh, in.state, in.diag, cfg, log);
+    expect(cfg.config_len_disp == 600.25, "atm_core_init: the caller's config_len_disp = nominalMinDc");
+    MpasInput b = read_mpas_init(path, {"qv"});
+    InitConfig bad = read_init_config(argv[2]);
+    bad.config_start_time = "0000-13-01_00:00:00";
+    b.mesh.nominalMinDc(1) = 0.0;
+    expect(throws_with([&] { atm_core_init(b.mesh, b.state, b.diag, bad, log); }, "a field out of its range"),
+           "atm_core_init: a bad start time is an error");
+    expect(b.mesh.nominalMinDc(1) == 0.0, "atm_core_init: nominalMinDc untouched when the start time is refused");
+  }
+
+  // --- the mesh scaling is unverified for a meshDensity other than 1 with config_h_ScaleWithMesh
+  {
+    MpasInput in = read_mpas_init(path, {"qv"});
+    InitConfig cfg;
+    for (int i = 1; i <= in.mesh.nCells; ++i) in.mesh.meshDensity(i) = 1.0;
+    cfg.config_h_ScaleWithMesh = true;
+    expect(!mesh_scaling_unverified(in.mesh, cfg), "meshDensity = 1: the mesh scaling is verified");
+    in.mesh.meshDensity(in.mesh.nCells) = 2.0;
+    expect(mesh_scaling_unverified(in.mesh, cfg), "meshDensity(nCells) = 2: the mesh scaling is not verified");
+    cfg.config_h_ScaleWithMesh = false;
+    expect(!mesh_scaling_unverified(in.mesh, cfg), "config_h_ScaleWithMesh = false: nothing is scaled");
+    const auto v = init_block_verified_fields(70, true);
+    bool none = true;
+    for (const auto& n : v) none = none && n.rfind("meshScaling", 0) != 0;
+    expect(none && std::find(v.begin(), v.end(), "pv_edge") != v.end(),
+           "verified fields of a scaled mesh: no meshScaling*, the others");
+  }
+
+  // --- mpas_legs: N < 1 is an error (the routine is public)
+  {
+    std::vector<real> A(4, 1.0), B(4, 1.0), X(4, 0.0);
+    std::vector<int> I(4, 1);
+    expect(throws_with([&] { mpas_legs(A.data() + 2, 0, B.data() + 2, X.data() + 2, I.data() + 2); }, "mpas_legs: N < 1"),
+           "mpas_legs with N = 0 is an error");
   }
 
   // --- atm_compute_solve_diagnostics: the non-APVM branch is not ported

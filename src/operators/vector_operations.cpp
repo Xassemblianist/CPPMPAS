@@ -170,6 +170,8 @@ void elgs(real* A, int N, int* INDX) {
 
 // mpas_rbf_interpolation.F:1670-1698
 void mpas_legs(real* A, int N, real* B, real* X, int* INDX) {
+  // MPAS's only caller passes pointCount + 2 >= 3; N < 1 would index X(0) (public routine: checked)
+  if (N < 1) throw Error("mpas_legs: N < 1");
   auto a = [&](int i, int j) { return A[(i - 1) + N * (j - 1)]; };
   elgs(A, N, INDX);
   for (int I = 1; I <= N - 1; ++I)

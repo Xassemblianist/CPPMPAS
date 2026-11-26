@@ -49,13 +49,18 @@ std::string atm_start_time_stamp(const InitConfig& cfg);
 // mpas_atm_run_compatibility (mpas_atm_core.F:1578-1617): limited-area and dynamics checks.
 void mpas_atm_run_compatibility(const Mesh& mesh, const InitConfig& cfg, std::vector<std::string>& log);
 // What atm_core_init (mpas_atm_core.F:155-262) does to the fields of a cold start: len_disp, the compatibility
-// checks, atm_mpas_init_block, then xtime = startTimeStamp (:261-262).
-void atm_core_init(Mesh& mesh, State& state, Diag& diag, const InitConfig& cfg, std::vector<std::string>& log);
+// checks, atm_mpas_init_block, then xtime = startTimeStamp (:261-262). cfg.config_len_disp is updated as in
+// atm_core_init_len_disp.
+void atm_core_init(Mesh& mesh, State& state, Diag& diag, InitConfig& cfg, std::vector<std::string>& log);
 
 // Arrays atm_core_init sets that are proven bit-identical against the MPAS references (tests init_restart_*,
 // init_step0_*, initdump_*_*): all of them for an even nVertLevels; for an odd nVertLevels exner, exner_base,
-// pressure_p and pressure_base go through the scalar pow of the last level, which no reference exercises.
-std::vector<std::string> init_block_verified_fields(int nVertLevels);
+// pressure_p and pressure_base go through the scalar pow of the last level, which no reference exercises. With
+// scaled_mesh (mesh_scaling_unverified) the four meshScaling* arrays are not verified either.
+std::vector<std::string> init_block_verified_fields(int nVertLevels, bool scaled_mesh = false);
+// config_h_ScaleWithMesh with a meshDensity(1:nCells) other than 1: the mesh scaling (mpas_atm_core.F:1124-1181)
+// takes pow of values no reference has (JW, the only one with config_h_ScaleWithMesh = true, has meshDensity = 1).
+bool mesh_scaling_unverified(const Mesh& mesh, const InitConfig& cfg);
 // Every array atm_core_init sets (or overwrites).
 const std::vector<std::string>& init_block_computed_fields();
 
