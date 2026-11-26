@@ -15,24 +15,42 @@
 
 namespace cppmpas::libm {
 
+// The argument as the library receives it: a value in a register. glibc's NaN results of a NaN argument are that
+// NaN quieted (s_sin.c x / x, e_asin.c (x - x) / (x - x), e_atan2.c / e_pow.c x + y), sign included. Once a port
+// is inlined, GCC may fold the caller's negation into those expressions ((-y) / (-y) -> y / y, (-y) + x -> x - y),
+// which is exact for every non-NaN value but flips the sign of a NaN result. The empty asm hides the argument's
+// origin, so a NaN argument gives glibc's bits (tests/test_libm.cpp calls the ports with -x).
+CPPMPAS_FORCEINLINE double arg(double x) {
+#if (defined(__x86_64__) || defined(__i386__)) && !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
+  asm("" : "+x"(x));
+#endif
+  return x;
+}
+
 // scalar libm (FMA variants); every entry is CPPMPAS_FORCEINLINE (host and device), as the CPPWRF ports are
-CPPMPAS_FORCEINLINE double sin(double x) { return ::cppwrf::glibc::sin(x); }        // __sin_fma
-CPPMPAS_FORCEINLINE double cos(double x) { return ::cppwrf::glibc::cos(x); }        // __cos_fma
+CPPMPAS_FORCEINLINE double sin(double x) { return ::cppwrf::glibc::sin(arg(x)); }  // __sin_fma
+CPPMPAS_FORCEINLINE double cos(double x) { return ::cppwrf::glibc::cos(arg(x)); }  // __cos_fma
 // asin / acos are the wrappers of math/w_asin_compat.c:30-38 and w_acos_compat.c:30-38 (the default asin / acos of the
 // x86-64 libm, LIBM_SVID_COMPAT): |x| > 1 returns __kernel_standard's NAN (+qNaN), not __ieee754_asin's 0/0
 CPPMPAS_FORCEINLINE double asin(double x) {  // __ieee754_asin_fma
+  x = arg(x);
   return ::cppwrf::glibc::detail::fabs_(x) > 1.0 ? __builtin_nan("") : ::cppwrf::glibc::asin(x);
 }
 CPPMPAS_FORCEINLINE double acos(double x) {  // __ieee754_acos_fma
+  x = arg(x);
   return ::cppwrf::glibc::detail::fabs_(x) > 1.0 ? __builtin_nan("") : ::cppwrf::glibc::acos(x);
 }
-CPPMPAS_FORCEINLINE double atan2(double y, double x) { return ::cppwrf::glibc::atan2(y, x); }  // __ieee754_atan2_fma
-CPPMPAS_FORCEINLINE double pow(double x, double y) { return ::cppwrf::glibc::pow(x, y); }      // __ieee754_pow_fma
+CPPMPAS_FORCEINLINE double atan2(double y, double x) {  // __ieee754_atan2_fma
+  return ::cppwrf::glibc::atan2(arg(y), arg(x));
+}
+CPPMPAS_FORCEINLINE double pow(double x, double y) { return ::cppwrf::glibc::pow(arg(x), arg(y)); }  // __ieee754_pow_fma
 
 // one lane of libmvec's 2-lane SSE4 functions (glibc 2.41 sysdeps/x86_64/fpu/multiarch/svml_d_*2_core_sse4.S)
-CPPMPAS_FORCEINLINE double mvec_sin(double x) { return ::cppwrf::glibc::mvec::sin(x); }               // _ZGVbN2v_sin_sse4
-CPPMPAS_FORCEINLINE double mvec_cos(double x) { return ::cppwrf::glibc::mvec::cos(x); }               // _ZGVbN2v_cos_sse4
-CPPMPAS_FORCEINLINE double mvec_pow(double x, double y) { return ::cppwrf::glibc::mvec::pow(x, y); }  // _ZGVbN2vv_pow_sse4
+CPPMPAS_FORCEINLINE double mvec_sin(double x) { return ::cppwrf::glibc::mvec::sin(arg(x)); }  // _ZGVbN2v_sin_sse4
+CPPMPAS_FORCEINLINE double mvec_cos(double x) { return ::cppwrf::glibc::mvec::cos(arg(x)); }  // _ZGVbN2v_cos_sse4
+CPPMPAS_FORCEINLINE double mvec_pow(double x, double y) {  // _ZGVbN2vv_pow_sse4
+  return ::cppwrf::glibc::mvec::pow(arg(x), arg(y));
+}
 
 // sincos: __sincos_fma, glibc 2.41 sysdeps/ieee754/dbl-64/s_sincos.c (built with FMA through
 // sysdeps/x86_64/fpu/multiarch/s_sincos-fma.c), statement by statement, with s_sin.c's do_sin, do_cos and
@@ -44,6 +62,7 @@ CPPMPAS_FORCEINLINE double mvec_pow(double x, double y) { return ::cppwrf::glibc
 // (s_sincos.c:67-69), so its sine there is not always __sin's.
 CPPMPAS_FORCEINLINE void sincos(double x, double* sinx, double* cosx) {
   namespace g = ::cppwrf::glibc::detail;
+  x = arg(x);
   constexpr double hp0 = 0x1.921fb54442d18p0, hp1 = 0x1.1a62633145c07p-54;  // usncs.h
   const std::uint32_t k = std::uint32_t(g::asu(x) >> 32) & 0x7fffffffu;    // s_sincos.c:43-44
   if (k < 0x400368fdu) {                                                    // :46

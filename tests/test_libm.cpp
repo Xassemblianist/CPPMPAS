@@ -6,7 +6,9 @@
 // branch thresholds of s_sincos.c / s_sin.c / e_asin.c, |x| up to 2^1023 (__branred), the sincos strip
 // hp0 -+ (2m + 1) / 256 (table-bucket midpoints of y = hp0 - |x|, where do_cos(a, da) and do_cos(y, hp1) differ),
 // atan2 / pow on every pair of special values, and libmvec pow with distinct lanes. Results must have the same
-// bits, NaN results of non-NaN inputs included (asin / acos of |x| > 1).
+// bits, NaN results included: asin / acos of |x| > 1, and NaN inputs (quiet and signaling, either sign, with
+// payloads), whose result glibc defines as the input NaN quieted. The ports are called with -x written at the call
+// (unary below), as code calls them: a fold of that negation into the port must not change a NaN's sign.
 //   test_libm [N]   N random inputs per function (default 2'000'000)
 #include <emmintrin.h>
 #include <gnu/libc-version.h>
@@ -55,10 +57,7 @@ struct Count {
   long n = 0, bad = 0;
   void check(double x, double y, double got, double want) {
     ++n;
-    // a NaN input propagates as a NaN whose sign the compiler need not keep (GCC folds (-x)/(-x) to x/x without
-    // -fsignaling-nans): only NaN-ness is compared then; every other result must have the same bits
-    const bool nan_in = std::isnan(x) || std::isnan(y);
-    if (nan_in ? std::isnan(got) != std::isnan(want) || (!std::isnan(want) && !same(got, want)) : !same(got, want)) {
+    if (!same(got, want)) {
       if (bad < 5)
         std::printf("  %s(%a, %a): cppmpas %a (0x%016llx) glibc %a (0x%016llx)\n", name, x, y, got,
                     (unsigned long long)bits(got), want, (unsigned long long)bits(want));
@@ -124,8 +123,11 @@ int main(int argc, char** argv) {
 
   // --- special inputs
   const double inf = HUGE_VAL, qnan = std::numeric_limits<double>::quiet_NaN();
-  std::vector<double> sp = {0.0, DBL_TRUE_MIN, 2 * DBL_TRUE_MIN, DBL_MIN / 3, DBL_MIN, DBL_MAX, inf, qnan, 1.0, 0.5, 2.0,
-                            M_PI / 2, M_PI, 2 * M_PI, 287.0 / 717.5, 0.25, 0.75, 3.0, 1e300, 1e-300, 1024.0, 1075.0};
+  // NaNs: the default quiet NaN, a quiet NaN with a payload, a signaling NaN with a payload
+  const double qpay = from_bits(0x7ff8000000000123ull), snan = from_bits(0x7ff4000000000001ull);
+  std::vector<double> sp = {0.0, DBL_TRUE_MIN, 2 * DBL_TRUE_MIN, DBL_MIN / 3, DBL_MIN, DBL_MAX, inf, qnan, qpay, snan,
+                            1.0, 0.5, 2.0, M_PI / 2, M_PI, 2 * M_PI, 287.0 / 717.5, 0.25, 0.75, 3.0, 1e300, 1e-300,
+                            1024.0, 1075.0};
   // high words of the branch thresholds: s_sincos.c / s_sin.c (2^-27, 2^-26, 0.855469, 2.426265, 105414350,
   // 2^1024), e_asin.c / e_acos (2^-26 .. 1), and powers of two up to 2^1023
   std::vector<std::uint32_t> hi = {0x3e400000u, 0x3e500000u, 0x3feb6000u, 0x400368fdu, 0x419921FBu, 0x7fefffffu,
