@@ -23,10 +23,12 @@ checks against WRF, all at tolerance 0). CPPMPAS applies the same method to MPAS
   **Verified at tolerance 0** against the MPAS v8.4.2 FP64 references in all three cases: every one of the 57 fields
   the init block computes (cppmpas-data releases `mpas842-dbl-mw-003`, `-sc-002`, `-jw-002`, whose `initdump.nc` holds
   them at the initial time), and the restart and first-step fields of `mpas842-dbl-{mw,sc,jw}-001`.
-- The dynamical core for the mountain-wave configuration (`cppmpas run --steps N`): `atm_srk3` with the acoustic
-  steps, divergence damping, the 2nd-order horizontal and full vertical mixing and the per-step diagnostics.
-  **Verified at tolerance 0** against `mpas842-dbl-mw-001`: steps 1-10 in every field of the step files, the
-  restart at 30:06 and the output at 30 and 60 min.
+- The dynamical core for the mountain-wave (MW) and JW baroclinic-wave configurations (`cppmpas run --steps N`):
+  `atm_srk3` with the acoustic steps, divergence damping, the 2nd-order horizontal mixing with a fixed (MW) or
+  Smagorinsky (JW) eddy viscosity, the 4th-order filters (JW), the full vertical mixing (MW), Coriolis on the sphere
+  and the per-step diagnostics. **Verified at tolerance 0** against `mpas842-dbl-mw-001` (steps 1-10 in every field
+  of the step files, the restart at 30:06, the output at 30 and 60 min) and `mpas842-dbl-jw-001` (steps 1-10 in
+  every field, the output at 24 h and the restart at 24:07:30).
 - The supercell configuration on top of it: monotonic scalar transport of qv, qc, qr (`atm_advance_scalars` /
   `atm_advance_scalars_mono`), vertical mixing of the perturbation from the initial state, and Kessler
   microphysics with MPAS's microphysics interface (the Kessler kernel is shared with CPPWRF). **Verified at
@@ -35,7 +37,7 @@ checks against WRF, all at tolerance 0). CPPMPAS applies the same method to MPAS
 - Restart runs (`config_do_restart = true`): `cppmpas run` reads an MPAS restart file as MPAS reads its restart
   stream and continues from it. **Verified at tolerance 0** on MW: restarted from the reference's 00:30:06 restart
   file, the state at 01:00:00 is identical to the reference forecast's output in every field the port computes.
-- Every other configuration (Smagorinsky or 4th-order mixing, other physics, Coriolis, a Kessler restart, ...) is
+- Every other configuration (LES, LBCs, other physics, a Kessler restart, ...) is
   a hard error until it is ported and verified.
 - The namelist: every option of MPAS-Atmosphere's Registry is known; a value that no verified reference runs with is a
   hard error naming the option.

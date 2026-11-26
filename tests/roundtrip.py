@@ -24,7 +24,7 @@ GRID_OPTIONAL = ["fEdge", "fVertex"]  # absent from the x1.40962 grid (init_atmo
 INIT = ["fEdge", "fVertex", "edgeNormalVectors", "localVerticalUnitVectors", "cellTangentPlane", "nominalMinDc", "bdyMaskCell",
         "bdyMaskEdge", "bdyMaskVertex", "cf1", "cf2", "cf3", "zgrid", "rdzw", "dzu", "rdzu", "fzm", "fzp", "zxu",
         "zz", "zb", "zb3", "dss", "deriv_two", "coeffs_reconstruct", "initial_time", "xtime", "u_init", "v_init",
-        "t_init", "u", "w", "rho", "theta", "rho_base", "theta_base", "surface_pressure"]
+        "t_init", "u", "w", "rho", "theta", "rho_base", "theta_base", "surface_pressure", "Time"]
 UNUSED_SLOTS = {"cellsOnCell": "nEdgesOnCell", "edgesOnCell": "nEdgesOnCell", "verticesOnCell": "nEdgesOnCell",
                 "edgesOnEdge": "nEdgesOnEdge"}
 

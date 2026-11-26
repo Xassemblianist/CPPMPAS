@@ -1,19 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
-// One time step of MPAS-Atmosphere's dynamical core as the mountain-wave reference runs it: atm_timestep ->
+// One time step of MPAS-Atmosphere's dynamical core as the mountain-wave (MW) and JW baroclinic-wave references run it: atm_timestep ->
 // atm_srk3 (src/core_atmosphere/dynamics/mpas_atm_time_integration.F:1789-1850, 1855-2882; tag TI below), with the
 // dissipation of mpas_atm_dissipation_models.F (DM, core_atmosphere/atm_dissipation.hpp), the time-level shift and
 // the output diagnostics of atm_core_run (mpas_atm_core.F:816-848, 916-965; CORE). One rank, one block, one thread
 // (the reference is built without OpenMP: every thread range is the whole range, every halo exchange a no-op,
 // DYCORE_MAP.md section 3).
 //
-// Ported and verified (MW, mpas842-dbl-mw-001 steps 1-10): SRK3 of order 2, coupled dynamics-transport
-// (config_split_dynamics_transport = false), no scalar advection, 2d_fixed horizontal mixing with mix_full vertical
-// mixing, no 4th-order filters, no LES, no Rayleigh damping of u, no CAM top filter, physics suite 'none', no LBCs,
-// no IAU, fEdge = 0, an even nVertLevels >= 4. Supercell (SC, mpas842-dbl-sc-001 steps 1-10) adds: coupled
-// monotonic scalar transport of qv, qc, qr (atm_advance_scalars.hpp), vertical mixing of the perturbation from the
-// initial state (config_mix_full = .false., atm_dissipation_perturbation.cpp) and Kessler microphysics at the end of
-// the step (atm_microphysics.hpp). Every other configuration is refused by check_dycore_supported.
+// Ported and verified (MW: mpas842-dbl-mw-001, planar, steps 1-10 and 300 / 301 / 600; JW: mpas842-dbl-jw-001,
+// x1.40962 sphere, steps 1-10): SRK3 of order 2, coupled dynamics-transport (config_split_dynamics_transport =
+// false), no scalar advection, horizontal mixing 2d_fixed (MW) or 2d_smagorinsky with the 4th-order filters it
+// switches on (JW), vertical mixing of the full state (MW) or none (JW, v_*_eddy_visc2 = 0), no LES, no Rayleigh
+// damping of u, no CAM top filter, physics suite 'none', no LBCs, no IAU, fEdge = 0 (MW) or u_init = v_init = 0 (JW),
+// an even nVertLevels >= 4. Supercell (SC, mpas842-dbl-sc-001 steps 1-10, 600, 601) adds: coupled monotonic scalar
+// transport of qv, qc, qr (atm_advance_scalars.hpp), vertical mixing of the perturbation from the initial state
+// (config_mix_full = .false., atm_dissipation_perturbation.cpp) and Kessler microphysics at the end of the step
+// (atm_microphysics.hpp). Every other configuration is refused by check_dycore_supported.
 #include <string>
 #include <vector>
 
@@ -39,13 +41,16 @@ struct DycoreConfig {
   std::string config_horiz_mixing;          // :144
   std::string config_les_model;             // :149
   real config_len_disp = 0;                 // :174 (after atm_core_init, mpas_atm_core.F:155-201)
+  real config_visc4_2dsmag = 0.05;          // :179
   bool config_mix_scalars = false;          // :184
   real config_del4u_div_factor = 10;        // :189
   bool config_scalar_advection = true;      // :229
   bool config_positive_definite = false;    // :234
   bool config_monotonic = true;             // :239
   real config_coef_3rd_order = 0.25;        // :244
+  real config_smagorinsky_coef = 0.125;     // :249
   bool config_mix_full = true;              // :254
+  bool config_h_ScaleWithMesh = true;       // :274 (from the InitConfig)
   real config_smdiv = 0.1;                  // :264
   real config_apvm_upwinding = 0.5;         // :269
   real config_mpas_cam_coef = 0;            // :301
@@ -53,7 +58,10 @@ struct DycoreConfig {
   bool config_apply_lbcs = false;           // :349
   std::string config_IAU_option;            // :424
   std::string config_physics_suite, config_microp_scheme, config_convection_scheme, config_pbl_scheme;
-  std::string config_radt_lw_scheme, config_radt_sw_scheme;
+  std::string config_radt_lw_scheme, config_radt_sw_scheme, config_radt_cld_scheme;
+  std::string config_lsm_scheme, config_sfclayer_scheme, config_gwdo_scheme;
+  bool config_oml1d = false;
+  std::string config_calendar_type;
 };
 DycoreConfig read_dycore_config(const std::string& namelist_path, const InitConfig& init_cfg);
 
@@ -64,7 +72,7 @@ struct DycoreFields {
   // state, time level 2 (Registry.xml:1672-1711); time level 1 is State::u, w, theta_m, rho_zz, scalars
   FArray<real> u2, w2, theta_m2, rho_zz2, scalars2;
   std::string xtime2;
-  real Time1 = 0.0, Time2 = 0.0;  // state Time (CF time, s), time levels 1 and 2
+  real Time2 = 0.0;  // state Time (CF time, s) of time level 2; time level 1 is State::Time(1)
   // diag
   FArray<real> ru_save, rw_save, rtheta_p_save, rho_p_save, rho_zz_old_split, cqw, cqu;
   FArray<real> cofrz, cofwr, cofwz, coftz, cofwt, a_tri, alpha_tri, gamma_tri;
@@ -85,6 +93,10 @@ void allocate_dycore_fields(const Mesh& mesh, const State& state, DycoreFields& 
 
 // Refuses (Error naming the option or the property) every configuration whose code path is not ported and verified.
 void check_dycore_supported(const DycoreConfig& cfg, const Mesh& mesh, const State& state);
+// Refuses mesh, state, diag and dycore arrays without the extents the routines below index (every exported routine
+// calls it: no routine reads or writes outside an array), an nVertLevels the dycore is not verified for, and a mesh
+// with boundary or specified-zone cells (bdyMask* / specZoneMask* != 0: the LBC branches are not ported).
+void check_dycore_arrays(const Mesh& m, const State& s, const Diag& d, const DycoreFields& f);
 
 // The routines of atm_srk3 in its order (TI line ranges in atm_dycore.cpp). time level 1 = state, 2 = f.*2.
 void atm_rk_integration_setup(const Mesh& m, State& s, Diag& d, DycoreFields& f);
@@ -113,9 +125,9 @@ void atm_timestep(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, Dyc
 // mpas_pool_shift_time_levels(state) (mpas_atm_core.F:823): time level 2 becomes time level 1 and back.
 void shift_time_levels(State& s, DycoreFields& f);
 // atm_compute_output_diagnostics(state, 1, diag, mesh) (mpas_atm_core.F:916-965): theta, rho of the diag pool
-// (State::theta, State::rho) from time level 1. pressure (= pressure_base + pressure_p) is not held: no stream
-// the references write has it.
-void atm_compute_output_diagnostics(const Mesh& m, State& s);
+// (State::theta, State::rho) from time level 1, and pressure = pressure_base + pressure_p (Diag::pressure, allocated
+// here on the first call). MPAS calls it only when an output stream writes (mpas_atm_core.F:686, 848).
+void atm_compute_output_diagnostics(const Mesh& m, State& s, Diag& d);
 
 // "YYYY-MM-DD_hh:mm:ss" + seconds (proleptic Gregorian calendar, year >= 0; mpas_timekeeping's gregorian clock).
 std::string add_seconds(const std::string& timestamp, long long seconds);

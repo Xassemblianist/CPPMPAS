@@ -96,7 +96,7 @@ cppmpas_error_test(missing_init_var "required variable zz of the input stream is
 cppmpas_error_test(missing_scalar "active scalar qr is missing" info --init --scalars qv,qc,qr ${W}/err_missing_qr.nc)
 cppmpas_error_test(bad_dims "variable u has dimensions (Time, nVertLevels, nEdges)" info --init ${W}/err_bad_dims_u.nc)
 cppmpas_error_test(unknown_scalar "scalar 'qz' is not a constituent" info --init --scalars qv,qz ${W}/mw_init.nc)
-cppmpas_error_test(unported_field "variable 'pressure' has no CPPMPAS port" history ${W}/mw_init.nc ${W}/x.nc --fields u,pressure)
+cppmpas_error_test(unported_field "variable 'relhum' has no CPPMPAS port" history ${W}/mw_init.nc ${W}/x.nc --fields u,relhum)
 cppmpas_error_test(boundary_edge "edge 8 lies on the mesh boundary (cellsOnEdge = 0)" info ${W}/err_boundary_edge.nc)
 cppmpas_error_test(boundary_vertex "vertex 10 lies on the mesh boundary (cellsOnVertex = 0)" info ${W}/err_boundary_vertex.nc)
 cppmpas_error_test(cellsOnEdge_range "cellsOnEdge(2, 8) = 1601 outside 1..1600" info ${W}/err_cellsOnEdge_range.nc)
@@ -299,10 +299,9 @@ set_tests_properties(dycore_MW_mpas_compare PROPERTIES FIXTURES_REQUIRED dycore_
 # the configuration checks and the clock arithmetic
 add_executable(test_dycore test_dycore.cpp)
 target_link_libraries(test_dycore PRIVATE cppmpas)
-add_test(NAME unit_dycore COMMAND test_dycore ${INIT_MW} ${REF_MW}/steps/namelist.atmosphere)
+add_test(NAME unit_dycore COMMAND test_dycore ${INIT_MW} ${REF_MW}/steps/namelist.atmosphere ${W})
+set_tests_properties(unit_dycore PROPERTIES FIXTURES_REQUIRED work_dir TIMEOUT 300)
 # configurations of the other references, and meshes, that the dycore refuses before it writes anything
-cppmpas_error_test(dycore_JW "config_horiz_mixing = '2d_smagorinsky' has no verified port" run ${INIT_JW} ${W}/x_dir
-  --namelist ${REF_JW}/steps/namelist.atmosphere --steps 1)
 # the supercell (src/core_atmosphere/atm_advance_scalars.cpp, atm_dissipation_perturbation.cpp, atm_microphysics.cpp,
 # src/physics/mp_kessler.hpp): ten 3-s steps with scalar transport, perturbation mixing and Kessler microphysics
 # against the reference's every-step history (mpas842-dbl-sc-001 steps/), every field at tolerance 0
@@ -327,24 +326,22 @@ add_test(NAME unit_microphysics COMMAND test_microphysics ${INIT_SC} ${REF_SC}/s
 add_test(NAME dycore_SC_mpas_compare COMMAND ${PY} ${T}/dycore_compare.py ${CPPMPAS_MPAS_COMPARE} ${REF_SC}/steps
   ${W}/dycore_SC ${W}/dycore_SC_compare.json 132)
 set_tests_properties(dycore_SC_mpas_compare PROPERTIES FIXTURES_REQUIRED dycore_SC)
-cppmpas_error_test(dycore_fEdge "fEdge != 0" run ${INIT_JW} ${W}/x_dir --namelist ${REF_MW}/steps/namelist.atmosphere
-  --steps 1)
 cppmpas_error_test(dycore_odd_levels "nVertLevels = 3 (only an even nVertLevels >= 4 is verified)" run ${W}/sc_init.nc
   ${W}/x_dir --namelist ${REF_MW}/steps/namelist.atmosphere --steps 1)
 cppmpas_error_test(dycore_steps "--steps needs a whole number 0..1000000, not '1x'" run ${INIT_MW} ${W}/x_dir
   --namelist ${REF_MW}/steps/namelist.atmosphere --steps 1x)
 cppmpas_error_test(dycore_no_steps "usage: cppmpas run" run ${INIT_MW} ${W}/x_dir
   --namelist ${REF_MW}/steps/namelist.atmosphere)
-# 301 steps (label "long", about 2 minutes): the forecast run of the same reference writes output.nc at 30 min
-# (record 1, after step 300) and restart.0000-01-01_00.30.06.nc (after step 301); every field of these streams the
-# port holds is compared at tolerance 0
+# 600 steps (label "long", about 5 minutes): the forecast run of the same reference writes output.nc at 30 and 60 min
+# (records 1 and 2, after steps 300 and 600) and restart.0000-01-01_00.30.06.nc (after step 301); every field of these
+# streams the port holds is compared at tolerance 0
 set(DYCORE_RESTART_FIELDS xtime Time u w rho_zz theta_m pressure_p rho theta exner ru rw rtheta_p rho_p qv)
-set(DYCORE_OUTPUT_FIELDS xtime u w rho theta divergence vorticity ke uReconstructZonal uReconstructMeridional qv)
-set(DYCORE_LONG_FIELDS ${DYCORE_RESTART_FIELDS} divergence vorticity ke uReconstructZonal uReconstructMeridional)
+set(DYCORE_OUTPUT_FIELDS xtime u w pressure rho theta divergence vorticity ke uReconstructZonal uReconstructMeridional qv)
+set(DYCORE_LONG_FIELDS ${DYCORE_RESTART_FIELDS} pressure divergence vorticity ke uReconstructZonal uReconstructMeridional)
 list(REMOVE_DUPLICATES DYCORE_LONG_FIELDS)
 string(REPLACE ";" "," DYCORE_LONG_LIST "${DYCORE_LONG_FIELDS}")
 add_test(NAME dycore_run_long_MW COMMAND ${CMAKE_COMMAND} -E env sh -c
-  "rm -rf '${W}/dycore_long_MW' && mkdir -p '${W}/dycore_long_MW' && '${EXE}' run '${INIT_MW}' '${W}/dycore_long_MW' --namelist '${REF_MW}/steps/namelist.atmosphere' --steps 301 --every 0 --write-at 300,301 --write-fields ${DYCORE_LONG_LIST}")
+  "rm -rf '${W}/dycore_long_MW' && mkdir -p '${W}/dycore_long_MW' && '${EXE}' run '${INIT_MW}' '${W}/dycore_long_MW' --namelist '${REF_MW}/steps/namelist.atmosphere' --steps 600 --every 0 --write-at 300,301,600 --write-fields ${DYCORE_LONG_LIST}")
 set_tests_properties(dycore_run_long_MW PROPERTIES FIXTURES_SETUP dycore_long_MW LABELS long TIMEOUT 900)
 foreach(f IN LISTS DYCORE_RESTART_FIELDS)
   add_test(NAME dycore_MW_restart_${f} COMMAND ${PY} ${T}/compare_arrays.py ${RST_MW}
@@ -355,6 +352,44 @@ foreach(f IN LISTS DYCORE_OUTPUT_FIELDS)
   add_test(NAME dycore_MW_output30_${f} COMMAND ${PY} ${T}/compare_arrays.py ${REF_MW}/forecast/output.nc
     ${W}/dycore_long_MW/state.0000-01-01_00.30.00.nc ${f} --record 1)
   set_tests_properties(dycore_MW_output30_${f} PROPERTIES FIXTURES_REQUIRED dycore_long_MW LABELS long)
+  add_test(NAME dycore_MW_output60_${f} COMMAND ${PY} ${T}/compare_arrays.py ${REF_MW}/forecast/output.nc
+    ${W}/dycore_long_MW/state.0000-01-01_01.00.00.nc ${f} --record 2)
+  set_tests_properties(dycore_MW_output60_${f} PROPERTIES FIXTURES_REQUIRED dycore_long_MW LABELS long)
+endforeach()
+# The JW baroclinic wave (x1.40962 sphere, 26 levels, dt = 450 s): ten steps against the every-step stream of
+# mpas842-dbl-jw-001, one test per step and field at tolerance 0, and the directory through tools/mpas_compare.py.
+# JW takes 2d_smagorinsky with the 4th-order filters, no vertical mixing, fEdge != 0 with u_init = v_init = 0, the
+# sphere path of mpas_reconstruct and qv (all zero) as its only scalar, not advected.
+set(DYCORE_JW_STAMPS 00.00.00 00.07.30 00.15.00 00.22.30 00.30.00 00.37.30 00.45.00 00.52.30 01.00.00 01.07.30 01.15.00)
+add_test(NAME dycore_run_JW COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/dycore_JW' && mkdir -p '${W}/dycore_JW' && '${EXE}' run '${INIT_JW}' '${W}/dycore_JW' --namelist '${REF_JW}/steps/namelist.atmosphere' --steps 10")
+set_tests_properties(dycore_run_JW PROPERTIES FIXTURES_SETUP dycore_JW TIMEOUT 900)
+set(step 0)
+foreach(stamp IN LISTS DYCORE_JW_STAMPS)
+  foreach(f IN LISTS DYCORE_MW_FIELDS)
+    add_test(NAME dycore_JW_step${step}_${f} COMMAND ${PY} ${T}/compare_arrays.py
+      ${REF_JW}/steps/step.0000-01-01_${stamp}.nc ${W}/dycore_JW/step.0000-01-01_${stamp}.nc ${f})
+    set_tests_properties(dycore_JW_step${step}_${f} PROPERTIES FIXTURES_REQUIRED dycore_JW)
+  endforeach()
+  math(EXPR step "${step} + 1")
+endforeach()
+add_test(NAME dycore_JW_mpas_compare COMMAND ${PY} ${T}/dycore_compare.py ${CPPMPAS_MPAS_COMPARE} ${REF_JW}/steps
+  ${W}/dycore_JW ${W}/dycore_JW_compare.json 110)
+set_tests_properties(dycore_JW_mpas_compare PROPERTIES FIXTURES_REQUIRED dycore_JW)
+# 193 steps (label "long", about 10 minutes): output.nc record 1 (24 h, after step 192) and
+# restart.0000-01-02_00.07.30.nc (after step 193) of the JW forecast run
+add_test(NAME dycore_run_long_JW COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/dycore_long_JW' && mkdir -p '${W}/dycore_long_JW' && '${EXE}' run '${INIT_JW}' '${W}/dycore_long_JW' --namelist '${REF_JW}/steps/namelist.atmosphere' --steps 193 --every 0 --write-at 192,193 --write-fields ${DYCORE_LONG_LIST}")
+set_tests_properties(dycore_run_long_JW PROPERTIES FIXTURES_SETUP dycore_long_JW LABELS long TIMEOUT 3600)
+foreach(f IN LISTS DYCORE_RESTART_FIELDS)
+  add_test(NAME dycore_JW_restart_${f} COMMAND ${PY} ${T}/compare_arrays.py ${RST_JW}
+    ${W}/dycore_long_JW/state.0000-01-02_00.07.30.nc ${f})
+  set_tests_properties(dycore_JW_restart_${f} PROPERTIES FIXTURES_REQUIRED dycore_long_JW LABELS long)
+endforeach()
+foreach(f IN LISTS DYCORE_OUTPUT_FIELDS)
+  add_test(NAME dycore_JW_output24h_${f} COMMAND ${PY} ${T}/compare_arrays.py ${REF_JW}/forecast/output.nc
+    ${W}/dycore_long_JW/state.0000-01-02_00.00.00.nc ${f} --record 1)
+  set_tests_properties(dycore_JW_output24h_${f} PROPERTIES FIXTURES_REQUIRED dycore_long_JW LABELS long)
 endforeach()
 # SC, 601 steps (label "long", about 45 minutes): the forecast run writes output.nc at 30 min (record 1, after step
 # 600) and restart.0000-01-01_00.30.03.nc (after step 601); surface_pressure is microphysics_to_MPAS's (PI:950-964)
@@ -413,5 +448,5 @@ cppmpas_error_test(restart_time "does not contain the time 0000-01-01_00:30:06" 
   --namelist ${NML_RST_MW} --steps 1)
 cppmpas_error_test(dycore_write_at "--write-at 12 is after the last step" run ${INIT_MW} ${W}/x_dir
   --namelist ${REF_MW}/steps/namelist.atmosphere --steps 10 --write-at 12 --write-fields u)
-cppmpas_error_test(dycore_write_fields "variable 'pressure' has no CPPMPAS port" run ${INIT_MW} ${W}/x_dir
-  --namelist ${REF_MW}/steps/namelist.atmosphere --steps 10 --write-at 1 --write-fields u,pressure)
+cppmpas_error_test(dycore_write_fields "variable 'relhum' has no CPPMPAS port" run ${INIT_MW} ${W}/x_dir
+  --namelist ${REF_MW}/steps/namelist.atmosphere --steps 10 --write-at 1 --write-fields u,relhum)

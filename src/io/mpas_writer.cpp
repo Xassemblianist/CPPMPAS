@@ -207,6 +207,23 @@ void write_history(MpasInput& in, const std::string& path, const std::vector<std
   const Mesh& m = in.mesh;
   // every field is checked before the file is created: no partial file is left behind, and a file already at path
   // is not lost to a refused request
+  // MPAS_io_put_att_text (mpas_io.F:6036-6045, 6208-6210): trim, cut at StrKIND, trim; SMIOL then writes
+  // strlen of the C string (smiol.c:1731), which ends at the first NUL
+  auto trimmed = [](std::string s) {
+    while (!s.empty() && s.back() == ' ') s.pop_back();
+    s = s.substr(0, 512);
+    while (!s.empty() && s.back() == ' ') s.pop_back();
+    return s.substr(0, s.find('\0'));
+  };
+  // mpas_atm_core.F:271-274: Time's units are 'seconds since ' // initial_time with '_' -> ' ' (written trimmed)
+  std::string time_units;
+  if (std::find(fields.begin(), fields.end(), "Time") != fields.end()) {
+    std::string t = in.state.initial_time;
+    while (!t.empty() && t.back() == ' ') t.pop_back();
+    if (t.empty()) throw Error("write Time: initial_time was not read");
+    std::replace(t.begin(), t.end(), '_', ' ');
+    time_units = trimmed("seconds since " + t);
+  }
   std::set<std::string> names;
   for (const auto& n : fields) {
     if (!names.insert(n).second) throw Error("history: field " + n + " is listed twice");
@@ -235,25 +252,12 @@ void write_history(MpasInput& in, const std::string& path, const std::vector<std
       for (const auto& [k, v] : rv.attrs) {
         // mpas_atm_core.F:271-274: Time's units are 'seconds since ' // initial_time with '_' -> ' ' (written trimmed)
         if (n == "Time" && k == "units") {
-          std::string t = in.state.initial_time;
-          while (!t.empty() && t.back() == ' ') t.pop_back();
-          if (t.empty()) throw Error("write Time: initial_time was not read");
-          std::replace(t.begin(), t.end(), '_', ' ');
-          f.put_att_text(n, k, "seconds since " + t);
+          f.put_att_text(n, k, time_units);
         } else {
           f.put_att_text(n, k, v);
         }
       }
     }
-    // MPAS_io_put_att_text (mpas_io.F:6036-6045, 6208-6210): trim, cut at StrKIND, trim; SMIOL then writes
-    // strlen of the C string (smiol.c:1731), which ends at the first NUL. The first trim (trimmedVal = trim(attValue),
-    // :6037) cannot change the result of the last two steps; it is kept as MPAS writes it
-    auto trimmed = [](std::string s) {
-      while (!s.empty() && s.back() == ' ') s.pop_back();
-      s = s.substr(0, 512);
-      while (!s.empty() && s.back() == ' ') s.pop_back();
-      return s.substr(0, s.find('\0'));
-    };
     // mpas_subdriver.F:497-530 (character values are written trimmed, mpas_io.F:6036, 6208-6210)
     f.put_att_text("", "model_name", "mpas");
     f.put_att_text("", "core_name", "atmosphere");

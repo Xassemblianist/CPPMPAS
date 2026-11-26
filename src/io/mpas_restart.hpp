@@ -38,7 +38,9 @@ RestartInput read_mpas_restart(const std::string& path, const std::vector<std::s
 bool restart_field_not_used(const std::string& name);
 
 // The restart-stream values that live in DycoreFields (after allocate_dycore_fields): ru_p, rw_p, rt_diabatic_tend,
-// rthdynten, and the state Time of time level 1 (f.Time1 = Time read, Registry.xml:668).
+// rthdynten; and the state Time (Registry.xml:668), read into State::Time(1), time level 1, which time level 2 starts
+// as (f.Time2, mpas_pool_initialize_time_levels is not called on a restart, the restart holds one level: the copy is
+// what allocate_dycore_fields made and atm_timestep overwrites it before it is read).
 void restart_dycore_fields(const RestartInput& r, DycoreFields& f);
 
 // MPAS reads the initial-conditions stream at the clock's start time with MPAS_STREAM_EXACT_TIME
