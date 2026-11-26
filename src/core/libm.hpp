@@ -117,4 +117,10 @@ CPPMPAS_FORCEINLINE double log(double x) { return ::cppwrf::glibc::log(arg(x)); 
 CPPMPAS_FORCEINLINE double atan(double x) { return ::cppwrf::glibc::atan(arg(x)); }  // __atan_fma
 CPPMPAS_FORCEINLINE double mvec_log(double x) { return ::cppwrf::mvec::log(arg(x)); }  // _ZGVbN2v_log_sse4 (Intel rcpps)
 
+// YSU (physics/bl_ysu.hpp): tanh, a plain FUNC of libm (no ifunc; libm 0x5e560, s_tanh.c calling __expm1),
+// CPPWRF's port. The revised surface layer's tables (physics/sf_sfclayrev.hpp, the MPAS -O3 variant of
+// sf_sfclayrev_init): the 2-lane atan _ZGVbN2v_atan_sse4.
+CPPMPAS_FORCEINLINE double tanh(double x) { return ::cppwrf::glibc::tanh(arg(x)); }        // tanh (s_tanh.c)
+CPPMPAS_FORCEINLINE double mvec_atan(double x) { return ::cppwrf::glibc::mvec::atan(arg(x)); }  // _ZGVbN2v_atan_sse4
+
 }  // namespace cppmpas::libm
