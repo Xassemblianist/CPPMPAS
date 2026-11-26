@@ -511,7 +511,7 @@ MUTATIONS = [
      ["unit_init_guards"]),
     (X, "init_block_verified_fields(in.mesh.nVertLevels, mesh_scaling_unverified(in.mesh, cfg));",
      "init_block_verified_fields(in.mesh.nVertLevels, false);", ["err_scaled_mesh"]),
-    (NL, "  return strtod_l(s.c_str(), nullptr, c);", "  return (void)c, std::strtod(s.c_str(), nullptr);", ["unit_namelist"]),
+    (NL, "  return strtod_l(s.c_str(), nullptr, c);", "  return (void)c, std::strtod(s.c_str(), nullptr);", ["unit_namelist_locale"]),
     (NL, "    if (commas > 1) throw", "    if (false) throw", ["unit_namelist"]),
     (NL, "    if (v.quoted && i < s.size() && !std::isspace", "    if (false && i < s.size() && !std::isspace", ["unit_namelist"]),
     (NL, "    out[key] = match;", "    out[key] = v;", ["unit_namelist"]),

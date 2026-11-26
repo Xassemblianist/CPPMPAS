@@ -10,9 +10,10 @@
 //    (two commas before =, no separator after a character value); effective_namelist normalises reals;
 //  * the line of an error is the line of the option's name;
 //  * active_scalars of the accepted physics options;
-//  * reals read the same when the process's LC_NUMERIC has ',' as its decimal point.
+//  * with the argument 'locale' only: reals read the same when the process's LC_NUMERIC has ',' as its decimal
+//    point (a de_DE, fr_FR or tr_TR locale must be installed).
 //
-// usage: test_namelist <reference namelist.atmosphere (MW)> <scratch dir>
+// usage: test_namelist <reference namelist.atmosphere (MW)> <scratch dir> [locale]
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -44,10 +45,11 @@ static std::uint64_t bits(double x) {
 }
 
 int main(int argc, char** argv) {
-  if (argc != 3) {
-    std::printf("usage: test_namelist <namelist.atmosphere> <scratch dir>\n");
+  if (argc != 3 && !(argc == 4 && std::string(argv[3]) == "locale")) {
+    std::printf("usage: test_namelist <namelist.atmosphere> <scratch dir> [locale]\n");
     return 2;
   }
+  const bool locale_only = argc == 4;  // the ',' locale check alone: it needs such a locale installed
   std::string ref;
   {
     std::ifstream in(argv[1]);
@@ -87,6 +89,7 @@ int main(int argc, char** argv) {
            std::string(name) + ": want '" + text + "', got: " + e);
   };
 
+  if (!locale_only) {
   // --- the reference itself
   {
     const InitConfig c = read("config_zd = 10500.0", "config_zd = 10500.0");
@@ -220,6 +223,8 @@ int main(int argc, char** argv) {
     x.config_pbl_scheme = "bl_ysu";
     expect(refuses(x, "convection / PBL schemes are not handled"), "a PBL scheme is not handled");
   }
+  }
+  if (locale_only) {
   // --- a process locale whose decimal point is ',' (a library caller's setlocale): reals still read as gfortran
   // reads them (its transfer runs in the "C" locale), not cut at the '.'
   {
@@ -238,6 +243,7 @@ int main(int argc, char** argv) {
               "config_len_disp = 577.99 has no verified port");
     }
     std::setlocale(LC_NUMERIC, "C");
+  }
   }
   std::remove(path.c_str());
   if (fails == 0) std::printf("OK namelist unit test\n");
