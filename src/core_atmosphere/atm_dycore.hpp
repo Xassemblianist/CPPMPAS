@@ -102,6 +102,9 @@ void atm_recover_large_step_variables(const Mesh& m, State& s, Diag& d, DycoreFi
 void atm_rk_dynamics_substep_finish(const Mesh& m, State& s, Diag& d, DycoreFields& f, int dynamics_substep,
                                     int dynamics_split);
 
+// where (scalars_2 < 0.0) scalars_2 = 0.0 (TI:2799-2800), the whole array including the garbage column
+void clamp_negative_scalars(FArray<real>& scalars);
+
 // atm_srk3 (TI:1855-2882) for one step of length dt (the clock's time step).
 void atm_srk3(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreFields& f, real dt);
 // atm_timestep (TI:1789-1850): atm_srk3, then xtime(2) = now + dt and Time(2) = Time(1) + dt.

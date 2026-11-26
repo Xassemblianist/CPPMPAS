@@ -898,15 +898,19 @@ void atm_srk3(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreF
   // :2744 mpas_reconstruct of u at time level 2
   mpas_reconstruct_2d(m, f.u2, d.uReconstructX, d.uReconstructY, d.uReconstructZ, d.uReconstructZonal,
                       d.uReconstructMeridional);
-  // :2799-2800 where (scalars_2 < 0.0) scalars_2 = 0.0, the whole array (garbage column included)
-  for (std::size_t i = 0; i < f.scalars2.size(); ++i)
-    if (f.scalars2.data()[i] < 0.0) f.scalars2.data()[i] = 0.0;
+  clamp_negative_scalars(f.scalars2);  // :2799-2800
   // :2806-2817 microphysics (pre_ / post_microphysics are OpenACC-only) on time level 2
   if (cfg.config_microp_scheme != "off" && cfg.config_microp_scheme != "suite") {
     if (!f.mp.active) throw Error("atm_srk3: config_microp_scheme = '" + cfg.config_microp_scheme + "' without microphysics_init");
     driver_microphysics(m, s, f.theta_m2, f.rho_zz2, f.scalars2, d, f.rt_diabatic_tend, f.mp);
   }
   // :2880 summarize_timestep writes only to the log
+}
+
+// TI:2799-2800: where (scalars_2 < 0.0) scalars_2 = 0.0, the whole array (garbage column included); -0.0 is not < 0
+void clamp_negative_scalars(FArray<real>& scalars) {
+  for (std::size_t i = 0; i < scalars.size(); ++i)
+    if (scalars.data()[i] < 0.0) scalars.data()[i] = 0.0;
 }
 
 void atm_timestep(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreFields& f, real dt,
