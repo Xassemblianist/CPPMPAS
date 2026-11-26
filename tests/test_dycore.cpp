@@ -361,8 +361,10 @@ int main(int argc, char** argv) {
   expect(throws_with([] { add_seconds("9999-12-31_23:59:59", 1); }, "after the year 9999"), "add_seconds year 10000");
   expect(throws_with([] { add_seconds("0000-01-01_00:00:00", 9999LL * 366 * 86400 + 1); }, "longer than 9999 years"),
          "add_seconds interval bound");
-  expect(throws_with([] { add_seconds("0000-01-01_00:00:00", 9223372036854775807LL); }, "longer than 9999 years"),
-         "add_seconds LLONG_MAX");
+  // (twice the bound, not LLONG_MAX: without the bound the day loop would take ~1e14 steps, a timeout, which the
+  // mutation check does not count as a kill; here it ends in the year check)
+  expect(throws_with([] { add_seconds("0000-01-01_00:00:00", 2 * 9999LL * 366 * 86400); }, "longer than 9999 years"),
+         "add_seconds twice the interval bound");
   expect(add_seconds("0000-01-01_23:59:59", 86400LL * 365 + 1) == "0001-01-01_00:00:00", "add_seconds a year (0 leap)");
   // write_history: a Time without initial_time is refused before the file is created (review F8)
   {
