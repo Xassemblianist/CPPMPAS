@@ -34,7 +34,7 @@ struct MpasInput {
 MpasInput read_mpas_grid(const std::string& path);
 // An init file as the atmosphere core's "input" stream reads it (Registry.xml:602-648). scalars: the active
 // constituents of var_array scalars in Registry order (from the packages the namelist selects: qv for JW and MW,
-// qv, qc, qr for SC with mp_kessler, DYCORE_MAP.md §0.3).
+// qv, qc, qr for SC with mp_kessler, Registry.xml:1701-1712). qv is required; a name given twice is an error.
 MpasInput read_mpas_init(const std::string& path, const std::vector<std::string>& scalars);
 
 // Field access by MPAS name (for the writer and tests). Exactly one of r / i / c is set.

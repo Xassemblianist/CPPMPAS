@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <set>
 
 #include "core/decomp.hpp"
@@ -14,6 +15,9 @@ namespace {
 
 // ShortStrKIND: the length of the StrLen dimension of character fields (mpas_io_streams.F:1518-1519, 1610-1611)
 constexpr std::size_t kStrLen = 64;
+// StrKIND (mpas_kind_types.F:32): the length of the character variables MPAS reads the global attributes into
+// (mpas_bootstrapping.F:103) and of domain % parent_id / mesh_spec (mpas_domain_types.inc:32-33)
+constexpr std::size_t kStrKIND = 512;
 
 const std::vector<std::string> kMeshRequired = {
     "latCell", "lonCell", "xCell", "yCell", "zCell", "indexToCellID", "latEdge", "lonEdge", "xEdge", "yEdge",
@@ -30,7 +34,7 @@ const std::vector<std::string> kMeshInitOnly = {
 const std::vector<std::string> kState = {"initial_time", "xtime", "u_init", "v_init", "t_init", "u", "w", "rho",
                                          "theta", "rho_base", "theta_base", "surface_pressure"};
 // Variables of the atmosphere input stream that MPAS reads but the dycore does not use in the verified cases
-// (physics suite none, SC with Kessler only; DYCORE_MAP.md §0.3, §5.1): the DO_PHYSICS fields of the invariant and
+// (physics suite none, SC with Kessler microphysics only): the DO_PHYSICS fields of the invariant and
 // input streams (Registry.xml:567-597, 625-646), the CF time coordinate "Time" and the diagnostic "relhum".
 const std::set<std::string> kInputNotUsed = {
     "Time", "relhum", "isltyp", "ivgtyp", "mminlu", "isice_lu", "iswater_lu", "landmask", "shdmin", "shdmax",
@@ -160,6 +164,10 @@ std::vector<int> raw_int(const NcFile& f, const Mesh& m, const std::string& name
 std::string text_att(const NcFile& f, const std::string& name) {
   const RawAttribute a = f.att("", name);
   if (a.type != NC_CHAR) throw Error(f.path() + ": global attribute " + name + " is not text");
+  if (a.len > kStrKIND)
+    throw Error(f.path() + ": global attribute " + name + " has " + std::to_string(a.len) +
+                " characters; MPAS reads it into a character(len=StrKIND = 512) variable (mpas_bootstrapping.F:103): "
+                "longer values are not handled");
   return a.text();
 }
 
@@ -184,6 +192,16 @@ std::string rtrim(std::string s) {
   return s;
 }
 
+// A mesh dimension: MPAS holds it as a default (32-bit) integer and allocates one garbage element more
+// (mpas_domain_routines.F:251-265), and an empty mesh is not a mesh.
+int mesh_dim(const NcFile& f, const char* d) {
+  const std::size_t n = f.dim_len(d);
+  const std::size_t max = static_cast<std::size_t>(std::numeric_limits<int>::max()) - 1;
+  if (n < 1 || n > max)
+    throw Error(f.path() + ": dimension " + d + " = " + std::to_string(n) + " outside 1.." + std::to_string(max));
+  return static_cast<int>(n);
+}
+
 void read_dims_and_attributes(const NcFile& f, MpasInput& in) {
   Mesh& m = in.mesh;
   const int fmt = f.format();
@@ -195,12 +213,12 @@ void read_dims_and_attributes(const NcFile& f, MpasInput& in) {
   in.source.format = fmt;
   for (const char* d : {"nCells", "nEdges", "nVertices", "maxEdges", "maxEdges2", "vertexDegree"})
     if (!f.has_dim(d)) throw Error(f.path() + ": required dimension " + std::string(d) + " is missing");
-  m.nCells = static_cast<int>(f.dim_len("nCells"));
-  m.nEdges = static_cast<int>(f.dim_len("nEdges"));
-  m.nVertices = static_cast<int>(f.dim_len("nVertices"));
-  m.maxEdges = static_cast<int>(f.dim_len("maxEdges"));
-  m.maxEdges2 = static_cast<int>(f.dim_len("maxEdges2"));
-  m.vertexDegree = static_cast<int>(f.dim_len("vertexDegree"));
+  m.nCells = mesh_dim(f, "nCells");
+  m.nEdges = mesh_dim(f, "nEdges");
+  m.nVertices = mesh_dim(f, "nVertices");
+  m.maxEdges = mesh_dim(f, "maxEdges");
+  m.maxEdges2 = mesh_dim(f, "maxEdges2");
+  m.vertexDegree = mesh_dim(f, "vertexDegree");
   if (f.has_dim("TWO") && f.dim_len("TWO") != 2) throw Error(f.path() + ": dimension TWO is not 2");
 
   // mpas_bootstrapping.F:287-299
@@ -217,12 +235,27 @@ void read_dims_and_attributes(const NcFile& f, MpasInput& in) {
   } else {
     m.sphere_radius = real_att(f, "sphere_radius");
   }
-  // mpas_bootstrapping.F:314-332: file_id, parent_id; mesh_spec 334-341
-  const std::string file_id = f.has_att("", "file_id") ? text_att(f, "file_id") : "";
-  const std::string parent_id = f.has_att("", "parent_id") ? text_att(f, "parent_id") : "";
+  // mpas_bootstrapping.F:313-339: file_id, parent_id, mesh_spec (a missing one is a warning)
+  std::string file_id, parent_id;
+  if (f.has_att("", "file_id")) {
+    file_id = text_att(f, "file_id");
+  } else {
+    in.warnings.push_back("Attribute file_id not found; using '' for the previous file_id (mpas_bootstrapping.F:313-318)");
+  }
+  if (f.has_att("", "parent_id")) {
+    parent_id = text_att(f, "parent_id");
+  } else {
+    in.warnings.push_back("Attribute parent_id not found; setting parent_id to '' (mpas_bootstrapping.F:320-325)");
+  }
   m.file_id = file_id;
-  m.parent_id = rtrim(file_id).empty() ? parent_id : rtrim(file_id) + "\n" + rtrim(parent_id);
-  m.mesh_spec = f.has_att("", "mesh_spec") ? text_att(f, "mesh_spec") : "0.0";
+  // domain % parent_id is character(len=StrKIND): the assignment cuts the joined value at 512 characters
+  m.parent_id = rtrim(file_id).empty() ? parent_id : (rtrim(file_id) + "\n" + rtrim(parent_id)).substr(0, kStrKIND);
+  if (f.has_att("", "mesh_spec")) {
+    m.mesh_spec = text_att(f, "mesh_spec");
+  } else {
+    in.warnings.push_back("Attribute mesh_spec not found; setting mesh_spec to '0.0' (mpas_bootstrapping.F:333-337)");
+    m.mesh_spec = "0.0";
+  }
   // mpas_bootstrapping.F:346-379
   if (!m.on_a_sphere) {
     if (!f.has_att("", "is_periodic")) {
@@ -237,7 +270,7 @@ void read_dims_and_attributes(const NcFile& f, MpasInput& in) {
   if (m.is_periodic)
     throw Error(f.path() + ": is_periodic = YES: the periodic-plane paths (mpas_fix_periodicity in "
                 "mpas_initialize_vectors and mpas_init_reconstruct, x_period / y_period) are not ported "
-                "(DYCORE_MAP.md §0.3 ports the is_periodic = .false. branch)");
+                "(only the is_periodic = .false. branches are)");
   m.x_period = 0.0;
   m.y_period = 0.0;
 
@@ -257,27 +290,33 @@ void check_identity_ids(const NcFile& f, const Mesh& m) {
   }
 }
 
-void check_no_boundary(const NcFile& f, const Mesh& m, const std::vector<int>& nEdgesOnCell,
-                       const std::vector<int>& cellsOnCell, const std::vector<int>& cellsOnEdge,
-                       const std::vector<int>& cellsOnVertex) {
-  for (int i = 1; i <= m.nCells; ++i) {
-    const int n = nEdgesOnCell[i - 1];
-    if (n < 1 || n > m.maxEdges)
-      throw Error(f.path() + ": nEdgesOnCell(" + std::to_string(i) + ") = " + std::to_string(n) + " outside 1..maxEdges");
-    for (int j = 1; j <= n; ++j)
-      if (cellsOnCell[(j - 1) + m.maxEdges * (i - 1)] == 0)
-        throw Error(f.path() + ": cell " + std::to_string(i) +
-                    " lies on the mesh boundary (cellsOnCell = 0): meshes with boundaries (limited-area or "
-                    "non-periodic planar) are not handled; their boundary branches (cell == nCells+1) are not ported");
+// Every used slot of the connectivity must hold a global ID 1..n. postread_reindex maps anything else to the garbage
+// element n+1 (mpas_stream_manager.F:5627-5636), which only the boundary branches (cell == nCells+1) of MPAS handle,
+// and those are not ported. MPAS marks a missing neighbour across a mesh boundary with 0. Unused slots
+// (j > nEdgesOnCell(i), j > nEdgesOnEdge(i)) may hold anything: they are reindexed and written back as 0.
+void check_slots(const NcFile& f, const char* name, const std::vector<int>& a, int inner, int outer,
+                 const std::vector<int>* used, int n, const char* boundary_element) {
+  for (int i = 1; i <= outer; ++i) {
+    const int nu = used ? (*used)[i - 1] : inner;
+    for (int j = 1; j <= nu; ++j) {
+      const int v = a[static_cast<std::size_t>(j - 1) + static_cast<std::size_t>(inner) * (i - 1)];
+      if (v == 0 && boundary_element)
+        throw Error(f.path() + ": " + boundary_element + " " + std::to_string(i) + " lies on the mesh boundary (" +
+                    name + " = 0): meshes with boundaries (limited-area or non-periodic planar) are not handled; "
+                    "their boundary branches (cell == nCells+1) are not ported");
+      if (v < 1 || v > n)
+        throw Error(f.path() + ": " + name + "(" + std::to_string(j) + ", " + std::to_string(i) + ") = " +
+                    std::to_string(v) + " outside 1.." + std::to_string(n) +
+                    ": MPAS would turn it into the garbage element (mesh not handled)");
+    }
   }
-  for (std::size_t k = 0; k < cellsOnEdge.size(); ++k)
-    if (cellsOnEdge[k] == 0)
-      throw Error(f.path() + ": edge " + std::to_string(k / 2 + 1) +
-                  " lies on the mesh boundary (cellsOnEdge = 0): meshes with boundaries are not handled");
-  for (std::size_t k = 0; k < cellsOnVertex.size(); ++k)
-    if (cellsOnVertex[k] == 0)
-      throw Error(f.path() + ": vertex " + std::to_string(k / m.vertexDegree + 1) +
-                  " lies on the mesh boundary (cellsOnVertex = 0): meshes with boundaries are not handled");
+}
+
+void check_count(const NcFile& f, const char* name, const std::vector<int>& c, int lo, int hi, const char* bound) {
+  for (std::size_t i = 0; i < c.size(); ++i)
+    if (c[i] < lo || c[i] > hi)
+      throw Error(f.path() + ": " + name + "(" + std::to_string(i + 1) + ") = " + std::to_string(c[i]) + " outside " +
+                  std::to_string(lo) + ".." + bound);
 }
 
 // Connectivity fields and the element kind their values index (mpas_stream_manager.F:5455-5610)
@@ -332,30 +371,41 @@ void read_mesh(const NcFile& f, MpasInput& in, bool init) {
   const std::vector<int> verticesOnCell = raw_int(f, m, "verticesOnCell");
   const std::vector<int> cellsOnEdge = raw_int(f, m, "cellsOnEdge");
   const std::vector<int> cellsOnVertex = raw_int(f, m, "cellsOnVertex");
-  check_no_boundary(f, m, nEdgesOnCell, cellsOnCell, cellsOnEdge, cellsOnVertex);
+  {
+    const std::vector<int> nEdgesOnEdge = raw_int(f, m, "nEdgesOnEdge");
+    check_count(f, "nEdgesOnCell", nEdgesOnCell, 1, m.maxEdges, "maxEdges");
+    check_count(f, "nEdgesOnEdge", nEdgesOnEdge, 0, m.maxEdges2, "maxEdges2");
+    check_slots(f, "cellsOnCell", cellsOnCell, m.maxEdges, m.nCells, &nEdgesOnCell, m.nCells, "cell");
+    check_slots(f, "cellsOnEdge", cellsOnEdge, 2, m.nEdges, nullptr, m.nCells, "edge");
+    check_slots(f, "cellsOnVertex", cellsOnVertex, m.vertexDegree, m.nVertices, nullptr, m.nCells, "vertex");
+    check_slots(f, "edgesOnCell", edgesOnCell, m.maxEdges, m.nCells, &nEdgesOnCell, m.nEdges, nullptr);
+    check_slots(f, "verticesOnCell", verticesOnCell, m.maxEdges, m.nCells, &nEdgesOnCell, m.nVertices, nullptr);
+    check_slots(f, "verticesOnEdge", raw_int(f, m, "verticesOnEdge"), 2, m.nEdges, nullptr, m.nVertices, nullptr);
+    check_slots(f, "edgesOnEdge", raw_int(f, m, "edgesOnEdge"), m.maxEdges2, m.nEdges, &nEdgesOnEdge, m.nEdges,
+                nullptr);
+    check_slots(f, "edgesOnVertex", raw_int(f, m, "edgesOnVertex"), m.vertexDegree, m.nVertices, nullptr, m.nEdges,
+                nullptr);
+  }
   build_one_rank_order(m, nEdgesOnCell, edgesOnCell, verticesOnCell, cellsOnEdge, cellsOnVertex);
 
   if (init) {
     if (!f.has_dim("nVertLevels")) throw Error(f.path() + ": dimension nVertLevels is missing (not an init file?)");
-    m.nVertLevels = static_cast<int>(f.dim_len("nVertLevels"));
+    m.nVertLevels = mesh_dim(f, "nVertLevels");
     if (f.has_dim("nVertLevelsP1") && f.dim_len("nVertLevelsP1") != static_cast<std::size_t>(m.nVertLevels) + 1)
       throw Error(f.path() + ": nVertLevelsP1 != nVertLevels + 1");
   }
   for (const auto& n : kMeshRequired) read_field(f, in, n);
   for (const auto& n : kMeshInitOnly) {
+    const RegistryVar& rv = registry_var(n);
+    bool vertical = false;
+    for (const auto& d : rv.dims) vertical |= (d == "nVertLevels" || d == "nVertLevelsP1");
     if (f.has_var(n)) {
-      if (!init && registry_var(n).dims.size() > 0 &&
-          std::find(registry_var(n).dims.begin(), registry_var(n).dims.end(), "nVertLevels") !=
-              registry_var(n).dims.end())
-        continue;  // vertical fields of a grid file without a vertical mesh: not read
+      if (!init && vertical) continue;  // vertical fields, read as a grid without a vertical mesh: not read
       read_field(f, in, n);
     } else if (init) {
       throw Error(f.path() + ": required variable " + n + " of the input stream is missing");
     } else {
       // allocate with the Registry default, as MPAS allocates every mesh-pool field
-      const RegistryVar& rv = registry_var(n);
-      bool vertical = false;
-      for (const auto& d : rv.dims) vertical |= (d == "nVertLevels" || d == "nVertLevelsP1");
       if (vertical) continue;
       FieldRef ref = field_ref(in, n);
       std::vector<int> ext;
@@ -474,12 +524,16 @@ MpasInput read_mpas_init(const std::string& path, const std::vector<std::string>
   std::vector<std::string> order;
   for (const auto& rv : registry_vars())
     if (rv.array == "scalars") order.push_back(rv.name);
-  for (const auto& s : scalars)
-    if (std::find(order.begin(), order.end(), s) == order.end())
-      throw Error("scalar '" + s + "' is not a constituent of MPAS's var_array scalars");
+  for (auto it = scalars.begin(); it != scalars.end(); ++it) {
+    if (std::find(order.begin(), order.end(), *it) == order.end())
+      throw Error("scalar '" + *it + "' is not a constituent of MPAS's var_array scalars");
+    if (std::find(scalars.begin(), it, *it) != it) throw Error("scalar '" + *it + "' is given twice");
+  }
   for (const auto& s : order)
     if (std::find(scalars.begin(), scalars.end(), s) != scalars.end()) in.state.scalar_names.push_back(s);
-  if (in.state.scalar_names.empty()) throw Error("no active scalars given (MPAS always has qv)");
+  // qv belongs to no package (Registry.xml:1701-1703): every MPAS-Atmosphere run has it
+  if (std::find(scalars.begin(), scalars.end(), "qv") == scalars.end())
+    throw Error("qv is not among the active scalars; MPAS-Atmosphere always has qv (Registry.xml:1701-1703)");
   const int ns = static_cast<int>(in.state.scalar_names.size());
   in.state.scalars.allocate({ns, m.nVertLevels, m.nCells + 1}, 0.0);
   for (int k = 1; k <= ns; ++k) {
