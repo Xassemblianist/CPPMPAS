@@ -646,3 +646,38 @@ foreach(f IN LISTS DYCORE_OUTPUT_FIELDS)
     ${REF_MW}/forecast/output.nc ${W}/gpu_dycore_restart_long_MW/state.0000-01-01_01.00.00.nc ${f} --record 2)
   cppmpas_gpu_props(gpu_dycore_restart_MW_output60_${f} FIXTURES_REQUIRED gpu_dycore_restart_long_MW LABELS long)
 endforeach()
+# the supercell on the GPU (scalar transport, perturbation mixing, Kessler as kernels): ten steps against MPAS and the
+# CPU build, and (label long) the 30-min output and the 30:03 restart
+add_test(NAME gpu_dycore_run_SC COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/gpu_dycore_SC' && mkdir -p '${W}/gpu_dycore_SC' && '${GEXE}' run '${INIT_SC}' '${W}/gpu_dycore_SC' --namelist '${REF_SC}/steps/namelist.atmosphere' --scalars qv,qc,qr --steps 10")
+cppmpas_gpu_props(gpu_dycore_run_SC FIXTURES_SETUP gpu_dycore_SC)
+set_tests_properties(gpu_dycore_run_SC PROPERTIES TIMEOUT 900)
+set(step 0)
+foreach(stamp IN LISTS DYCORE_SC_STAMPS)
+  foreach(f IN LISTS DYCORE_SC_FIELDS)
+    add_test(NAME gpu_dycore_SC_step${step}_${f} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py
+      ${REF_SC}/steps/step.0000-01-01_${stamp}.nc ${W}/gpu_dycore_SC/step.0000-01-01_${stamp}.nc ${f})
+    cppmpas_gpu_props(gpu_dycore_SC_step${step}_${f} FIXTURES_REQUIRED gpu_dycore_SC)
+  endforeach()
+  math(EXPR step "${step} + 1")
+endforeach()
+add_test(NAME gpu_dycore_SC_mpas_compare COMMAND ${GPU} -- ${PY} ${T}/dycore_compare.py ${CPPMPAS_MPAS_COMPARE}
+  ${REF_SC}/steps ${W}/gpu_dycore_SC ${W}/gpu_dycore_SC_compare.json 132)
+add_test(NAME gpu_dycore_SC_vs_cpu COMMAND ${GPU} -- ${PY} ${T}/dycore_compare.py ${CPPMPAS_MPAS_COMPARE}
+  ${W}/dycore_SC ${W}/gpu_dycore_SC ${W}/gpu_dycore_SC_vs_cpu.json 132)
+cppmpas_gpu_props(gpu_dycore_SC_mpas_compare FIXTURES_REQUIRED gpu_dycore_SC)
+cppmpas_gpu_props(gpu_dycore_SC_vs_cpu FIXTURES_REQUIRED "gpu_dycore_SC;dycore_SC")
+add_test(NAME gpu_dycore_run_long_SC COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/gpu_dycore_long_SC' && mkdir -p '${W}/gpu_dycore_long_SC' && '${GEXE}' run '${INIT_SC}' '${W}/gpu_dycore_long_SC' --namelist '${REF_SC}/steps/namelist.atmosphere' --scalars qv,qc,qr --steps 601 --every 0 --write-at 600,601 --write-fields ${DYCORE_SC_LONG_LIST}")
+cppmpas_gpu_props(gpu_dycore_run_long_SC FIXTURES_SETUP gpu_dycore_long_SC LABELS long)
+set_tests_properties(gpu_dycore_run_long_SC PROPERTIES TIMEOUT 3600)
+foreach(f IN LISTS DYCORE_SC_RESTART_FIELDS)
+  add_test(NAME gpu_dycore_SC_restart_${f} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py ${RST_SC}
+    ${W}/gpu_dycore_long_SC/state.0000-01-01_00.30.03.nc ${f})
+  cppmpas_gpu_props(gpu_dycore_SC_restart_${f} FIXTURES_REQUIRED gpu_dycore_long_SC LABELS long)
+endforeach()
+foreach(f IN LISTS DYCORE_SC_OUTPUT_FIELDS)
+  add_test(NAME gpu_dycore_SC_output30_${f} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py ${OUT_SC}
+    ${W}/gpu_dycore_long_SC/state.0000-01-01_00.30.00.nc ${f} --record 1)
+  cppmpas_gpu_props(gpu_dycore_SC_output30_${f} FIXTURES_REQUIRED gpu_dycore_long_SC LABELS long)
+endforeach()

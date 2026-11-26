@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The libm / libmvec wrappers of src/core/libm.hpp on the GPU (CUDA build) against the same wrappers on the host:
-// sin, cos, asin, acos, atan2, pow, sincos and the libmvec lanes mvec_sin, mvec_cos, mvec_pow, on special values
+// sin, cos, asin, acos, atan2, pow, sincos, exp and the libmvec lanes mvec_sin, mvec_cos, mvec_pow, mvec_exp (exp and
+// mvec_exp: the Kessler microphysics of the supercell), on special values
 // (+-0, +-Inf, +-qNaN, +-sNaN, subnormals, |x| > 1 for asin / acos, ...) and on pseudo-random arguments, each also
 // passed negated (-x computed in the kernel from a value in memory, as a caller's -x reaches the port).
 // Rule: every non-NaN result is bit-identical (signed zero included); a NaN result is a NaN on both; a NaN result is
@@ -35,9 +36,10 @@ using namespace cppmpas;
 
 namespace {
 
-constexpr int kFuncs = 12;
+constexpr int kFuncs = 14;
 const char* kName[kFuncs] = {"sin",  "cos",      "asin",     "acos",     "atan2(y,x)", "pow(x,y)",
-                             "sincos.sin", "sincos.cos", "mvec_sin", "mvec_cos", "mvec_pow(x,y)", "-x"};
+                             "sincos.sin", "sincos.cos", "mvec_sin", "mvec_cos", "mvec_pow(x,y)", "-x",
+                             "exp", "mvec_exp"};
 
 // one evaluation of every function; neg: the arguments are negated first (in the caller, as -x)
 CPPMPAS_HD void eval(double x, double y, bool neg, double* out) {
@@ -56,6 +58,8 @@ CPPMPAS_HD void eval(double x, double y, bool neg, double* out) {
   out[9] = libm::mvec_cos(x);
   out[10] = libm::mvec_pow(x, y);
   out[11] = x;  // the negated argument itself: what -x of a NaN gives
+  out[12] = libm::exp(x);
+  out[13] = libm::mvec_exp(x);
 }
 
 __global__ void kern(const double* xs, const double* ys, int n, double* out) {
@@ -197,8 +201,8 @@ int main(int argc, char** argv) {
                 (unsigned long long)bits(nh[k]));
   // the sign counts measured on the sm_120 and sm_89 cards (case A), exactly; at most one payload difference per
   // function of case B (the host compiler's operand order), none elsewhere
-  const long want_sign[kFuncs] = {4, 4, 4, 4, 7, 6, 4, 4, 4, 4, 6, 4};
-  const long max_payload[kFuncs] = {0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0};
+  const long want_sign[kFuncs] = {4, 4, 4, 4, 7, 6, 4, 4, 4, 4, 6, 4, 4, 4};
+  const long max_payload[kFuncs] = {0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0};
   long recorded_bad = 0;
   for (int f = 0; f < kFuncs; ++f)
     if (nan_sign_diff[f] != want_sign[f] || nan_payload_diff[f] > max_payload[f]) {

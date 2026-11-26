@@ -39,7 +39,8 @@ checks against WRF, all at tolerance 0). CPPMPAS applies the same method to MPAS
   file, the state at 01:00:00 is identical to the reference forecast's output in every field the port computes.
 - The CUDA FP64 build (`-DCPPMPAS_ENABLE_CUDA=ON`, executable `cppmpas_gpu`, CUDA 12.1 or later): the same sources,
   every loop over cells, edges and vertices of the init block, the solve diagnostics and the dycore (the JW
-  Smagorinsky viscosity and 4th-order filters included) a kernel with one thread per element (MPAS's neighbour and
+  Smagorinsky viscosity and 4th-order filters, the SC scalar transport, perturbation mixing and Kessler microphysics
+  included) a kernel with one thread per element (MPAS's neighbour and
   level order inside the thread), glibc's libm / libmvec ports on the device, `--fmad=false`. **Verified at
   tolerance 0** on an NVIDIA L4 (sm_89, CUDA 13.0, driver 580.82.07; `ctest -L gpu`, 538 GPU tests), against the
   references and against the CPU build: every initdump field of MW, SC and JW and the init block's restart-stream

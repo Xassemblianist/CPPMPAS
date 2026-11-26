@@ -26,6 +26,20 @@ spec.loader.exec_module(mc)
 
 B, BC, X, L = "src/core/backend.hpp", "src/core/backend_cuda.cu", "tools/cppmpas.cpp", "src/core/libm.hpp"
 CM = "CMakeLists.txt"
+AS, DP = "src/core_atmosphere/atm_advance_scalars.cpp", "src/core_atmosphere/atm_dissipation_perturbation.cpp"
+MP, KS = "src/core_atmosphere/atm_microphysics.cpp", "src/physics/mp_kessler.hpp"
+
+
+def dev(orig, mut):
+    """the mutated statement in the device code only (the CPU build keeps the original): the vs_cpu tests see it"""
+    return f"#if defined(__CUDA_ARCH__)\n{mut}\n#else\n{orig}\n#endif"
+
+
+def SC(steps, *fields):
+    return [f"gpu_dycore_SC_step{s}_{f}" for s in steps for f in fields]
+
+
+SCV = ["gpu_dycore_SC_vs_cpu", "gpu_dycore_SC_mpas_compare"]
 MW10 = [f"gpu_dycore_MW_step{s}_{f}" for s in (1, 10) for f in ("u", "theta_m")] + ["gpu_dycore_MW_vs_cpu"]
 JWSTEP = [f"gpu_dycore_JW_step{s}_{f}" for s in (1, 10) for f in ("u", "theta_m")]
 JW10 = JWSTEP + ["gpu_dycore_JW_vs_cpu"]
@@ -63,6 +77,48 @@ GPU_MUTATIONS = [
     # host fast-math through -Xcompiler not refused
     (CM, "|-Ofast|-f(fast-math|unsafe-math-optimizations|", "|-Ofast|-f(unsafe-math-optimizations|",
      ["cmake_rejects_cuda_6_CMAKE_CUDA_FLAGS", "cmake_rejects_cuda_6_CMAKE_CUDA_FLAGS_RELEASE"]),
+    # --- the supercell's kernels, each mutant in the device code only ---
+    # device math: CUDA's exp in place of the libmvec exp lane (Kessler's saturation pressure)
+    (L, "CPPMPAS_FORCEINLINE double mvec_exp(double x) { return ::cppwrf::glibc::mvec::exp(arg(x)); }",
+     "CPPMPAS_FORCEINLINE double mvec_exp(double x) {\n" + dev("  return ::cppwrf::glibc::mvec::exp(arg(x));",
+                                                             "  return ::exp(x);") + "\n}", ["gpu_libm"]),
+    # scalar transport, rk_steps 1-2 (TI:4772-4776): the 3rd-order weight's upwind sign flipped
+    (AS, "        sw2(k, j) = m.adv_coefs(j, iEdge) + sign1(uhAvg(k, iEdge)) * m.adv_coefs_3rd(j, iEdge);",
+     dev("        sw2(k, j) = m.adv_coefs(j, iEdge) + sign1(uhAvg(k, iEdge)) * m.adv_coefs_3rd(j, iEdge);",
+         "        sw2(k, j) = m.adv_coefs(j, iEdge) - sign1(uhAvg(k, iEdge)) * m.adv_coefs_3rd(j, iEdge);"),
+     SC((1, 10), "qv") + SCV),
+    # monotonic transport, rk_step 3 (TI:5731-5735): the update divided by the old density
+    (AS, "            (scalar_new(k, iCell) + (-(rdnw(k) * (wdtn(k + 1, iCell) - wdtn(k, iCell))))) / rho_zz_new(k, iCell);",
+     dev("            (scalar_new(k, iCell) + (-(rdnw(k) * (wdtn(k + 1, iCell) - wdtn(k, iCell))))) / rho_zz_new(k, iCell);",
+         "            (scalar_new(k, iCell) + (-(rdnw(k) * (wdtn(k + 1, iCell) - wdtn(k, iCell))))) / rho_zz_old(k, iCell);"),
+     SC((1, 10), "qv") + SCV),
+    # the limiter's bounds (TI:5374-5392) over five of the six neighbours: only the 30-min state sees it
+    (AS, "        for (int j = 1; j <= 6; ++j) {\n          mx = vmax",
+     dev("        for (int j = 1; j <= 6; ++j) {", "        for (int j = 1; j <= 5; ++j) {") + "\n          mx = vmax",
+     ["gpu_dycore_SC_restart_qv", "gpu_dycore_SC_output30_qv"]),
+    # perturbation mixing of u (DM:859-862): u + u_init in place of u - u_init
+    (DP, "      u_mix[k] = u(k, iEdge) - u_init(k) * cosa + v_init(k) * sina;",
+     dev("      u_mix[k] = u(k, iEdge) - u_init(k) * cosa + v_init(k) * sina;",
+         "      u_mix[k] = u(k, iEdge) + u_init(k) * cosa + v_init(k) * sina;"), SC((10,), "u") + SCV),
+    # perturbation mixing of theta (DM:1460-1462): t_init of the wrong level
+    (DP, "              (((theta_m(k + 1, iCell) - t_init(k + 1, iCell)) - (theta_m(k, iCell) - t_init(k, iCell))) / (zp - z0) -",
+     dev("              (((theta_m(k + 1, iCell) - t_init(k + 1, iCell)) - (theta_m(k, iCell) - t_init(k, iCell))) / (zp - z0) -",
+         "              (((theta_m(k + 1, iCell) - t_init(k, iCell)) - (theta_m(k, iCell) - t_init(k, iCell))) / (zp - z0) -"),
+     SC((10,), "theta_m") + SCV),
+    # microphysics_to_MPAS (PI:903-934): theta_m from qc in place of qv
+    (MP, "      theta_m(k, i) = P(th_p, i, k) * (1.0 + rvord * P(qv_p, i, k));",
+     dev("      theta_m(k, i) = P(th_p, i, k) * (1.0 + rvord * P(qv_p, i, k));",
+         "      theta_m(k, i) = P(th_p, i, k) * (1.0 + rvord * P(qc_p, i, k));"), SC((1, 10), "theta_m") + SCV),
+    # the Kessler kernel on the device without libmvec's 2-lane functions (scalar pow / exp for every column)
+    (KS, "CPPMPAS_HD inline bool lane(int i, int n) { return n > 1 && !((n & 1) && i == n - 1); }",
+     "CPPMPAS_HD inline bool lane(int i, int n) {\n" + dev("  return n > 1 && !((n & 1) && i == n - 1);", "  return false;")
+     + "\n}", ["gpu_dycore_SC_restart_qc", "gpu_dycore_SC_restart_qr", "gpu_dycore_SC_output30_qc",
+               "gpu_dycore_SC_output30_qr"]),
+    # the surface pressure of PI:950-964 without the base-state pressure
+    (MP, "    surface_pressure(i) = surface_pressure(i) + pressure_p(1, i) + pressure_b(1, i);",
+     dev("    surface_pressure(i) = surface_pressure(i) + pressure_p(1, i) + pressure_b(1, i);",
+         "    surface_pressure(i) = surface_pressure(i) + pressure_p(1, i);"),
+     ["gpu_dycore_SC_restart_surface_pressure", "gpu_dycore_SC_output30_surface_pressure"]),
 ]
 # tests/mutation_check.py mutants by a piece of their original fragment, with the GPU tests they must break (a mutant
 # of the shared source changes the CPU build alike: the vs_cpu tests are not among them)
