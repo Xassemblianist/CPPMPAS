@@ -28,6 +28,9 @@ checks against WRF, all at tolerance 0). CPPMPAS applies the same method to MPAS
   **Verified at tolerance 0** against `mpas842-dbl-mw-001`: steps 1-10 in every field of the step files, the
   restart at 30:06 and the output at 30 and 60 min. Every other configuration (scalar advection, Smagorinsky or
   4th-order mixing, physics, Coriolis, ...) is a hard error until it is ported and verified.
+- Restart runs (`config_do_restart = true`): `cppmpas run` reads an MPAS restart file as MPAS reads its restart
+  stream and continues from it. **Verified at tolerance 0** on MW: restarted from the reference's 00:30:06 restart
+  file, the state at 01:00:00 is identical to the reference forecast's output in every field the port computes.
 - The namelist: every option of MPAS-Atmosphere's Registry is known; a value that no verified reference runs with is a
   hard error naming the option.
 - The MPAS reference itself is reproducible across machines: the MW reference built and run on an AMD EPYC and on an
