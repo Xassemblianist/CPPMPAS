@@ -403,3 +403,14 @@ cppmpas_error_test(dycore_write_at "--write-at 12 is after the last step" run ${
   --namelist ${REF_MW}/steps/namelist.atmosphere --steps 10 --write-at 12 --write-fields u)
 cppmpas_error_test(dycore_write_fields "variable 'relhum' has no CPPMPAS port" run ${INIT_MW} ${W}/x_dir
   --namelist ${REF_MW}/steps/namelist.atmosphere --steps 10 --write-at 1 --write-fields u,relhum)
+
+# WSM6 and its MPAS driver / interface against MPAS's own code built with the reference compiler and flags
+# (tests/wsm6_column/run_check.sh). Needs gfortran 14.2, the MPAS v8.4.2 source tree and MMM-physics a4baf7f
+# (cppmpas-data `inputs` release, mmm-physics-a4baf7f.tar.gz, extracted); without them the test fails.
+set(CPPMPAS_MPAS_SRC "" CACHE PATH "MPAS-Model v8.4.2 source tree")
+set(CPPMPAS_MMM_PHYSICS "" CACHE PATH "extracted MMM-physics a4baf7f (mmm-physics-a4baf7f.tar.gz)")
+add_executable(test_wsm6_column wsm6_column/test_wsm6_column.cpp)
+target_link_libraries(test_wsm6_column PRIVATE cppmpas)
+add_test(NAME wsm6_column COMMAND ${T}/wsm6_column/run_check.sh ${CPPMPAS_MPAS_SRC} ${CPPMPAS_MMM_PHYSICS}
+  ${W}/wsm6_column $<TARGET_FILE:test_wsm6_column>)
+set_tests_properties(wsm6_column PROPERTIES FIXTURES_REQUIRED work_dir)
