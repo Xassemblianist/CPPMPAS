@@ -49,9 +49,11 @@ if(CPPMPAS_ENABLE_CUDA)
   set(CMAKE_CUDA_STANDARD 20)
   set(CMAKE_CUDA_STANDARD_REQUIRED ON)
   find_package(CUDAToolkit REQUIRED)
-  # kernels capture views of the whole mesh / state / dycore fields (core/views.hpp): parameters above 4 KB
-  if(CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 12.1)
-    message(FATAL_ERROR "the CUDA build needs CUDA 12.1 or later (kernel parameters above 4 KB); found ${CMAKE_CUDA_COMPILER_VERSION}")
+  # kernels capture views of the whole mesh / state / dycore fields (core/views.hpp): parameters above 4 KB (12.1);
+  # CUDA 12.4's front end rejects the host code's range-for over braced std::pair lists (atm_solve_diagnostics.cpp);
+  # the build is verified with CUDA 13.1
+  if(CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 13.0)
+    message(FATAL_ERROR "the CUDA build needs CUDA 13.0 or later (verified with 13.1); found ${CMAKE_CUDA_COMPILER_VERSION}")
   endif()
   # CUDA FP64 as the reference's arithmetic, bit for bit (CPPWRF 7fac5bf CMakeLists.txt:53-122): no fused
   # multiply-add contraction (--fmad=false; gfortran without -march emits none), IEEE division and square root,
