@@ -126,6 +126,19 @@ int main(int argc, char** argv) {
     expect(!throws([&] { write_history(in, out, {"latCell"}, {"v8.4.2", 1, "0123456789"}); }),
            "writing a field that was read");
     std::remove(out.c_str());
+    // no partial file: nprocs is checked before the file is created; an error after it (here NetCDF's, a name
+    // defined twice) removes the file
+    auto exists = [](const std::string& p) {
+      std::FILE* f = std::fopen(p.c_str(), "r");
+      if (f) std::fclose(f);
+      return f != nullptr;
+    };
+    expect(throws_with([&] { write_history(in, out, {"latCell"}, {"v8.4.2", 10, "0123456789"}); }, "nprocs outside 1..9") &&
+               !exists(out),
+           "nprocs = 10 is refused before the file is created");
+    expect(throws([&] { write_history(in, out, {"latCell", "latCell"}, {"v8.4.2", 1, "0123456789"}); }) && !exists(out),
+           "a NetCDF error while writing leaves no file");
+    std::remove(out.c_str());
     // each of the two guards against a name the Registry does not define (write_history meets registry_var first)
     const std::string undefined = "is not defined in MPAS-Atmosphere's Registry";
     expect(throws_with([&] { (void)registry_var("notavar"); }, undefined), "registry_var of an undefined name");

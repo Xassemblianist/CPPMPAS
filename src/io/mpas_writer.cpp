@@ -2,6 +2,7 @@
 #include "io/mpas_writer.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <map>
 #include <random>
 #include <set>
@@ -214,40 +215,49 @@ void write_history(MpasInput& in, const std::string& path, const std::vector<std
     for (const auto& kv : rv.attrs)
       if (kv.first == "_FillValue") throw Error("history: numeric _FillValue attributes are not handled (" + n + ")");
   }
-  NcFile f = NcFile::create(path, NC_64BIT_DATA);
-  std::vector<std::string> defined;
-  for (const auto& n : fields) {
-    const RegistryVar& rv = registry_var(n);
-    const auto dims = file_dims(rv);
-    define_dims(f, dims, defined,
-                [&](const std::string& d) { return d == "Time" ? NC_UNLIMITED : file_dim(m, d); });
-    f.def_var(n, nc_type_of(rv), dims);
-    for (const auto& [k, v] : rv.attrs) f.put_att_text(n, k, v);
-  }
-  // mpas_subdriver.F:497-530 (character values are written trimmed, mpas_io.F:6036, 6208-6210)
-  f.put_att_text("", "model_name", "mpas");
-  f.put_att_text("", "core_name", "atmosphere");
-  f.put_att_text("", "version", "8.4.2");
-  f.put_att_text("", "source", "MPAS");        // mpas_atm_core_interface.F:56
-  f.put_att_text("", "Conventions", "MPAS");   // mpas_atm_core_interface.F:55
-  f.put_att_text("", "git_version", opt.git_version);
-  f.put_att_text("", "on_a_sphere", yes_no(m.on_a_sphere));
-  f.put_att_double("", "sphere_radius", m.sphere_radius);
-  f.put_att_text("", "is_periodic", yes_no(m.is_periodic));
-  f.put_att_double("", "x_period", m.x_period);
-  f.put_att_double("", "y_period", m.y_period);
   if (opt.nprocs < 1 || opt.nprocs > 9) throw Error("history: nprocs outside 1..9 is not handled");
-  f.put_att_text("", "history", "mpirun -n " + std::to_string(opt.nprocs) + " ./atmosphere_model");
-  auto trimmed = [](std::string s) {
-    while (!s.empty() && (s.back() == ' ' || s.back() == '\0')) s.pop_back();
-    return s;
-  };
-  f.put_att_text("", "parent_id", trimmed(m.parent_id));
-  f.put_att_text("", "mesh_spec", trimmed(m.mesh_spec));
-  f.put_att_text("", "file_id", opt.file_id.empty() ? random_file_id() : opt.file_id);
-  f.enddef();
-  for (const auto& n : fields) write_values(f, in, n);
-  f.close();
+  NcFile f = NcFile::create(path, NC_64BIT_DATA);
+  try {  // an error the checks above do not foresee (a NetCDF error, ...) removes the file
+    std::vector<std::string> defined;
+    for (const auto& n : fields) {
+      const RegistryVar& rv = registry_var(n);
+      const auto dims = file_dims(rv);
+      define_dims(f, dims, defined,
+                  [&](const std::string& d) { return d == "Time" ? NC_UNLIMITED : file_dim(m, d); });
+      f.def_var(n, nc_type_of(rv), dims);
+      for (const auto& [k, v] : rv.attrs) f.put_att_text(n, k, v);
+    }
+    // mpas_subdriver.F:497-530 (character values are written trimmed, mpas_io.F:6036, 6208-6210)
+    f.put_att_text("", "model_name", "mpas");
+    f.put_att_text("", "core_name", "atmosphere");
+    f.put_att_text("", "version", "8.4.2");
+    f.put_att_text("", "source", "MPAS");        // mpas_atm_core_interface.F:56
+    f.put_att_text("", "Conventions", "MPAS");   // mpas_atm_core_interface.F:55
+    f.put_att_text("", "git_version", opt.git_version);
+    f.put_att_text("", "on_a_sphere", yes_no(m.on_a_sphere));
+    f.put_att_double("", "sphere_radius", m.sphere_radius);
+    f.put_att_text("", "is_periodic", yes_no(m.is_periodic));
+    f.put_att_double("", "x_period", m.x_period);
+    f.put_att_double("", "y_period", m.y_period);
+    f.put_att_text("", "history", "mpirun -n " + std::to_string(opt.nprocs) + " ./atmosphere_model");
+    // MPAS_io_put_att_text (mpas_io.F:6036-6045, 6208-6210): trim, cut at StrKIND, trim; SMIOL then writes
+    // strlen of the C string (smiol.c:1731), which ends at the first NUL
+    auto trimmed = [](std::string s) {
+      while (!s.empty() && s.back() == ' ') s.pop_back();
+      s = s.substr(0, 512);
+      while (!s.empty() && s.back() == ' ') s.pop_back();
+      return s.substr(0, s.find('\0'));
+    };
+    f.put_att_text("", "parent_id", trimmed(m.parent_id));
+    f.put_att_text("", "mesh_spec", trimmed(m.mesh_spec));
+    f.put_att_text("", "file_id", trimmed(opt.file_id.empty() ? random_file_id() : opt.file_id));
+    f.enddef();
+    for (const auto& n : fields) write_values(f, in, n);
+    f.close();
+  } catch (...) {
+    std::remove(path.c_str());
+    throw;
+  }
 }
 
 }  // namespace cppmpas

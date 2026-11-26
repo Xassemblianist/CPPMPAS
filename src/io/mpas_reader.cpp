@@ -187,8 +187,10 @@ double real_att(const NcFile& f, const std::string& name) {
   throw Error(f.path() + ": global attribute " + name + " is not a real number");
 }
 
+// Fortran's trim: trailing blanks only (SMIOLf_inquire_att copies every byte of the attribute, NULs included,
+// smiolf.F90:1630-1631)
 std::string rtrim(std::string s) {
-  while (!s.empty() && (s.back() == ' ' || s.back() == '\0')) s.pop_back();
+  while (!s.empty() && s.back() == ' ') s.pop_back();
   return s;
 }
 
