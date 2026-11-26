@@ -20,9 +20,13 @@ namespace cppmpas::libm {
 // is inlined, GCC may fold the caller's negation into those expressions ((-y) / (-y) -> y / y, (-y) + x -> x - y),
 // which is exact for every non-NaN value but flips the sign of a NaN result. The empty asm hides the argument's
 // origin, so a NaN argument gives glibc's bits (tests/test_libm.cpp calls the ports with -x).
+// On the device (CUDA) the same barrier is an identity PTX move, opaque to nvcc's optimiser (tests/test_gpu_libm.cu
+// measures what NaN arguments give there; CPPMPAS_NO_DEVICE_ARG_BARRIER leaves it out, for that measurement only).
 CPPMPAS_FORCEINLINE double arg(double x) {
 #if (defined(__x86_64__) || defined(__i386__)) && !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
   asm("" : "+x"(x));
+#elif defined(__CUDA_ARCH__) && !defined(CPPMPAS_NO_DEVICE_ARG_BARRIER)
+  asm("mov.b64 %0, %0;" : "+d"(x));
 #endif
   return x;
 }
