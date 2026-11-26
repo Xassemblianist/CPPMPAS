@@ -297,16 +297,16 @@ cppmpas_error_test(dycore_steps "--steps needs a whole number 0..1000000, not '1
   --namelist ${REF_MW}/steps/namelist.atmosphere --steps 1x)
 cppmpas_error_test(dycore_no_steps "usage: cppmpas run" run ${INIT_MW} ${W}/x_dir
   --namelist ${REF_MW}/steps/namelist.atmosphere)
-# 301 steps (label "long", about 2 minutes): the forecast run of the same reference writes output.nc at 30 min
-# (record 1, after step 300) and restart.0000-01-01_00.30.06.nc (after step 301); every field of these streams the
-# port holds is compared at tolerance 0
+# 600 steps (label "long", about 5 minutes): the forecast run of the same reference writes output.nc at 30 and 60 min
+# (records 1 and 2, after steps 300 and 600) and restart.0000-01-01_00.30.06.nc (after step 301); every field of these
+# streams the port holds is compared at tolerance 0
 set(DYCORE_RESTART_FIELDS xtime Time u w rho_zz theta_m pressure_p rho theta exner ru rw rtheta_p rho_p qv)
 set(DYCORE_OUTPUT_FIELDS xtime u w pressure rho theta divergence vorticity ke uReconstructZonal uReconstructMeridional qv)
 set(DYCORE_LONG_FIELDS ${DYCORE_RESTART_FIELDS} pressure divergence vorticity ke uReconstructZonal uReconstructMeridional)
 list(REMOVE_DUPLICATES DYCORE_LONG_FIELDS)
 string(REPLACE ";" "," DYCORE_LONG_LIST "${DYCORE_LONG_FIELDS}")
 add_test(NAME dycore_run_long_MW COMMAND ${CMAKE_COMMAND} -E env sh -c
-  "rm -rf '${W}/dycore_long_MW' && mkdir -p '${W}/dycore_long_MW' && '${EXE}' run '${INIT_MW}' '${W}/dycore_long_MW' --namelist '${REF_MW}/steps/namelist.atmosphere' --steps 301 --every 0 --write-at 300,301 --write-fields ${DYCORE_LONG_LIST}")
+  "rm -rf '${W}/dycore_long_MW' && mkdir -p '${W}/dycore_long_MW' && '${EXE}' run '${INIT_MW}' '${W}/dycore_long_MW' --namelist '${REF_MW}/steps/namelist.atmosphere' --steps 600 --every 0 --write-at 300,301,600 --write-fields ${DYCORE_LONG_LIST}")
 set_tests_properties(dycore_run_long_MW PROPERTIES FIXTURES_SETUP dycore_long_MW LABELS long TIMEOUT 900)
 foreach(f IN LISTS DYCORE_RESTART_FIELDS)
   add_test(NAME dycore_MW_restart_${f} COMMAND ${PY} ${T}/compare_arrays.py ${RST_MW}
@@ -317,6 +317,9 @@ foreach(f IN LISTS DYCORE_OUTPUT_FIELDS)
   add_test(NAME dycore_MW_output30_${f} COMMAND ${PY} ${T}/compare_arrays.py ${REF_MW}/forecast/output.nc
     ${W}/dycore_long_MW/state.0000-01-01_00.30.00.nc ${f} --record 1)
   set_tests_properties(dycore_MW_output30_${f} PROPERTIES FIXTURES_REQUIRED dycore_long_MW LABELS long)
+  add_test(NAME dycore_MW_output60_${f} COMMAND ${PY} ${T}/compare_arrays.py ${REF_MW}/forecast/output.nc
+    ${W}/dycore_long_MW/state.0000-01-01_01.00.00.nc ${f} --record 2)
+  set_tests_properties(dycore_MW_output60_${f} PROPERTIES FIXTURES_REQUIRED dycore_long_MW LABELS long)
 endforeach()
 # The JW baroclinic wave (x1.40962 sphere, 26 levels, dt = 450 s): ten steps against the every-step stream of
 # mpas842-dbl-jw-001, one test per step and field at tolerance 0, and the directory through tools/mpas_compare.py.

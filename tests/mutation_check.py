@@ -177,7 +177,7 @@ MUTATIONS = [
     (NL, "  r(\"config_len_disp\", c.config_len_disp);", "", ["init_run_MW", "init_run_SC", "init_run_JW"]),
     (NL, "  t(\"config_start_time\", c.config_start_time);", "",
      ["init_step0_MW", "init_step0_SC", "init_step0_JW"] + [f"dycore_MW_step{n}_xtime" for n in range(11)] +
-     ["dycore_MW_restart_xtime", "dycore_MW_output30_xtime"] + [f"dycore_JW_step{n}_xtime" for n in range(11)] +
+     ["dycore_MW_restart_xtime", "dycore_MW_output30_xtime", "dycore_MW_output60_xtime"] + [f"dycore_JW_step{n}_xtime" for n in range(11)] +
      ["dycore_JW_restart_xtime", "dycore_JW_output24h_xtime"]),
     ("tools/gen_namelist_table.py", "            if v not in acc:", "            if True:", ["namelist_table_current"]),
     # the reference init files already hold xtime = config_start_time: the init_step0_* comparison cannot see it
@@ -516,7 +516,8 @@ S1 = ST([1])
 ALLDYN = ST(range(1, 11)) + ["dycore_MW_mpas_compare"]
 LONG_R = "u w rho_zz theta_m pressure_p rho theta exner ru rw rtheta_p rho_p".split()
 LONG_O = "u w pressure rho theta divergence vorticity ke uReconstructZonal uReconstructMeridional".split()
-LONG = [f"dycore_MW_restart_{f}" for f in LONG_R] + [f"dycore_MW_output30_{f}" for f in LONG_O]
+LONG = ([f"dycore_MW_restart_{f}" for f in LONG_R] + [f"dycore_MW_output30_{f}" for f in LONG_O] +
+        [f"dycore_MW_output60_{f}" for f in LONG_O])
 J1 = JST([1])
 JALLDYN = JST(range(1, 11)) + ["dycore_JW_mpas_compare"]
 JLONG = [f"dycore_JW_restart_{f}" for f in LONG_R] + [f"dycore_JW_output24h_{f}" for f in LONG_O]
@@ -634,7 +635,7 @@ MUTATIONS += [
     (DY, "  number_sub_steps[3] = number_of_sub_steps;", "  number_sub_steps[3] = number_of_sub_steps - 1;", S1),
     (DY, "    if (f.scalars2.data()[i] < 0.0) f.scalars2.data()[i] = 0.0;",
      "    if (f.scalars2.data()[i] <= 0.0) f.scalars2.data()[i] = 1.0e-300;",
-     ST(range(1, 11), "qv") + ["dycore_MW_restart_qv", "dycore_MW_output30_qv"] +
+     ST(range(1, 11), "qv") + ["dycore_MW_restart_qv", "dycore_MW_output30_qv", "dycore_MW_output60_qv"] +
      JST(range(1, 11), "qv") + ["dycore_JW_restart_qv", "dycore_JW_output24h_qv"]),
     # output diagnostics, Time, xtime, the step files
     (DY, "      s.rho(k, iCell) = s.rho_zz(k, iCell) * m.zz(k, iCell);", "      s.rho(k, iCell) = s.rho_zz(k, iCell);",
@@ -703,7 +704,7 @@ MUTATIONS += [
     # output diagnostics (review F10): pressure (mpas_atm_core.F:961); computing them only on output steps has no
     # mutant (theta, rho and pressure are read by no routine of the step)
     (DY, "      d.pressure(k, iCell) = d.pressure_base(k, iCell) + d.pressure_p(k, iCell);",
-     "      d.pressure(k, iCell) = d.pressure_p(k, iCell);", ["dycore_MW_output30_pressure", "dycore_JW_output24h_pressure"]),
+     "      d.pressure(k, iCell) = d.pressure_p(k, iCell);", ["dycore_MW_output30_pressure", "dycore_MW_output60_pressure", "dycore_JW_output24h_pressure"]),
     # time stamps (review F8, F18); the blank padding of xtime itself has no file-level mutant: the writer pads
     # character fields with blanks too (mpas_writer.cpp write_values), unit_dycore compares the string
     (DY, "    form = want == '0' ? (ts[i] >= '0' && ts[i] <= '9') : ts[i] == want;",
@@ -715,7 +716,7 @@ MUTATIONS += [
     # the content of xtime with its file name unchanged (review F12): the files' xtime values must differ
     (DY, "  f.xtime2.resize(64, ' ');", "  f.xtime2.resize(64, 'x');",
      ST(range(1, 11), "xtime") + JST(range(1, 11), "xtime") + ["dycore_MW_restart_xtime", "dycore_MW_output30_xtime",
-      "dycore_JW_restart_xtime", "dycore_JW_output24h_xtime", "unit_dycore"]),
+      "dycore_MW_output60_xtime", "dycore_JW_restart_xtime", "dycore_JW_output24h_xtime", "unit_dycore"]),
     ("src/io/mpas_writer.cpp", '    if (t.empty()) throw Error("write Time: initial_time was not read");',
      '    if (false) throw Error("write Time: initial_time was not read");', ["unit_dycore"]),
     # refusals and array checks of the dycore review (F4, F5, F6, F17); unit_dycore kills each
@@ -802,7 +803,7 @@ MUTATIONS += [
     (X, "  if (used != v.size() || n < 0 || n > 1000000) throw Error(opt +", "  if (n < 0 || n > 1000000) throw Error(opt +",
      ["err_dycore_steps"]),
     (DY, "  mpas_reconstruct_2d(m, f.u2, d.uReconstructX,", "  if (false) mpas_reconstruct_2d(m, f.u2, d.uReconstructX,",
-     ["dycore_MW_output30_uReconstructZonal", "dycore_MW_output30_uReconstructMeridional"]),
+     ["dycore_MW_output30_uReconstructZonal", "dycore_MW_output30_uReconstructMeridional", "dycore_MW_output60_uReconstructZonal"]),
     (X, "      if (n > a.steps) throw Error(\"--write-at \"", "      if (false) throw Error(\"--write-at \"", ["err_dycore_write_at"]),
     (X, "    for (const auto& w : a.write_fields) (void)field_ref(in, w);", "", ["err_dycore_write_fields"]),
     (X, "    if (a.pos.size() != 2 || a.steps < 0 || a.namelist.empty() || !a.fields.empty())",
