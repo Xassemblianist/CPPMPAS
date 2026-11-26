@@ -11,7 +11,8 @@
 //  * atm_compute_solve_diagnostics refuses config_apvm_upwinding <= 0 (no APVM, mpas_atm_time_integration.F:7372);
 //  * init_block_verified_fields: everything for an even nVertLevels, not the pow tail of an odd one;
 //  * atm_core_init sets xtime = config_start_time, blank-padded to StrLen (mpas_atm_core.F:261-262), whatever the
-//    init file held.
+//    init file held;
+//  * atm_mpas_init_block with config_do_restart refuses state / diag fields the restart stream did not fill.
 //
 // usage: test_init_guards <init file> <its namelist.atmosphere>
 #include <algorithm>
@@ -279,6 +280,17 @@ int main(int argc, char** argv) {
            "verified fields: all but the pow tail (exner, exner_base, pressure_p, pressure_base) for an odd nVertLevels");
     expect(exactly(scaled, {"meshScalingDel2", "meshScalingDel4", "meshScalingRegionalCell", "meshScalingRegionalEdge"}),
            "verified fields: all but meshScaling* for a scaled mesh");
+  }
+
+  // --- atm_mpas_init_block with config_do_restart = true on an input-stream file: the coupled fields were never read
+  {
+    MpasInput in = read_mpas_init(path, {"qv"});
+    InitConfig cfg = read_init_config(argv[2]);
+    cfg.config_do_restart = true;
+    std::vector<std::string> log;
+    expect(throws_with([&] { atm_mpas_init_block(in.mesh, in.state, in.diag, cfg, log); },
+                       "config_do_restart = true, but theta_m was not read from the restart stream"),
+           "a restart init block refuses fields the restart stream did not fill");
   }
 
   if (fails == 0) std::printf("OK init guards unit test\n");

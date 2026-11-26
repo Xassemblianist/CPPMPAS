@@ -34,7 +34,7 @@ constexpr real kPi = 0x1.921fb54442d18p+1;
 
 }  // namespace
 
-void allocate_init_fields(Mesh& m, State& s, Diag& d) {
+void allocate_init_fields(Mesh& m, State& s, Diag& d, bool restart) {
   if (m.nVertLevels <= 0) throw Error("atm_mpas_init_block: the mesh has no vertical levels (not an init file)");
   const int nC = m.nCells + 1, nE = m.nEdges + 1, nV = m.nVertices + 1, nL = m.nVertLevels, nL1 = m.nVertLevels + 1;
   // Registry default value 0 / 0.0 for all of them (no default_value, gen_inc.c:615-630; specZoneMask* "0.0")
@@ -66,6 +66,21 @@ void allocate_init_fields(Mesh& m, State& s, Diag& d) {
   m.specZoneMaskEdge.allocate({nE}, 0.0);
   m.specZoneMaskVertex.allocate({nV}, 0.0);
   m.nearestRelaxationCell.allocate({nC}, 0);
+  // a restart run read these from the restart stream (Registry.xml:670-690) into the arrays MPAS allocated
+  if (restart) {
+    struct Read { const char* name; const FArray<real>* a; std::vector<int> ext; };
+    const Read read[] = {{"theta_m", &s.theta_m, {nL, nC}},         {"rho_zz", &s.rho_zz, {nL, nC}},
+                         {"ru", &d.ru, {nL, nE}},                   {"rw", &d.rw, {nL1, nC}},
+                         {"rho_p", &d.rho_p, {nL, nC}},             {"rtheta_base", &d.rtheta_base, {nL, nC}},
+                         {"rtheta_p", &d.rtheta_p, {nL, nC}},       {"exner", &d.exner, {nL, nC}},
+                         {"exner_base", &d.exner_base, {nL, nC}},   {"pressure_p", &d.pressure_p, {nL, nC}},
+                         {"pressure_base", &d.pressure_base, {nL, nC}}};
+    for (const auto& r : read)
+      if (r.a->extents() != r.ext)
+        throw Error(std::string("atm_mpas_init_block: config_do_restart = true, but ") + r.name +
+                    " was not read from the restart stream");
+    return;
+  }
   s.theta_m.allocate({nL, nC}, 0.0);
   s.rho_zz.allocate({nL, nC}, 0.0);
   d.ru.allocate({nL, nE}, 0.0);
@@ -571,8 +586,8 @@ void atm_init_coupled_diagnostics(const Mesh& m, State& s, Diag& d) {
 
 // mpas_atm_core.F:366-617, in MPAS's order
 void atm_mpas_init_block(Mesh& m, State& s, Diag& d, const InitConfig& cfg, std::vector<std::string>& log) {
-  if (cfg.config_do_restart) throw Error("atm_mpas_init_block: config_do_restart = true is not ported");
-  allocate_init_fields(m, s, d);
+  if (cfg.config_do_DAcycling) throw Error("atm_mpas_init_block: config_do_DAcycling = true is not ported");
+  allocate_init_fields(m, s, d, cfg.config_do_restart);
   allocate_solve_diag_fields(m, d);
   atm_compute_signs(m, log);                                                       // :427
   atm_compute_inverses(m);                                                         // :459-473
@@ -583,7 +598,9 @@ void atm_mpas_init_block(Mesh& m, State& s, Diag& d, const InitConfig& cfg, std:
   allocate_solve_diag_work(m, work);  // :492-499 module ke_vertex / ke_edge, garbage column zeroed
   // :502-517 thread ranges: one thread, cellThreadStart(1) = 1, cellThreadEnd(1) = nCells etc.
   // (mpas_atm_threading.F:114-125); :519 mpas_atm_pre_compute_solve_diagnostics only moves data for OpenACC
-  atm_init_coupled_diagnostics(m, s, d);  // :522-530 (cold start; the call at :523)
+  // :522-530: a cold start (or DA cycling) couples the state read from the input stream; a restart run keeps the
+  // coupled fields the restart stream holds
+  if (!cfg.config_do_restart || (cfg.config_do_restart && cfg.config_do_DAcycling)) atm_init_coupled_diagnostics(m, s, d);
   atm_compute_solve_diagnostics(cfg.config_dt, cfg.config_apvm_upwinding, m, s.rho_zz, s.u, d, work, 1, m.nCells, 1,
                                 m.nVertices, 1, m.nEdges);  // :532-535, time level 1, dt = config_dt, no rk_step
   // :538 mpas_atm_post_compute_solve_diagnostics (OpenACC data only); :540-541 deallocate ke_vertex / ke_edge
