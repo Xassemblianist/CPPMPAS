@@ -657,6 +657,9 @@ MUTATIONS += [
      ST(range(11), "qv") + JST(range(11), "qv")),
     ("src/io/mpas_writer.cpp", '          f.put_att_text(n, k, time_units);', "          f.put_att_text(n, k, v);",
      ST(range(11), "Time") + JST(range(11), "Time")),
+    # the init pow loop for nVertLevels <= 2 (NEONM09 F1): no reference has such a mesh, so its fields need
+    # --unverified; the scalar loop itself (atm_init.cpp) has no mutant for the same reason
+    (A, "    if ((nVertLevels % 2 != 0 || nVertLevels <= 2) &&", "    if ((nVertLevels % 2 != 0) &&", ["unit_init_guards"]),
     # mutants OPM08 left out as exact on MW that JW kills (review F15): the level index of etp / ewp (JW's top at
     # 45 km crosses the epssm transition, so etp / ewp vary with k), sign(1, ru) against a constant +1 (JW's flow
     # reverses)

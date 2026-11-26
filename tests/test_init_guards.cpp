@@ -277,6 +277,10 @@ int main(int argc, char** argv) {
     expect(exactly(even, {}), "verified fields: all computed fields for an even nVertLevels");
     expect(exactly(odd, {"exner", "exner_base", "pressure_p", "pressure_base"}),
            "verified fields: all but the pow tail (exner, exner_base, pressure_p, pressure_base) for an odd nVertLevels");
+    // nVertLevels = 2 is even, but the reference runs every level through the scalar pow (0x104120)
+    expect(exactly(init_block_verified_fields(2), {"exner", "exner_base", "pressure_p", "pressure_base"}),
+           "verified fields: all but the pow fields for nVertLevels = 2");
+    expect(exactly(init_block_verified_fields(4), {}), "verified fields: all computed fields for nVertLevels = 4");
     expect(exactly(scaled, {"meshScalingDel2", "meshScalingDel4", "meshScalingRegionalCell", "meshScalingRegionalEdge"}),
            "verified fields: all but meshScaling* for a scaled mesh");
   }
