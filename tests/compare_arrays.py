@@ -24,6 +24,20 @@ def ulp_max(a, b):
     return max(abs(ordered(x) - ordered(y)) for x, y in zip(ia, ib))
 
 
+def attributes(v):
+    """{name: (type, raw bytes)} of a variable's attributes: an NC_INT 1 differs from an NC_CHAR "1", an NC_FLOAT
+    from an NC_DOUBLE of the same printed value."""
+    out = {}
+    for k in v.ncattrs():
+        a = v.getncattr(k)
+        if isinstance(a, str):
+            out[k] = ("char", a.encode())
+        else:
+            arr = np.asarray(a)
+            out[k] = (arr.dtype.str, arr.tobytes())
+    return out
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("reference", type=Path)
@@ -50,7 +64,7 @@ def main(argv=None):
                 print(f"DIFF {n}: type/dims {x.dtype}{x.dimensions} vs {y.dtype}{y.dimensions}")
                 bad += 1
                 continue
-            if {k: str(x.getncattr(k)) for k in x.ncattrs()} != {k: str(y.getncattr(k)) for k in y.ncattrs()}:
+            if attributes(x) != attributes(y):
                 print(f"DIFF {n}: variable attributes")
                 bad += 1
             if x.dimensions and x.dimensions[0] == "Time":
@@ -79,10 +93,12 @@ def main(argv=None):
                 bad += 1
             else:
                 print(f"SAME {n} ({ra.size} values)")
+    if bad:
+        return 1
     if compared == 0:
         print("ERROR nothing was compared")
         return 2
-    return 1 if bad else 0
+    return 0
 
 
 if __name__ == "__main__":

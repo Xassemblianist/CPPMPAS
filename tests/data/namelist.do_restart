@@ -1,3 +1,0 @@
-&restart
-    config_do_restart = true
-/

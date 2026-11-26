@@ -119,12 +119,25 @@ add_test(NAME err_empty_list COMMAND ${PY} ${T}/expect_error.py "empty name in t
 set_tests_properties(err_empty_list PROPERTIES FIXTURES_REQUIRED inputs)
 cppmpas_error_test(trailing_comma "empty name in the list 'u,'" history ${W}/mw_init.nc ${W}/x.nc --fields u,)
 cppmpas_error_test(unknown_field "variable 'notavar' is not defined in MPAS-Atmosphere's Registry" history ${W}/mw_init.nc ${W}/x.nc --fields notavar)
+# a field that is neither read nor computed is refused before the output file is created
+add_test(NAME err_unheld_field COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -f '${W}/unheld.nc'; ${Python3_EXECUTABLE} -I '${T}/expect_error.py' 'write ru: the field was neither read nor computed' '${EXE}' history '${W}/mw_init.nc' '${W}/unheld.nc' --fields u,ru && if [ -e '${W}/unheld.nc' ]; then echo 'FAIL: the output file was created'; exit 1; fi")
+set_tests_properties(err_unheld_field PROPERTIES FIXTURES_REQUIRED inputs)
+
+# tests/compare_arrays.py itself: value bytes, variable types and attribute types are compared
+add_test(NAME compare_arrays_unit COMMAND ${PY} ${T}/test_compare_arrays.py ${W})
+set_tests_properties(compare_arrays_unit PROPERTIES FIXTURES_REQUIRED work_dir)
 
 # ---------------------------------------------------------------------------------------------------------------
 # libm / libmvec entries of the reference (src/core/libm.hpp) against this machine's glibc 2.41 (FMA, AVX2)
 add_executable(test_libm test_libm.cpp)
 target_link_libraries(test_libm PRIVATE cppmpas mvec m)
 add_test(NAME unit_libm COMMAND test_libm 2000000)
+
+# src/core/namelist_table.inc is what tools/gen_namelist_table.py makes of the Registry and the reference namelists
+add_test(NAME namelist_table_current COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "${Python3_EXECUTABLE} -I '${CMAKE_SOURCE_DIR}/tools/gen_namelist_table.py' '${CPPMPAS_MPAS_REGISTRY}' ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/forecast/namelist.atmosphere > '${W}/namelist_table.inc' && ${CMAKE_COMMAND} -E compare_files '${W}/namelist_table.inc' '${CMAKE_SOURCE_DIR}/src/core/namelist_table.inc'")
+set_tests_properties(namelist_table_current PROPERTIES FIXTURES_REQUIRED work_dir)
 
 # ---------------------------------------------------------------------------------------------------------------
 # The MPAS v8.4.2 FP64 references (Xassemblianist/cppmpas-data releases mpas842-dbl-{mw,sc,jw}-001, extracted under
@@ -142,18 +155,21 @@ set(RST_JW ${REF_JW}/forecast/restart.0000-01-02_00.07.30.nc)
 set(SCAL_MW qv)
 set(SCAL_SC qv,qc,qr)
 set(SCAL_JW qv)
-# arrays atm_mpas_init_block computes that MPAS writes: time-invariant ones in the restart stream (Registry.xml:
-# 535-537, 564, 566, 680-682; nothing changes them after the init block), and the time-level-1 state / pressure_p
-# in the first (t = 0) record of the every-step history (written before step 1)
-set(INIT_RESTART_FIELDS edgeNormalVectors,localVerticalUnitVectors,cellTangentPlane,coeffs_reconstruct,dss,exner_base,rtheta_base,pressure_base)
-set(INIT_STEP0_FIELDS rho_zz,theta_m,pressure_p)
+# arrays atm_core_init computes that MPAS writes: time-invariant ones in the restart stream (Registry.xml:
+# 535-537, 564, 566, 680-682; nothing changes them after the init block; nominalMinDc is set from config_len_disp
+# before it), and the time-level-1 state, pressure_p and xtime (= config_start_time) in the first (t = 0) record of
+# the every-step history (written before step 1)
+set(INIT_RESTART_FIELDS edgeNormalVectors,localVerticalUnitVectors,cellTangentPlane,coeffs_reconstruct,dss,exner_base,rtheta_base,pressure_base,nominalMinDc)
+set(INIT_STEP0_FIELDS rho_zz,theta_m,pressure_p,xtime)
 foreach(case MW SC JW)
   # the reader on the reference's own init files (round trip and in-memory order)
   add_test(NAME roundtrip_refinit_${case} COMMAND ${PY} ${T}/roundtrip.py ${EXE} ${CPPMPAS_MPAS_COMPARE} ${INIT_${case}}
     ${W}/ref_${case} init ${SCAL_${case}})
   add_test(NAME order_refinit_${case} COMMAND ${CMAKE_COMMAND} -E env sh -c
     "mkdir -p '${W}' && '${EXE}' dump '${INIT_${case}}' '${W}/dump_refinit_${case}.nc' --init --scalars ${SCAL_${case}} && ${Python3_EXECUTABLE} -I '${T}/check_order.py' '${INIT_${case}}' '${W}/dump_refinit_${case}.nc' ${case} --init ${SCAL_${case}}")
-  add_test(NAME readrestart_${case} COMMAND ${EXE} info ${RST_${case}} --init --scalars ${SCAL_${case}})
+  # the reader on the reference restart file: its input-stream subset, values and in-memory order
+  add_test(NAME readrestart_${case} COMMAND ${CMAKE_COMMAND} -E env sh -c
+    "mkdir -p '${W}' && '${EXE}' dump '${RST_${case}}' '${W}/dump_rst_${case}.nc' --init --scalars ${SCAL_${case}} && ${Python3_EXECUTABLE} -I '${T}/check_order.py' '${RST_${case}}' '${W}/dump_rst_${case}.nc' ${case} --init ${SCAL_${case}}")
   # atm_mpas_init_block on the reference init file with the reference namelist
   add_test(NAME init_run_${case} COMMAND ${CMAKE_COMMAND} -E env sh -c
     "mkdir -p '${W}' && rm -f '${W}/init_${case}.nc' && '${EXE}' init '${INIT_${case}}' '${W}/init_${case}.nc' --namelist '${REF_${case}}/steps/namelist.atmosphere' --scalars ${SCAL_${case}} --fields ${INIT_RESTART_FIELDS},${INIT_STEP0_FIELDS}")
@@ -166,4 +182,15 @@ foreach(case MW SC JW)
 endforeach()
 # the history writer on MPAS's own JW init file: a sphere (on_a_sphere = YES) with pentagons
 add_test(NAME history_JW COMMAND ${PY} ${T}/check_history.py ${EXE} ${INIT_JW} ${CPPMPAS_MPAS_REGISTRY} ${W}/ref_JW "${HIST_FIELDS},qv" qv)
-cppmpas_error_test(do_restart "config_do_restart = true: the restart start-up" init ${W}/mw_init.nc ${W}/x.nc --fields dss --namelist ${T}/data/namelist.do_restart)
+# the namelist reader on variants of the MW reference namelist
+add_test(NAME namelist_MW COMMAND ${PY} ${T}/check_namelist.py ${EXE} ${REF_MW}/steps/namelist.atmosphere ${W}/namelist)
+# an array computed by a port not yet proven needs --unverified
+add_test(NAME err_unverified_field COMMAND ${PY} ${T}/expect_error.py
+  "field invAreaCell is computed by a port not yet verified against MPAS output" ${EXE} init ${INIT_MW} ${W}/x.nc
+  --namelist ${REF_MW}/steps/namelist.atmosphere --fields dss,invAreaCell)
+add_test(NAME init_unverified_MW COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "mkdir -p '${W}' && '${EXE}' init '${INIT_MW}' '${W}/init_unverified_MW.nc' --namelist '${REF_MW}/steps/namelist.atmosphere' --fields dss,invAreaCell --unverified && rm '${W}/init_unverified_MW.nc'")
+# guards and atm_core_init steps on the MW reference init file
+add_executable(test_init_guards test_init_guards.cpp)
+target_link_libraries(test_init_guards PRIVATE cppmpas)
+add_test(NAME unit_init_guards COMMAND test_init_guards ${INIT_MW} ${REF_MW}/steps/namelist.atmosphere)
