@@ -24,9 +24,9 @@ endif()
 option(CPPMPAS_OPENMP "CPU kernels run with OpenMP (src/core/backend.hpp parallel_for)" OFF)
 
 # Strict IEEE, as CPPWRF (CMakeLists.txt of CPPWRF 7fac5bf): no FMA contraction (the gfortran reference on x86-64
-# without -march emits none), no fast-math. -O3 without -march: the reference is built without -march.
+# without -march emits none), no fast-math. Release keeps CMake's -O3 -DNDEBUG, without -march: the reference is
+# built without -march. Flags the user gives (CMAKE_CXX_FLAGS, CMAKE_CXX_FLAGS_<CONFIG>) are kept, and checked here.
 add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-ffp-contract=off>)
-set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 set(_cppmpas_configs ${CMAKE_CONFIGURATION_TYPES})
 if(NOT _cppmpas_configs)
   set(_cppmpas_configs "${CMAKE_BUILD_TYPE}")

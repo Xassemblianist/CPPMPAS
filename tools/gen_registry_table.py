@@ -57,6 +57,20 @@ def cstr(s):
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
 
 
+def default_of(el):
+    """defaultValue as MPAS's registry generator sets it for a <var> or a <var_array> (whose constituents share it):
+    the XML default_value, or, when there is none, the missing_value (gen_inc.c:1709-1715, 1286-1292)."""
+    d = el.get("default_value")
+    if d is not None:
+        return d
+    mv = el.get("missing_value")
+    if mv is None:
+        return ""
+    if mv == "FILLVAL":  # MPAS_REAL_FILLVAL / MPAS_INT_FILLVAL (gen_inc.c:641-660): no value in this table yet
+        sys.exit(f"{el.get('name')}: missing_value FILLVAL as default value is not handled")
+    return mv
+
+
 def attrs_of(el):
     parts = []
     for k, v in el.attrib.items():
@@ -76,11 +90,11 @@ def main():
         for child in vs:
             if child.tag == "var":
                 rows.append((child.get("name"), sname, child.get("type"), child.get("dimensions", ""), "",
-                             child.get("default_value", ""), child.get("packages", ""), tl, attrs_of(child)))
+                             default_of(child), child.get("packages", ""), tl, attrs_of(child)))
             elif child.tag == "var_array":
                 for c in child.findall("var"):
                     rows.append((c.get("name"), sname, child.get("type"), child.get("dimensions", ""),
-                                 child.get("name"), c.get("default_value", child.get("default_value", "")),
+                                 child.get("name"), default_of(child),
                                  c.get("packages", child.get("packages", "")), tl, attrs_of(c)))
     names = [r[0] for r in rows]
     dup = {n for n in names if names.count(n) > 1}

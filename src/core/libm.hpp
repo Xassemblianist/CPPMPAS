@@ -10,22 +10,29 @@
 // CPPWRF's ports (core/glibc_math.hpp, shared with CPPWRF); sincos, which CPPWRF does not use, is ported here.
 #include <cstdint>
 
+#include "core/backend.hpp"
 #include "core/glibc_math.hpp"
 
 namespace cppmpas::libm {
 
-// scalar libm (FMA variants)
-inline double sin(double x) { return ::cppwrf::glibc::sin(x); }        // __sin_fma
-inline double cos(double x) { return ::cppwrf::glibc::cos(x); }        // __cos_fma
-inline double asin(double x) { return ::cppwrf::glibc::asin(x); }      // __ieee754_asin_fma
-inline double acos(double x) { return ::cppwrf::glibc::acos(x); }      // __ieee754_acos_fma
-inline double atan2(double y, double x) { return ::cppwrf::glibc::atan2(y, x); }  // __ieee754_atan2_fma
-inline double pow(double x, double y) { return ::cppwrf::glibc::pow(x, y); }      // __ieee754_pow_fma
+// scalar libm (FMA variants); every entry is CPPMPAS_FORCEINLINE (host and device), as the CPPWRF ports are
+CPPMPAS_FORCEINLINE double sin(double x) { return ::cppwrf::glibc::sin(x); }        // __sin_fma
+CPPMPAS_FORCEINLINE double cos(double x) { return ::cppwrf::glibc::cos(x); }        // __cos_fma
+// asin / acos are the wrappers of math/w_asin_compat.c:30-38 and w_acos_compat.c:30-38 (the default asin / acos of the
+// x86-64 libm, LIBM_SVID_COMPAT): |x| > 1 returns __kernel_standard's NAN (+qNaN), not __ieee754_asin's 0/0
+CPPMPAS_FORCEINLINE double asin(double x) {  // __ieee754_asin_fma
+  return ::cppwrf::glibc::detail::fabs_(x) > 1.0 ? __builtin_nan("") : ::cppwrf::glibc::asin(x);
+}
+CPPMPAS_FORCEINLINE double acos(double x) {  // __ieee754_acos_fma
+  return ::cppwrf::glibc::detail::fabs_(x) > 1.0 ? __builtin_nan("") : ::cppwrf::glibc::acos(x);
+}
+CPPMPAS_FORCEINLINE double atan2(double y, double x) { return ::cppwrf::glibc::atan2(y, x); }  // __ieee754_atan2_fma
+CPPMPAS_FORCEINLINE double pow(double x, double y) { return ::cppwrf::glibc::pow(x, y); }      // __ieee754_pow_fma
 
 // one lane of libmvec's 2-lane SSE4 functions (glibc 2.41 sysdeps/x86_64/fpu/multiarch/svml_d_*2_core_sse4.S)
-inline double mvec_sin(double x) { return ::cppwrf::glibc::mvec::sin(x); }               // _ZGVbN2v_sin_sse4
-inline double mvec_cos(double x) { return ::cppwrf::glibc::mvec::cos(x); }               // _ZGVbN2v_cos_sse4
-inline double mvec_pow(double x, double y) { return ::cppwrf::glibc::mvec::pow(x, y); }  // _ZGVbN2vv_pow_sse4
+CPPMPAS_FORCEINLINE double mvec_sin(double x) { return ::cppwrf::glibc::mvec::sin(x); }               // _ZGVbN2v_sin_sse4
+CPPMPAS_FORCEINLINE double mvec_cos(double x) { return ::cppwrf::glibc::mvec::cos(x); }               // _ZGVbN2v_cos_sse4
+CPPMPAS_FORCEINLINE double mvec_pow(double x, double y) { return ::cppwrf::glibc::mvec::pow(x, y); }  // _ZGVbN2vv_pow_sse4
 
 // sincos: __sincos_fma, glibc 2.41 sysdeps/ieee754/dbl-64/s_sincos.c (built with FMA through
 // sysdeps/x86_64/fpu/multiarch/s_sincos-fma.c), statement by statement, with s_sin.c's do_sin, do_cos and
@@ -34,50 +41,50 @@ inline double mvec_pow(double x, double y) { return ::cppwrf::glibc::mvec::pow(x
 // (s_sincos.c sha256 c3e3cdbc..., s_sin.c e708cfa5...). The rounding-mode switch of SET_RESTORE_ROUND_53BIT and
 // errno are left out (round to nearest throughout), as in CPPWRF's sin / cos.
 // Unlike sin, sincos takes the 0.855469 <= |x| < 2.426265 branch through a + da = (hp0 - |x|) + hp1 split exactly
-// (s_sincos.c:63-66), so its sine there is not always __sin's.
-inline void sincos(double x, double* sinx, double* cosx) {
+// (s_sincos.c:67-69), so its sine there is not always __sin's.
+CPPMPAS_FORCEINLINE void sincos(double x, double* sinx, double* cosx) {
   namespace g = ::cppwrf::glibc::detail;
   constexpr double hp0 = 0x1.921fb54442d18p0, hp1 = 0x1.1a62633145c07p-54;  // usncs.h
-  const std::uint32_t k = std::uint32_t(g::asu(x) >> 32) & 0x7fffffffu;    // s_sincos.c:44-45
-  if (k < 0x400368fdu) {                                                    // :47
-    if (k < 0x3e400000u) {                                                  // :51  |x| < 2^-27
+  const std::uint32_t k = std::uint32_t(g::asu(x) >> 32) & 0x7fffffffu;    // s_sincos.c:43-44
+  if (k < 0x400368fdu) {                                                    // :46
+    if (k < 0x3e400000u) {                                                  // :50  |x| < 2^-27
       *sinx = x;
       *cosx = 1.0;
       return;
     }
-    if (k < 0x3feb6000u) {  // :59  |x| < 0.855469
+    if (k < 0x3feb6000u) {  // :59-64  |x| < 0.855469
       *sinx = g::do_sin(x, 0);
       *cosx = g::do_cos(x, 0);
       return;
     }
-    const double y = hp0 - g::fabs_(x);  // :66-71  |x| < 2.426265
+    const double y = hp0 - g::fabs_(x);  // :66-72  |x| < 2.426265
     const double a = y + hp1;
     const double da = (y - a) + hp1;
     *sinx = g::copysign(g::do_cos(a, da), x);
     *cosx = g::do_sin(a, da);
     return;
   }
-  if (k < 0x7ff00000u) {  // :74  |x| < 2^1024
+  if (k < 0x7ff00000u) {  // :74-75  |x| < 2^1024
     double a, da;
-    unsigned n = k < 0x419921FBu ? unsigned(g::reduce_sincos(x, &a, &da)) : unsigned(g::branred(x, &a, &da));  // :80
+    unsigned n = k < 0x419921FBu ? unsigned(g::reduce_sincos(x, &a, &da)) : unsigned(g::branred(x, &a, &da));  // :81
     n = n & 3;
-    if (n == 1 || n == 2) {  // :83-87
+    if (n == 1 || n == 2) {  // :84-88
       a = -a;
       da = -da;
     }
     double* s = sinx;
     double* c = cosx;
-    if (n & 1) {  // :89-94
+    if (n & 1) {  // :90-95
       double* t = c;
       c = s;
       s = t;
     }
-    *s = g::do_sin(a, da);  // :96-98
+    *s = g::do_sin(a, da);  // :97-99
     const double xx = g::do_cos(a, da);
     *c = (n & 2) ? -xx : xx;
     return;
   }
-  *sinx = *cosx = x / x;  // :104
+  *sinx = *cosx = x / x;  // :106 (errno of :103-104 left out)
 }
 
 }  // namespace cppmpas::libm

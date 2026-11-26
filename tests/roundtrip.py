@@ -3,7 +3,8 @@
 """Round trip: cppmpas reads an MPAS file and writes it back; the result must be identical (tools/mpas_compare.py,
 tolerance 0: format, dimensions, global and variable attributes, value bytes) to the source restricted to the
 variables CPPMPAS handles, with one MPAS rule applied to the source: connectivity slots past nEdgesOnCell /
-nEdgesOnEdge are written as 0 (prewrite_reindex, mpas_stream_manager.F:5053, 5074, 5095, 5152).
+nEdgesOnEdge are written as 0 (prewrite_reindex, mpas_stream_manager.F:5053, 5074, 5095, 5152). file_id and
+parent_id, which mpas_compare.py skips, are compared here.
 
 usage: roundtrip.py <cppmpas> <mpas_compare.py> <src.nc> <workdir> grid|init [scalars]
 """
@@ -76,10 +77,17 @@ def main():
     print(r.stderr, end="", file=sys.stderr)
     if r.returncode != 0 or "SAME" not in r.stdout:
         return 1
-    with nc.Dataset(cand) as c:
+    with nc.Dataset(cand) as c, nc.Dataset(src) as s:
         if sorted(c.variables) != sorted(names):
             print("FAIL candidate variables", sorted(set(c.variables) ^ set(names)))
             return 1
+        # mpas_compare.py leaves out the run-dependent file_id / parent_id; a round trip must keep them exactly
+        for a in ("file_id", "parent_id"):
+            want = s.getncattr(a) if a in s.ncattrs() else None
+            got = c.getncattr(a) if a in c.ncattrs() else None
+            if got != want:
+                print(f"FAIL global attribute {a}: {got!r}, source {want!r}")
+                return 1
     return 0
 
 

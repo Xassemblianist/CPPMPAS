@@ -22,7 +22,8 @@ struct HistoryOptions {
   // core % git_version: -DMPAS_GIT_VERSION=$(VER) (Makefile:1021-1026); the reference recipe builds with VER=v8.4.2
   std::string git_version = "v8.4.2";
   int nprocs = 1;
-  std::string file_id = "";  // MPAS writes a random 40-character id (mpas_stream_manager.F:4306-4310)
+  // empty: a random 10-character [0-9a-z] id, as MPAS writes (mpas_stream_manager.F:4263, 4306-4310; random_id.c)
+  std::string file_id = "";
 };
 
 // Writes an MPAS history file for the given fields: CDF-5 (SMIOL's default format, smiolf.F90:426-430, with no

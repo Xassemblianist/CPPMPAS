@@ -5,10 +5,14 @@
 //   cppmpas history   <init> <out> --fields a,b,... [--scalars ...] [--file-id ID]
 //   cppmpas dump      <in> <out.nc> [--init] [--scalars ...]
 //   cppmpas init      <init> <out> --fields a,b,... [--namelist namelist.atmosphere] [--scalars ...] [--file-id ID]
-// init runs the computations of atm_mpas_init_block (core_atmosphere/atm_init.hpp) on an init file and writes the
+//                     [--unverified]
+// init runs what atm_core_init does to the fields of a cold start (core_atmosphere/atm_init.hpp: len_disp, the
+// compatibility checks, atm_mpas_init_block, xtime) on an init file and writes the
 // given fields as MPAS writes them to a history / restart file (global order, Registry layout).
 // dump writes every array as MPAS holds it in memory on one rank: local order, local 1-based indices, the garbage
 // element included (dimensions <dim>_mem); compare with MPAS memory dumps after nothing more than a type change.
+// The var_array scalars is written whole, as "scalars" (num_scalars, nVertLevels, nCells+1) with the attribute
+// constituents; character fields as their StrLen characters.
 #include <algorithm>
 #include <cstdio>
 #include <iostream>
@@ -30,14 +34,17 @@ std::vector<std::string> split(const std::string& s) {
   std::vector<std::string> v;
   std::stringstream ss(s);
   std::string x;
-  while (std::getline(ss, x, ','))
-    if (!x.empty()) v.push_back(x);
+  while (std::getline(ss, x, ',')) {
+    if (x.empty()) throw Error("empty name in the list '" + s + "'");
+    v.push_back(x);
+  }
+  if (v.empty() || s.back() == ',') throw Error("empty name in the list '" + s + "'");
   return v;
 }
 
 struct Args {
   std::vector<std::string> pos;
-  bool init = false;
+  bool init = false, unverified = false;
   std::vector<std::string> scalars{"qv"}, fields;
   std::string file_id, namelist;
 };
@@ -51,6 +58,7 @@ Args parse(int argc, char** argv) {
       return argv[++i];
     };
     if (s == "--init") a.init = true;
+    else if (s == "--unverified") a.unverified = true;
     else if (s == "--scalars") a.scalars = split(next());
     else if (s == "--fields") a.fields = split(next());
     else if (s == "--file-id") a.file_id = next();
@@ -82,7 +90,16 @@ void dump(MpasInput& in, const std::string& out) {
   std::vector<Item> items;
   for (const auto& n : names) {
     FieldRef r = field_ref(in, n);
-    if (r.c || r.scalar_slot > 0) continue;
+    if (r.scalar_slot > 0) continue;  // written once below, as the whole var_array
+    if (r.c) {
+      if (std::find(defined.begin(), defined.end(), "StrLen") == defined.end()) {
+        f.def_dim("StrLen", 64);
+        defined.push_back("StrLen");
+      }
+      f.def_var(n, NC_CHAR, {"StrLen"});
+      items.push_back({n, r});
+      continue;
+    }
     const FArray<real>* ra = r.r;
     const FArray<int>* ia = r.i;
     const std::vector<int>& ext = ra ? ra->extents() : ia->extents();
@@ -102,9 +119,26 @@ void dump(MpasInput& in, const std::string& out) {
     f.def_var(n, ra ? NC_DOUBLE : NC_INT, dims);
     items.push_back({n, r});
   }
+  const FArray<real>& sc = in.state.scalars;
+  if (sc.allocated()) {
+    f.def_dim("num_scalars_mem", static_cast<std::size_t>(sc.extent(0)));
+    if (std::find(defined.begin(), defined.end(), "nVertLevels_mem") == defined.end())
+      f.def_dim("nVertLevels_mem", static_cast<std::size_t>(sc.extent(1)));
+    if (std::find(defined.begin(), defined.end(), "nCells_mem") == defined.end())
+      f.def_dim("nCells_mem", static_cast<std::size_t>(sc.extent(2)));
+    f.def_var("scalars", NC_DOUBLE, {"nCells_mem", "nVertLevels_mem", "num_scalars_mem"});
+    std::string names_att;
+    for (const auto& s : in.state.scalar_names) names_att += (names_att.empty() ? "" : " ") + s;
+    f.put_att_text("scalars", "constituents", names_att);
+  }
   f.enddef();
+  if (sc.allocated()) f.put_double("scalars", std::vector<double>(sc.data(), sc.data() + sc.size()));
   for (const auto& it : items) {
-    if (it.ref.r)
+    if (it.ref.c) {
+      std::vector<char> v(it.ref.c->begin(), it.ref.c->end());
+      v.resize(64, ' ');
+      f.put_char(it.name, v);
+    } else if (it.ref.r)
       f.put_double(it.name, std::vector<double>(it.ref.r->data(), it.ref.r->data() + it.ref.r->size()));
     else
       f.put_int(it.name, std::vector<int>(it.ref.i->data(), it.ref.i->data() + it.ref.i->size()));
@@ -148,12 +182,22 @@ int run(int argc, char** argv) {
                  "written yet\n";
   } else if (cmd == "init") {
     if (a.pos.size() != 2 || a.fields.empty())
-      throw Error("usage: cppmpas init <init> <out> --fields a,b,... [--namelist file] [--scalars ...] [--file-id ID]");
+      throw Error("usage: cppmpas init <init> <out> --fields a,b,... [--namelist file] [--scalars ...] [--file-id ID] "
+                  "[--unverified]");
     a.init = true;
     const InitConfig cfg = read_init_config(a.namelist);
     MpasInput in = load(a, a.pos[0]);
+    // an array this port computes that is not yet proven against MPAS needs --unverified (CONSTITUTION.md 3.1)
+    const auto& computed = init_block_computed_fields();
+    const auto verified = init_block_verified_fields(in.mesh.nVertLevels);
+    for (const auto& f : a.fields) {
+      const bool is_computed = std::find(computed.begin(), computed.end(), f) != computed.end();
+      if (is_computed && !a.unverified && std::find(verified.begin(), verified.end(), f) == verified.end())
+        throw Error("field " + f + " is computed by a port not yet verified against MPAS output; --unverified "
+                    "writes it anyway");
+    }
     std::vector<std::string> log;
-    atm_mpas_init_block(in.mesh, in.state, in.diag, cfg, log);
+    atm_core_init(in.mesh, in.state, in.diag, cfg, log);
     for (const auto& l : log) std::cerr << "MPAS log: " << l << "\n";
     HistoryOptions opt;
     opt.file_id = a.file_id;

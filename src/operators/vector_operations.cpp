@@ -33,6 +33,11 @@ void mpas_initialize_vectors(Mesh& m) {
   if (m.is_periodic)
     throw Error("mpas_initialize_vectors: the is_periodic branches (mpas_vector_operations.F:717, 729, 742) are not ported");
   const int nCells = m.nCells, nEdges = m.nEdges;
+  // the boundary-edge branches (cell1 or cell2 == nCells+1, :722-724, :734-736) are not verified
+  for (int iEdge = 1; iEdge <= nEdges; ++iEdge)
+    if (m.cellsOnEdge(1, iEdge) == nCells + 1 || m.cellsOnEdge(2, iEdge) == nCells + 1)
+      throw Error("mpas_initialize_vectors: edge " + std::to_string(iEdge) +
+                  " is a boundary edge (cellsOnEdge = nCells+1): that branch is not verified");
   auto& lvu = m.localVerticalUnitVectors;
   auto& env = m.edgeNormalVectors;
   auto& ctp = m.cellTangentPlane;
@@ -133,7 +138,7 @@ void elgs(real* A, int N, int* INDX) {
   auto a = [&](int i, int j) -> real& { return A[(i - 1) + N * (j - 1)]; };
   std::vector<real> C(static_cast<std::size_t>(N) + 1);
   for (int I = 1; I <= N; ++I) INDX[I - 1] = I;
-  for (int I = 1; I <= N; ++I) {  // :1806-1812
+  for (int I = 1; I <= N; ++I) {  // :1805-1812
     real C1 = 0.0;
     for (int J = 1; J <= N; ++J) C1 = maxsd(C1, std::fabs(a(I, J)));
     C[I] = C1;
@@ -183,7 +188,7 @@ void mpas_rbf_interp_func_3D_plane_vec_const_dir_comp_coeffs(int pointCount, con
                                                             real alpha, const real* planeBasisVectors,
                                                             real* coefficients) {
   const int pc = pointCount;
-  const int matrixSize = pc + 2;  // :1101
+  const int matrixSize = pc + 2;  // :1104
   auto SP = [&](int i, int d) { return sourcePoints[(i - 1) + pc * (d - 1)]; };
   auto UV = [&](int i, int d) { return unitVectors[(i - 1) + pc * (d - 1)]; };
   auto PB = [&](int r, int d) { return planeBasisVectors[(r - 1) + 2 * (d - 1)]; };
@@ -191,11 +196,11 @@ void mpas_rbf_interp_func_3D_plane_vec_const_dir_comp_coeffs(int pointCount, con
   auto PSP = [&](int i, int d) -> real& { return planarSourcePoints[(i - 1) + pc * (d - 1)]; };
   auto PUV = [&](int i, int d) -> real& { return planarUnitVectors[(i - 1) + pc * (d - 1)]; };
   const std::size_t ms = static_cast<std::size_t>(matrixSize);
-  std::vector<real> matrix(ms * ms, 0.0), rhs(ms * 2, 0.0), coeffs(ms * 2, 0.0);  // :1103-1105
+  std::vector<real> matrix(ms * ms, 0.0), rhs(ms * 2, 0.0), coeffs(ms * 2, 0.0);  // :1106-1108
   auto MAT = [&](int i, int j) -> real& { return matrix[(i - 1) + ms * (j - 1)]; };
   auto RHS = [&](int i, int d) -> real& { return rhs[(i - 1) + ms * (d - 1)]; };
 
-  for (int i = 1; i <= pc; ++i) {  // :1107-1112, four 3-term SUMs
+  for (int i = 1; i <= pc; ++i) {  // :1110-1115, four 3-term SUMs
     for (int r = 1; r <= 2; ++r) {
       real s = 0.0;
       for (int d = 1; d <= 3; ++d) s = s + SP(i, d) * PB(r, d);
@@ -205,34 +210,34 @@ void mpas_rbf_interp_func_3D_plane_vec_const_dir_comp_coeffs(int pointCount, con
       PUV(i, r) = u;
     }
   }
-  real planarDestinationPoint[2];  // :1113-1114
+  real planarDestinationPoint[2];  // :1116-1117
   for (int r = 1; r <= 2; ++r) {
     real s = 0.0;
     for (int d = 1; d <= 3; ++d) s = s + destinationPoint[d - 1] * PB(r, d);
     planarDestinationPoint[r - 1] = s;
   }
 
-  std::vector<real> matrixWork(static_cast<std::size_t>(pc) * pc), rhsWork(static_cast<std::size_t>(pc) * 2);
+  std::vector<real> matrixWork(static_cast<std::size_t>(pc) * pc), rhsWork(static_cast<std::size_t>(pc) * 2);  // :1119-1121
   set_up_vector_dirichlet_rbf_matrix_and_rhs(pc, 2, planarSourcePoints.data(), planarUnitVectors.data(),
                                              planarDestinationPoint, alpha, matrixWork.data(), rhsWork.data());
-  for (int j = 1; j <= pc; ++j)  // :1120-1121
+  for (int j = 1; j <= pc; ++j)  // :1123-1124
     for (int i = 1; i <= pc; ++i) MAT(i, j) = matrixWork[(i - 1) + pc * (j - 1)];
   for (int d = 1; d <= 2; ++d)
     for (int i = 1; i <= pc; ++i) RHS(i, d) = rhsWork[(i - 1) + pc * (d - 1)];
-  for (int i = 1; i <= pc; ++i) {  // :1123-1126
+  for (int i = 1; i <= pc; ++i) {  // :1126-1129
     MAT(i, pc + 1) = PUV(i, 1);
     MAT(i, pc + 2) = PUV(i, 2);
     MAT(pc + 1, i) = MAT(i, pc + 1);
     MAT(pc + 2, i) = MAT(i, pc + 2);
   }
-  for (int i = 1; i <= 2; ++i) RHS(pc + i, i) = 1.0;  // :1127-1129
+  for (int i = 1; i <= 2; ++i) RHS(pc + i, i) = 1.0;  // :1130-1132
 
-  std::vector<real> matrixCopy = matrix;  // :1132-1134
+  std::vector<real> matrixCopy = matrix;  // :1135-1137
   std::vector<int> pivotIndices(ms);
   mpas_legs(matrix.data(), matrixSize, &rhs[0], &coeffs[0], pivotIndices.data());
   mpas_legs(matrixCopy.data(), matrixSize, &rhs[ms], &coeffs[ms], pivotIndices.data());
 
-  for (int i = 1; i <= 3; ++i)  // :1137-1140
+  for (int i = 1; i <= 3; ++i)  // :1140-1143
     for (int p = 1; p <= pc; ++p)
       coefficients[(p - 1) + pc * (i - 1)] = PB(1, i) * coeffs[p - 1] + PB(2, i) * coeffs[ms + (p - 1)];
 }
@@ -249,7 +254,7 @@ void mpas_init_reconstruct(Mesh& m) {
     const real cellCenter[3] = {m.xCell(iCell), m.yCell(iCell), m.zCell(iCell)};
     const std::size_t pc = static_cast<std::size_t>(pointCount);
     std::vector<real> loc(pc * 3), nrm(pc * 3), coeffs(pc * 3);
-    for (int i = 1; i <= pointCount; ++i) {  // :137-151
+    for (int i = 1; i <= pointCount; ++i) {  // :139-151
       const int iEdge = m.edgesOnCell(i, iCell);
       loc[(i - 1) + pc * 0] = m.xEdge(iEdge);
       loc[(i - 1) + pc * 1] = m.yEdge(iEdge);

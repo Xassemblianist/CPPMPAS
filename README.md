@@ -27,9 +27,10 @@ checks against WRF, all at tolerance 0). CPPMPAS applies the same method to MPAS
   writes them (an `initdump` stream is prepared for the reference pipeline).
 
 Build: `cmake -S . -B build && cmake --build build` (C++20, NetCDF-C; FP64). Tests need
-`-DCPPMPAS_CASES_DIR=<extracted NCAR test-case tarballs> -DCPPMPAS_MPAS_COMPARE=<tools/mpas_compare.py>
+`-DCPPMPAS_CASES_DIR=<extracted NCAR test-case tarballs>
 -DCPPMPAS_MPAS_REGISTRY=<MPAS v8.4.2 src/core_atmosphere/Registry.xml> -DCPPMPAS_REFS_DIR=<directory with the
-extracted mpas842-dbl-{mw,sc,jw}-001 releases>`; `unit_libm` needs glibc 2.41 on an x86-64 CPU with FMA and AVX2.
+extracted mpas842-dbl-{mw,sc,jw}-001 releases>`; they compare with the in-tree `tools/mpas_compare.py`, whose own
+tests run as `compare_unit` and `compare_mutants`. `unit_libm` needs glibc 2.41 on an x86-64 CPU with FMA and AVX2.
 
 ## Goal
 

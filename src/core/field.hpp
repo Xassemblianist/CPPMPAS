@@ -15,16 +15,19 @@
 
 namespace cppmpas {
 
-// Kernel view: trivially copyable, CPPMPAS_HD access, 1-based Fortran indexing.
+// Kernel view: trivially copyable, CPPMPAS_HD access, 1-based Fortran indexing. The offset is computed in 64 bits:
+// on the NCAR x1.65536002 mesh (nEdges ~ 1.97e8) u(k, iEdge) with nVertLevels = 55 is ~1.1e10 elements in.
 template <class T> struct FView {
   T* p = nullptr;
   int e0 = 1, e1 = 1, e2 = 1;  // extents of the first three dimensions
-  CPPMPAS_HD T& operator()(int i) const { return p[i - 1]; }
-  CPPMPAS_HD T& operator()(int i, int j) const { return p[(i - 1) + e0 * (j - 1)]; }
-  CPPMPAS_HD T& operator()(int i, int j, int k) const { return p[(i - 1) + e0 * ((j - 1) + e1 * (k - 1))]; }
-  CPPMPAS_HD T& operator()(int i, int j, int k, int l) const {
-    return p[(i - 1) + e0 * ((j - 1) + e1 * ((k - 1) + e2 * (l - 1)))];
+  CPPMPAS_HD std::ptrdiff_t offset(int i, int j = 1, int k = 1, int l = 1) const {
+    using D = std::ptrdiff_t;
+    return D(i - 1) + D(e0) * (D(j - 1) + D(e1) * (D(k - 1) + D(e2) * D(l - 1)));
   }
+  CPPMPAS_HD T& operator()(int i) const { return p[i - 1]; }
+  CPPMPAS_HD T& operator()(int i, int j) const { return p[offset(i, j)]; }
+  CPPMPAS_HD T& operator()(int i, int j, int k) const { return p[offset(i, j, k)]; }
+  CPPMPAS_HD T& operator()(int i, int j, int k, int l) const { return p[offset(i, j, k, l)]; }
 };
 
 template <class T> class FArray {

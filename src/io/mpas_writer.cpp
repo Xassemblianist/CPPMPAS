@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <map>
+#include <random>
 #include <set>
 
 #include "io/registry.hpp"
@@ -43,6 +44,30 @@ std::vector<std::string> file_dims(const RegistryVar& rv) {
   for (auto it = sp.rbegin(); it != sp.rend(); ++it) d.push_back(*it);
   if (rv.type == "text") d.push_back("StrLen");
   return d;
+}
+
+// Defines the dimensions of a field not yet defined, in the order MPAS defines them: Fortran order (StrLen first for
+// character fields, mpas_io_streams.F:1518-1519, 1610-1611), the inner dimensions, the outer dimension, then Time
+// (mpas_io_streams.F:1700-1745). dims is the C-order list of file_dims(). len(d) gives the length of d.
+template <class Len>
+void define_dims(NcFile& f, const std::vector<std::string>& dims, std::vector<std::string>& defined, Len len) {
+  for (auto it = dims.rbegin(); it != dims.rend(); ++it) {
+    if (std::find(defined.begin(), defined.end(), *it) != defined.end()) continue;
+    f.def_dim(*it, len(*it));
+    defined.push_back(*it);
+  }
+}
+
+// gen_random (random_id.c:35-46) with idLength = 10 (mpas_stream_manager.F:4263, 4306-4310): ten characters of
+// [0-9a-z]. MPAS seeds rand() with time(NULL) (random_id.c:21), so the id is not reproducible from run to run.
+std::string random_file_id() {
+  static const char alphanum[] = "0123456789abcdefghijklmnopqrstuvwxyz";
+  std::random_device rd;
+  std::mt19937 gen(rd());
+  std::uniform_int_distribution<int> pick(0, static_cast<int>(sizeof(alphanum)) - 2);
+  std::string id;
+  for (int i = 0; i < 10; ++i) id += alphanum[pick(gen)];
+  return id;
 }
 
 // prewrite_reindex (mpas_stream_manager.F:4894-5210): local connectivity -> global IDs, still in local element order.
@@ -107,6 +132,7 @@ void write_values(NcFile& f, MpasInput& in, const std::string& name) {
   const Mesh& m = in.mesh;
   const long record = rv.has_time() ? 0 : -1;
   if (ref.c) {
+    if (ref.c->size() > kStrLen) throw Error("write " + name + ": value longer than StrLen = 64");
     std::vector<char> v(ref.c->begin(), ref.c->end());
     v.resize(kStrLen, ' ');
     f.put_char(name, v, record);
@@ -160,13 +186,11 @@ void write_round_trip(MpasInput& in, const std::string& path, std::vector<std::s
   for (const auto& n : fields) {
     const RegistryVar& rv = registry_var(n);
     const auto dims = file_dims(rv);
-    for (const auto& d : dims) {
-      if (std::find(defined.begin(), defined.end(), d) != defined.end()) continue;
+    define_dims(f, dims, defined, [&](const std::string& d) {
       const auto it = in.source.dims.find(d);
       if (it == in.source.dims.end()) throw Error("round trip: dimension " + d + " not in the source");
-      f.def_dim(d, it->second.second ? NC_UNLIMITED : it->second.first);
-      defined.push_back(d);
-    }
+      return it->second.second ? NC_UNLIMITED : it->second.first;
+    });
     f.def_var(n, nc_type_of(rv), dims);
     for (const auto& a : in.source.var_atts[n]) f.put_att(n, a);
   }
@@ -180,22 +204,25 @@ void write_history(MpasInput& in, const std::string& path, const std::vector<std
                    const HistoryOptions& opt) {
   if (fields.empty()) throw Error("history: no fields to write");
   const Mesh& m = in.mesh;
+  // every field is checked before the file is created: no partial file is left behind
+  for (const auto& n : fields) {
+    const RegistryVar& rv = registry_var(n);
+    const FieldRef ref = field_ref(in, n);  // a field without a port is an error
+    // a character field MPAS writes always holds a value (xtime from the clock, initial_time from the init file)
+    const bool held = ref.c ? !ref.c->empty() : ref.i ? ref.i->allocated() : ref.r->allocated();
+    if (!held) throw Error("write " + n + ": the field was neither read nor computed");
+    for (const auto& kv : rv.attrs)
+      if (kv.first == "_FillValue") throw Error("history: numeric _FillValue attributes are not handled (" + n + ")");
+  }
   NcFile f = NcFile::create(path, NC_64BIT_DATA);
   std::vector<std::string> defined;
   for (const auto& n : fields) {
     const RegistryVar& rv = registry_var(n);
-    (void)field_ref(in, n);  // a field without a port is an error here, before anything is written
     const auto dims = file_dims(rv);
-    for (const auto& d : dims) {
-      if (std::find(defined.begin(), defined.end(), d) != defined.end()) continue;
-      f.def_dim(d, d == "Time" ? NC_UNLIMITED : file_dim(m, d));
-      defined.push_back(d);
-    }
+    define_dims(f, dims, defined,
+                [&](const std::string& d) { return d == "Time" ? NC_UNLIMITED : file_dim(m, d); });
     f.def_var(n, nc_type_of(rv), dims);
-    for (const auto& [k, v] : rv.attrs) {
-      if (k == "_FillValue") throw Error("history: numeric _FillValue attributes are not handled (" + n + ")");
-      f.put_att_text(n, k, v);
-    }
+    for (const auto& [k, v] : rv.attrs) f.put_att_text(n, k, v);
   }
   // mpas_subdriver.F:497-530 (character values are written trimmed, mpas_io.F:6036, 6208-6210)
   f.put_att_text("", "model_name", "mpas");
@@ -217,7 +244,7 @@ void write_history(MpasInput& in, const std::string& path, const std::vector<std
   };
   f.put_att_text("", "parent_id", trimmed(m.parent_id));
   f.put_att_text("", "mesh_spec", trimmed(m.mesh_spec));
-  f.put_att_text("", "file_id", opt.file_id);
+  f.put_att_text("", "file_id", opt.file_id.empty() ? random_file_id() : opt.file_id);
   f.enddef();
   for (const auto& n : fields) write_values(f, in, n);
   f.close();

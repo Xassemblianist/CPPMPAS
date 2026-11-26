@@ -53,7 +53,8 @@ def copy_grid_var(src, dst, name, fill_unused=None):
     out[...] = v[...]
 
 
-def write_init(grid_path, out_path, nvl, seed, extra=None, drop=(), modify=None, ntime=1):
+def write_init(grid_path, out_path, nvl, seed, extra=None, drop=(), modify=None, ntime=1, strlen=64, nvlp1=None,
+               atts=None):
     rng = np.random.default_rng(seed)
     with nc.Dataset(grid_path) as g, nc.Dataset(out_path, "w", format="NETCDF3_64BIT_DATA") as d:
         g.set_auto_mask(False)
@@ -61,19 +62,21 @@ def write_init(grid_path, out_path, nvl, seed, extra=None, drop=(), modify=None,
         for dn in ("nCells", "nEdges", "nVertices", "maxEdges", "maxEdges2", "TWO", "vertexDegree"):
             d.createDimension(dn, len(g.dimensions[dn]))
         d.createDimension("Time", None)
-        d.createDimension("StrLen", 64)
+        d.createDimension("StrLen", strlen)
         d.createDimension("R3", 3)
         d.createDimension("FIFTEEN", 15)
         d.createDimension("nVertLevels", nvl)
-        d.createDimension("nVertLevelsP1", nvl + 1)
+        d.createDimension("nVertLevelsP1", nvl + 1 if nvlp1 is None else nvlp1)
         d.setncattr("on_a_sphere", g.getncattr("on_a_sphere").strip())
         d.setncattr("sphere_radius", g.getncattr("sphere_radius"))
         d.setncattr("is_periodic", "NO")
         d.setncattr("x_period", 0.0)
         d.setncattr("y_period", 0.0)
-        d.setncattr("file_id", "abcdefghij0123456789abcdefghij0123456789")
-        d.setncattr("parent_id", "parent0123")
-        d.setncattr("mesh_spec", "0.0")
+        # MPAS writes a 10-character [0-9a-z] file_id (mpas_stream_manager.F:4263, 4306-4310)
+        g_atts = {"file_id": "abcdefghij", "parent_id": "parent0123", "mesh_spec": "0.0"}
+        g_atts.update(atts or {})
+        for k, val in g_atts.items():
+            d.setncattr(k, val)
         for n in MESH:
             if n in drop:
                 continue
@@ -85,9 +88,9 @@ def write_init(grid_path, out_path, nvl, seed, extra=None, drop=(), modify=None,
             v.setncattr("units", "YYYY-MM-DD_hh:mm:ss")
             if n == "xtime":
                 for t, s in enumerate(times):
-                    v[t, :] = nc.stringtochar(np.array([s.ljust(64)], "S64"))[0]
+                    v[t, :] = nc.stringtochar(np.array([s.ljust(strlen)], f"S{strlen}"))[0]
             else:
-                v[:] = nc.stringtochar(np.array([times[0].ljust(64)], "S64"))[0]
+                v[:] = nc.stringtochar(np.array([times[0].ljust(strlen)], f"S{strlen}"))[0]
         allvars = dict(INIT)
         for s in SCALARS:
             allvars[s] = (("Time", "nCells", "nVertLevels"), "f8")
@@ -117,12 +120,13 @@ def main():
     write_init(sc, out / "sc_init.nc", 3, 2)
 
     # broken inputs (each must be rejected with a clear message)
-    def grid_variant(name, fmt=None, modify=None, drop=()):
+    def grid_variant(name, fmt=None, modify=None, drop=(), drop_dims=()):
         with nc.Dataset(mw) as g:
             g.set_auto_mask(False)
             with nc.Dataset(out / name, "w", format=fmt or "NETCDF3_64BIT_OFFSET") as d:
                 for dn, dim in g.dimensions.items():
-                    d.createDimension(dn, None if dim.isunlimited() else len(dim))
+                    if dn not in drop_dims:
+                        d.createDimension(dn, None if dim.isunlimited() else len(dim))
                 for a in g.ncattrs():
                     d.setncattr(a, g.getncattr(a))
                 for n in MESH:
@@ -152,6 +156,42 @@ def main():
         a[5, 2] = 0
         d["cellsOnCell"][:] = a
     grid_variant("err_boundary.nc", modify=boundary)
+
+    def set_value(var, index, value):
+        def f(d):
+            a = d[var][:]
+            a[index] = value
+            d[var][:] = a
+        return f
+    n_cells, n_edges = 1600, 4800  # the MW mesh
+    # every used connectivity slot must be a global ID 1..n (cell slots: 0 is the mesh boundary)
+    grid_variant("err_boundary_edge.nc", modify=set_value("cellsOnEdge", (7, 1), 0))
+    grid_variant("err_boundary_vertex.nc", modify=set_value("cellsOnVertex", (9, 2), 0))
+    grid_variant("err_cellsOnEdge_range.nc", modify=set_value("cellsOnEdge", (7, 1), n_cells + 1))
+    grid_variant("err_cellsOnCell_neg.nc", modify=set_value("cellsOnCell", (5, 2), -3))
+    grid_variant("err_verticesOnEdge_zero.nc", modify=set_value("verticesOnEdge", (4, 0), 0))
+    grid_variant("err_edgesOnVertex_range.nc", modify=set_value("edgesOnVertex", (3, 1), n_edges + 5))
+    grid_variant("err_edgesOnEdge_range.nc", modify=set_value("edgesOnEdge", (6, 0), n_edges + 1))
+    grid_variant("err_nEdgesOnEdge.nc", modify=set_value("nEdgesOnEdge", 10, 13))  # maxEdges2 = 12
+    grid_variant("err_nEdgesOnCell.nc", modify=set_value("nEdgesOnCell", 3, 7))    # maxEdges = 6
+    grid_variant("err_missing_nvl.nc", drop_dims=("nVertLevels", "nTracers"))
+
+    # a mesh dimension of length 0 (in CDF-1/2/5 only the record dimension can have length 0)
+    with nc.Dataset(out / "err_zero_dim.nc", "w", format="NETCDF3_64BIT_OFFSET") as d:
+        for dn, n in (("nCells", 4), ("nEdges", 6), ("nVertices", None), ("maxEdges", 6), ("maxEdges2", 12),
+                      ("vertexDegree", 3)):
+            d.createDimension(dn, n)
+    with nc.Dataset(out / "err_two.nc", "w", format="NETCDF3_64BIT_OFFSET") as d:
+        for dn, n in (("nCells", 4), ("nEdges", 6), ("nVertices", 3), ("maxEdges", 6), ("maxEdges2", 12),
+                      ("vertexDegree", 3), ("TWO", 3)):
+            d.createDimension(dn, n)
+
+    # global attributes: a joined parent_id longer than StrKIND = 512 is cut (mpas_domain_types.inc:33), a value
+    # longer than StrKIND is not handled
+    write_init(mw, out / "mw_init_long_parent.nc", 2, 8, atts={"parent_id": "p" * 510})
+    write_init(mw, out / "err_long_mesh_spec.nc", 2, 9, atts={"mesh_spec": "m" * 513})
+    write_init(mw, out / "err_strlen.nc", 2, 10, strlen=32)
+    write_init(mw, out / "err_nvlp1.nc", 2, 11, nvlp1=4)
 
     def bdymask(d):
         a = d["bdyMaskCell"][:]
