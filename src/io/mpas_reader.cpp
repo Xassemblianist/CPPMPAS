@@ -188,7 +188,7 @@ double real_att(const NcFile& f, const std::string& name) {
 }
 
 // Fortran's trim: trailing blanks only (SMIOLf_inquire_att copies every byte of the attribute, NULs included,
-// smiolf.F90:1630-1631)
+// smiolf.F90:1632-1633)
 std::string rtrim(std::string s) {
   while (!s.empty() && s.back() == ' ') s.pop_back();
   return s;
@@ -506,6 +506,12 @@ FieldRef field_ref(MpasInput& in, const std::string& name) {
   if (!find_registry_var(name)) throw Error("variable '" + name + "' is not defined in MPAS-Atmosphere's Registry");
   throw Error("variable '" + name + "' has no CPPMPAS port (not read or written)");
 }
+
+void read_registry_field(const NcFile& f, const Mesh& m, const std::string& name, FArray<real>& a) {
+  read_into(f, m, registry_var(name), a);
+}
+
+void read_field_ref(const NcFile& f, MpasInput& in, const std::string& name) { read_field(f, in, name); }
 
 MpasInput read_mpas_grid(const std::string& path) {
   const NcFile f = NcFile::open_read(path);

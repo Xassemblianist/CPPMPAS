@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "io/netcdf_file.hpp"
 
+#include <limits>
+
 namespace cppmpas {
 
 void NcFile::check(int status, const std::string& what) const {
@@ -183,9 +185,17 @@ void NcFile::record_range(const std::string& name, long record, std::vector<std:
 }
 
 namespace {
-std::size_t product(const std::vector<std::size_t>& c) {
+// the element count of a hyperslab; a count that overflows size_t is an error (a netCDF-4 file can define a variable
+// of 2^64 + 1 elements, which would wrap to a 1-element buffer)
+std::size_t product(const std::vector<std::size_t>& c, const std::string& what) {
+  for (auto x : c)
+    if (x == 0) return 0;
   std::size_t n = 1;
-  for (auto x : c) n *= x;
+  for (auto x : c) {
+    if (n > std::numeric_limits<std::size_t>::max() / x)
+      throw Error(what + ": the number of elements overflows size_t");
+    n *= x;
+  }
   return n;
 }
 }  // namespace
@@ -193,21 +203,21 @@ std::size_t product(const std::vector<std::size_t>& c) {
 std::vector<double> NcFile::get_double(const std::string& name, long record) const {
   std::vector<std::size_t> s, c;
   record_range(name, record, s, c);
-  std::vector<double> out(product(c));
+  std::vector<double> out(product(c, path_ + ": read " + name));
   if (!out.empty()) check(nc_get_vara_double(ncid_, varid(name), s.data(), c.data(), out.data()), "read " + name);
   return out;
 }
 std::vector<int> NcFile::get_int(const std::string& name, long record) const {
   std::vector<std::size_t> s, c;
   record_range(name, record, s, c);
-  std::vector<int> out(product(c));
+  std::vector<int> out(product(c, path_ + ": read " + name));
   if (!out.empty()) check(nc_get_vara_int(ncid_, varid(name), s.data(), c.data(), out.data()), "read " + name);
   return out;
 }
 std::vector<char> NcFile::get_char(const std::string& name, long record) const {
   std::vector<std::size_t> s, c;
   record_range(name, record, s, c);
-  std::vector<char> out(product(c));
+  std::vector<char> out(product(c, path_ + ": read " + name));
   if (!out.empty()) check(nc_get_vara_text(ncid_, varid(name), s.data(), c.data(), out.data()), "read " + name);
   return out;
 }
@@ -249,19 +259,22 @@ void NcFile::enddef() { check(nc_enddef(ncid_), "enddef"); }
 void NcFile::put_double(const std::string& name, const std::vector<double>& v, long record) {
   std::vector<std::size_t> s, c;
   record_range(name, record, s, c);  // record >= 0 needs a variable whose first dimension is the record dimension
-  if (product(c) != v.size()) throw Error(path_ + ": write " + name + ": size mismatch");
+  if (product(c, path_ + ": write " + name) != v.size())
+    throw Error(path_ + ": write " + name + ": size mismatch");
   check(nc_put_vara_double(ncid_, varid(name), s.data(), c.data(), v.data()), "write " + name);
 }
 void NcFile::put_int(const std::string& name, const std::vector<int>& v, long record) {
   std::vector<std::size_t> s, c;
   record_range(name, record, s, c);  // record >= 0 needs a variable whose first dimension is the record dimension
-  if (product(c) != v.size()) throw Error(path_ + ": write " + name + ": size mismatch");
+  if (product(c, path_ + ": write " + name) != v.size())
+    throw Error(path_ + ": write " + name + ": size mismatch");
   check(nc_put_vara_int(ncid_, varid(name), s.data(), c.data(), v.data()), "write " + name);
 }
 void NcFile::put_char(const std::string& name, const std::vector<char>& v, long record) {
   std::vector<std::size_t> s, c;
   record_range(name, record, s, c);  // record >= 0 needs a variable whose first dimension is the record dimension
-  if (product(c) != v.size()) throw Error(path_ + ": write " + name + ": size mismatch");
+  if (product(c, path_ + ": write " + name) != v.size())
+    throw Error(path_ + ": write " + name + ": size mismatch");
   check(nc_put_vara_text(ncid_, varid(name), s.data(), c.data(), v.data()), "write " + name);
 }
 

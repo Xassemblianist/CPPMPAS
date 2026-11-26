@@ -25,7 +25,8 @@ set(JW ${C}/jw_baroclinic_wave/x1.40962.grid.nc)
 add_test(NAME make_inputs COMMAND ${PY} ${T}/make_inputs.py ${C} ${W})
 set_tests_properties(make_inputs PROPERTIES FIXTURES_SETUP inputs)
 add_test(NAME unit_io_core COMMAND ${CMAKE_COMMAND} -E env sh -c
-  "mkdir -p '${W}' && '$<TARGET_FILE:test_io_core>' '${W}' '${MW}'")
+  "mkdir -p '${W}' && '$<TARGET_FILE:test_io_core>' '${W}' '${MW}' '${W}/mw_init_long_parent.nc'")
+set_tests_properties(unit_io_core PROPERTIES FIXTURES_REQUIRED inputs)
 
 # tools/mpas_compare.py: its unit tests and its mutation check (tests/compare)
 add_test(NAME compare_unit COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${T}/compare)
@@ -135,9 +136,11 @@ add_executable(test_libm test_libm.cpp)
 target_link_libraries(test_libm PRIVATE cppmpas mvec m)
 add_test(NAME unit_libm COMMAND test_libm 2000000)
 
-# src/core/namelist_table.inc is what tools/gen_namelist_table.py makes of the Registry and the reference namelists
+# src/core/namelist_table.inc is what tools/gen_namelist_table.py makes of the Registry and the reference namelists,
+# and of the namelist of the MW restart run (tests/namelists/MW_restart: the MW forecast namelist restarted from the
+# reference's restart file at 00:30:06, verified by the dycore_restart_MW_* tests)
 add_test(NAME namelist_table_current COMMAND ${CMAKE_COMMAND} -E env sh -c
-  "${Python3_EXECUTABLE} -I '${CMAKE_SOURCE_DIR}/tools/gen_namelist_table.py' '${CPPMPAS_MPAS_REGISTRY}' ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/forecast/namelist.atmosphere > '${W}/namelist_table.inc' && ${CMAKE_COMMAND} -E compare_files '${W}/namelist_table.inc' '${CMAKE_SOURCE_DIR}/src/core/namelist_table.inc'")
+  "${Python3_EXECUTABLE} -I '${CMAKE_SOURCE_DIR}/tools/gen_namelist_table.py' '${CPPMPAS_MPAS_REGISTRY}' ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/forecast/namelist.atmosphere '${CMAKE_SOURCE_DIR}/tests/namelists/MW_restart/namelist.atmosphere' > '${W}/namelist_table.inc' && ${CMAKE_COMMAND} -E compare_files '${W}/namelist_table.inc' '${CMAKE_SOURCE_DIR}/src/core/namelist_table.inc'")
 set_tests_properties(namelist_table_current PROPERTIES FIXTURES_REQUIRED work_dir)
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -192,6 +195,11 @@ cppmpas_error_test(unverified "field exner is computed by a port not yet verifie
 add_test(NAME init_unverified_SC COMMAND ${CMAKE_COMMAND} -E env sh -c
   "rm -f '${W}/init_unverified_SC.nc' && '${EXE}' init '${W}/sc_init.nc' '${W}/init_unverified_SC.nc' --namelist '${REF_SC}/steps/namelist.atmosphere' --scalars qv,qc,qr --fields pv_edge,exner --unverified && test -s '${W}/init_unverified_SC.nc' && rm '${W}/init_unverified_SC.nc'")
 set_tests_properties(init_unverified_SC PROPERTIES FIXTURES_REQUIRED inputs)
+# meshDensity = 2 in one cell and config_h_ScaleWithMesh = true (the MW namelist with JW's value): the meshScaling*
+# arrays need --unverified (mesh_scaling_unverified in tools/cppmpas.cpp)
+add_test(NAME err_scaled_mesh COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "sed 's/config_h_ScaleWithMesh = false/config_h_ScaleWithMesh = true/' '${REF_MW}/steps/namelist.atmosphere' > '${W}/namelist_scaled' && grep -q 'config_h_ScaleWithMesh = true' '${W}/namelist_scaled' && ${Python3_EXECUTABLE} -I '${T}/expect_error.py' 'field meshScalingDel2 is computed by a port not yet verified against MPAS output; --unverified writes it anyway' '${EXE}' init '${W}/mw_init_dense.nc' '${W}/x.nc' --namelist '${W}/namelist_scaled' --scalars qv --fields meshScalingDel2")
+set_tests_properties(err_scaled_mesh PROPERTIES FIXTURES_REQUIRED inputs)
 # guards and atm_core_init steps on the MW reference init file
 add_executable(test_init_guards test_init_guards.cpp)
 target_link_libraries(test_init_guards PRIVATE cppmpas)
@@ -202,6 +210,11 @@ add_executable(test_namelist test_namelist.cpp)
 target_link_libraries(test_namelist PRIVATE cppmpas)
 add_test(NAME unit_namelist COMMAND ${CMAKE_COMMAND} -E env sh -c
   "mkdir -p '${W}' && '$<TARGET_FILE:test_namelist>' '${REF_MW}/steps/namelist.atmosphere' '${W}'")
+# reals in a process locale whose decimal point is ',' (its own scratch directory: unit_namelist writes the same file
+# name, and CTest may run the two at once) (needs a de_DE, fr_FR or tr_TR locale: reported as skipped, not passed, without one)
+add_test(NAME unit_namelist_locale COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "mkdir -p '${W}/namelist_locale' && '$<TARGET_FILE:test_namelist>' '${REF_MW}/steps/namelist.atmosphere' '${W}/namelist_locale' locale")
+set_tests_properties(unit_namelist_locale PROPERTIES SKIP_RETURN_CODE 77)
 add_test(NAME namelist_gen_errors COMMAND ${PY} ${T}/check_gen_namelist.py ${CMAKE_SOURCE_DIR}/tools/gen_namelist_table.py
   ${CPPMPAS_MPAS_REGISTRY} ${REF_MW}/steps/namelist.atmosphere ${W}/gen_namelist)
 # --scalars must be the scalars the namelist's packages activate
@@ -368,6 +381,36 @@ foreach(f IN LISTS DYCORE_SC_OUTPUT_FIELDS)
     ${W}/dycore_long_SC/state.0000-01-01_00.30.00.nc ${f} --record 1)
   set_tests_properties(dycore_SC_output30_${f} PROPERTIES FIXTURES_REQUIRED dycore_long_SC LABELS long)
 endforeach()
+# A restart run (config_do_restart = true; tests/namelists/MW_restart is the MW forecast namelist started at 00:30:06)
+# from the reference's restart.0000-01-01_00.30.06.nc. At step 0 the state written is what the restart stream holds
+# (no atm_init_coupled_diagnostics, mpas_atm_core.F:522); after 299 steps (01:00:00) every field of output.nc record 2
+# the port holds is compared at tolerance 0 (label "long", about 3 minutes).
+set(NML_RST_MW ${CMAKE_SOURCE_DIR}/tests/namelists/MW_restart/namelist.atmosphere)
+set(DYCORE_RESTART0_FIELDS ${DYCORE_RESTART_FIELDS} rtheta_base exner_base pressure_base)
+string(REPLACE ";" "," DYCORE_RESTART0_LIST "${DYCORE_RESTART0_FIELDS}")
+add_test(NAME dycore_restart0_run_MW COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/dycore_restart0_MW' && mkdir -p '${W}/dycore_restart0_MW' && '${EXE}' run '${RST_MW}' '${W}/dycore_restart0_MW' --namelist '${NML_RST_MW}' --steps 0 --every 0 --write-at 0 --write-fields ${DYCORE_RESTART0_LIST}")
+set_tests_properties(dycore_restart0_run_MW PROPERTIES FIXTURES_SETUP dycore_restart0_MW)
+foreach(f IN LISTS DYCORE_RESTART0_FIELDS)
+  add_test(NAME dycore_restart0_MW_${f} COMMAND ${PY} ${T}/compare_arrays.py ${RST_MW}
+    ${W}/dycore_restart0_MW/state.0000-01-01_00.30.06.nc ${f})
+  set_tests_properties(dycore_restart0_MW_${f} PROPERTIES FIXTURES_REQUIRED dycore_restart0_MW)
+endforeach()
+string(REPLACE ";" "," DYCORE_OUTPUT_LIST "${DYCORE_OUTPUT_FIELDS}")
+add_test(NAME dycore_restart_run_long_MW COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/dycore_restart_long_MW' && mkdir -p '${W}/dycore_restart_long_MW' && '${EXE}' run '${RST_MW}' '${W}/dycore_restart_long_MW' --namelist '${NML_RST_MW}' --steps 299 --every 0 --write-at 299 --write-fields ${DYCORE_OUTPUT_LIST}")
+set_tests_properties(dycore_restart_run_long_MW PROPERTIES FIXTURES_SETUP dycore_restart_long_MW LABELS long TIMEOUT 900)
+foreach(f IN LISTS DYCORE_OUTPUT_FIELDS)
+  add_test(NAME dycore_restart_MW_output60_${f} COMMAND ${PY} ${T}/compare_arrays.py ${REF_MW}/forecast/output.nc
+    ${W}/dycore_restart_long_MW/state.0000-01-01_01.00.00.nc ${f} --record 2)
+  set_tests_properties(dycore_restart_MW_output60_${f} PROPERTIES FIXTURES_REQUIRED dycore_restart_long_MW LABELS long)
+endforeach()
+# the restart reader's refusals (missing restart-stream fields, a field of an active package) and the start time
+add_test(NAME restart_refusals_MW COMMAND ${PY} ${T}/check_restart.py ${EXE} ${RST_MW} ${NML_RST_MW} ${INIT_MW}
+  ${W}/restart_refusals)
+set_tests_properties(restart_refusals_MW PROPERTIES FIXTURES_REQUIRED work_dir)
+cppmpas_error_test(restart_time "does not contain the time 0000-01-01_00:30:06" run ${INIT_MW} ${W}/x_dir
+  --namelist ${NML_RST_MW} --steps 1)
 cppmpas_error_test(dycore_write_at "--write-at 12 is after the last step" run ${INIT_MW} ${W}/x_dir
   --namelist ${REF_MW}/steps/namelist.atmosphere --steps 10 --write-at 12 --write-fields u)
 cppmpas_error_test(dycore_write_fields "variable 'pressure' has no CPPMPAS port" run ${INIT_MW} ${W}/x_dir

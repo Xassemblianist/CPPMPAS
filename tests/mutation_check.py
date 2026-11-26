@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Show that every test can fail: apply one deliberate one-line bug at a time to the source, rebuild, run the tests
-it must break, require each of them to fail, restore the source. Run it through the workstation gate.
+it must break, require each of them to fail, restore the source. The tests must pass on the unmutated source first
+(a test that already fails proves nothing). Run it through the workstation gate.
 
 usage: mutation_check.py <source dir> <build dir> [first | i,j,...]   (index of the first mutant to apply, default 0,
-       or a comma-separated list of mutant indices)
+       or a comma-separated list of two or more distinct mutant indices; anything else is refused)
+
+CTest runs one test at a time (-j 1, whatever CTEST_PARALLEL_LEVEL says): tests that share a scratch file must not race in
+the check of the unmutated source. A test that times out or is skipped does not kill a mutant. After the last mutant
+the source is rebuilt and every test that killed one must pass again, else no kill of the run is trusted.
 """
 import re
 import subprocess
@@ -24,6 +29,13 @@ def D(fields, cases="MW SC JW"):
 
 
 ALL3 = "MW SC JW"
+RS = "src/io/mpas_restart.cpp"
+
+
+def RST0(fields):
+    """step-0 tests of the restart run (tests/CMakeLists.txt): the state written is the restart stream's"""
+    return [f"dycore_restart0_MW_{f}" for f in fields.split()]
+
 # (file, original line fragment, mutated fragment, tests that must fail)
 MUTATIONS = [
     ("src/core/decomp.cpp", "    for (int j = 1; j <= nEdgesOnCell[i - 1]; ++j) {\n      const int e",
@@ -59,12 +71,12 @@ MUTATIONS = [
     (R, "    if (std::find(order.begin(), order.end(), *it) == order.end())", "    if (false)", ["err_unknown_scalar"]),
     (R, "  throw Error(\"variable '\" + name + \"' has no CPPMPAS port (not read or written)\");", "  return r;",
      ["err_unported_field", "unit_io_core"]),
-    # a name the Registry does not define: write_history meets registry_var's check first and field_ref's second, so
-    # each guard is tested on its own (unit_io_core); err_unknown_field checks the CLI message
+    # a name the Registry does not define: write_history meets field_ref's check first (the message of the CLI,
+    # err_unknown_field; without it, field_ref says "has no CPPMPAS port"), registry_var's is tested on its own
     ("src/io/registry.cpp", "  if (!r) throw Error(\"variable '\" + name + \"' is not defined in MPAS-Atmosphere's Registry\");",
      "  if (false) throw Error(\"variable '\" + name + \"' is not defined in MPAS-Atmosphere's Registry\");",
      ["unit_io_core"]),
-    (R, "  if (!find_registry_var(name)) throw", "  if (false) throw", ["unit_io_core"]),
+    (R, "  if (!find_registry_var(name)) throw", "  if (false) throw", ["unit_io_core", "err_unknown_field"]),
     # --- reader on the reference files, atm_mpas_init_block against the references, libm ports
     (R, "    if (kInputNotUsed.count(n)) continue;", "    if (false) continue;",
      ["readrestart_MW", "readrestart_SC", "readrestart_JW", "roundtrip_refinit_MW", "roundtrip_refinit_SC",
@@ -112,8 +124,8 @@ MUTATIONS = [
      "    return (i - 1) + e0 * ((j - 1) + e1 * ((k - 1) + e2 * (l - 1)));", ["unit_io_core"]),
     ("src/core/mesh.hpp", "  int n() const { return local_to_file.empty() ? 0 : static_cast<int>(local_to_file.size()) - 1; }",
      "  int n() const { return static_cast<int>(local_to_file.size()) - 1; }", ["unit_io_core"]),
-    (N, "long record) {\n  std::vector<std::size_t> s, c;\n  record_range(name, record, s, c);  // record >= 0 needs a variable whose first dimension is the record dimension\n  if (product(c) != v.size()) throw Error(path_ + \": write \" + name + \": size mismatch\");\n  check(nc_put_vara_double(",
-     "long record) {\n  std::vector<std::size_t> s, c;\n  record_range(name, -1, s, c); if (record >= 0) { s[0] = record; c[0] = 1; }\n  if (product(c) != v.size()) throw Error(path_ + \": write \" + name + \": size mismatch\");\n  check(nc_put_vara_double(",
+    (N, "long record) {\n  std::vector<std::size_t> s, c;\n  record_range(name, record, s, c);  // record >= 0 needs a variable whose first dimension is the record dimension\n  if (product(c, path_ + \": write \" + name) != v.size())\n    throw Error(path_ + \": write \" + name + \": size mismatch\");\n  check(nc_put_vara_double(",
+     "long record) {\n  std::vector<std::size_t> s, c;\n  record_range(name, -1, s, c); if (record >= 0) { s[0] = record; c[0] = 1; }\n  if (product(c, path_ + \": write \" + name) != v.size())\n    throw Error(path_ + \": write \" + name + \": size mismatch\");\n  check(nc_put_vara_double(",
      ["unit_io_core"]),
     (N, "  if (st == NC_EBADDIM) return false;", "  if (st != NC_NOERR) return false;", ["unit_io_core"]),
     (N, "  f.check(nc_set_fill(id, NC_NOFILL, &old), \"set_fill\");", "  (void)old;", ["unit_io_core"]),
@@ -196,7 +208,7 @@ MUTATIONS = [
     (V, "    if (m.cellsOnEdge(1, iEdge) == nCells + 1 || m.cellsOnEdge(2, iEdge) == nCells + 1)",
      "    if (m.cellsOnEdge(1, iEdge) == nCells + 1)", ["unit_init_guards"]),
     (R, "    buf = f.get_double(rv.name, record);", "    buf = f.get_double(rv.name, record), buf[0] = buf[0] * 0.5;",
-     ["readrestart_MW", "readrestart_SC", "readrestart_JW"]),
+     ["readrestart_MW", "readrestart_SC", "readrestart_JW"] + [f"dycore_restart0_MW_{f}" for f in "u w rho theta".split()]),
     ("tests/compare_arrays.py", "            out.append((k, arr.dtype.str, arr.tobytes()))", "            out.append((k, \"x\", str(a)))",
      ["compare_arrays_unit"]),
     ("tests/compare_arrays.py", "            if attributes(x) != attributes(y):", "            if False:", ["compare_arrays_unit"]),
@@ -245,8 +257,13 @@ MUTATIONS = [
     (S, "      gradPVn(k, iEdge) = (pv_cell(k, c2) - pv_cell(k, c1)) * r2;",
      "      gradPVn(k, iEdge) = (pv_vertex(k, c2) - pv_vertex(k, c1)) * r2;", D("gradPVn", "MW SC JW")),
     (S, "  if (!(config_apvm_upwinding > 0.0))", "  if (false)", ["unit_init_guards"]),
-    (A, "    if (nVertLevels % 2 != 0 && std::find(pow_tail.begin(), pow_tail.end(), n) != pow_tail.end()) continue;",
+    (A, "    if ((nVertLevels % 2 != 0 || nVertLevels <= 2) && std::find(pow_tail.begin(), pow_tail.end(), n) != pow_tail.end()) continue;",
      "    if (false && std::find(pow_tail.begin(), pow_tail.end(), n) != pow_tail.end()) continue;", ["unit_init_guards"]),
+    (A, "    if ((nVertLevels % 2 != 0 || nVertLevels <= 2) && std::find(pow_tail.begin(), pow_tail.end(), n) != pow_tail.end()) continue;",
+     "    if ((nVertLevels % 2 != 0) && std::find(pow_tail.begin(), pow_tail.end(), n) != pow_tail.end()) continue;", ["unit_init_guards"]),
+    # The scalar pow loop for nVertLevels <= 2 (atm_init_coupled_diagnostics) has no mutant: every reference has
+    # nVertLevels >= 26, so no test can tell it from the vector loop; the fields it feeds are refused unless
+    # --unverified (the two mutants above).
     # mpas_reconstruct
     (RC, "uReconstructX(k, iCell) + coeffs_reconstruct(1, i, iCell) * u(k, iEdge);",
      "uReconstructX(k, iCell) + coeffs_reconstruct(2, i, iCell) * u(k, iEdge);", D("uReconstructX uReconstructZonal", "MW SC JW")),
@@ -398,10 +415,10 @@ MUTATIONS = [
     ("src/core/decomp.cpp", "  if (nCellsGlobal < 0) throw", "  if (false) throw", ["unit_decomp"]),
     ("src/core/decomp.cpp", "  if (nCells < 0 || maxCells < 0 || nEdges < 0) throw", "  if (false) throw", ["unit_decomp"]),
     ("src/core/decomp.cpp", "  if (n2 < 0 || static_cast<std::size_t>(n2) > sorted.size())", "  if (false)", ["unit_decomp"]),
-    ("src/core/decomp.cpp", "      innerDim > field.extent(0) || outerDim > field.extent(1))", "      false)", ["unit_decomp"]),
-    ("src/core/decomp.cpp", "  if (innerDim < 0 || outerDim < 0 || indexSpaceDim < 0 || indexSpaceDim > indexToID.extent(0) ||",
+    ("src/core/decomp.cpp", "      innerDim > ext(field, 0) || outerDim > ext(field, 1))", "      false)", ["unit_decomp"]),
+    ("src/core/decomp.cpp", "  if (innerDim < 0 || outerDim < 0 || indexSpaceDim < 0 || indexSpaceDim > ext(indexToID, 0) ||",
      "  if (innerDim < 0 || outerDim < 0 || indexSpaceDim < 0 ||", ["unit_decomp"]),
-    ("src/core/field.hpp", "      if (e != 0 && n > std::numeric_limits<std::size_t>::max() / static_cast<std::size_t>(e))",
+    ("src/core/field.hpp", "      if (e != 0 && n > data_.max_size() / static_cast<std::size_t>(e))",
      "      if (false)", ["unit_decomp"]),
     ("src/core/field.hpp", "    if (d < 0) throw Error(\"FArray: negative dimension index\");", "", ["unit_decomp"]),
     ("tests/compare_arrays.py", "            out.append((k, arr.dtype.str, arr.tobytes()))\n    return out",
@@ -428,10 +445,6 @@ MUTATIONS = [
     (R, "    if (f.has_dim(\"nVertLevelsP1\") && f.dim_len", "    if (false && f.dim_len", ["err_nvlp1"]),
     (R, "      if (vi.shape[k] != kStrLen)", "      if (false)", ["err_strlen"]),
     (R, "  if (f.has_dim(\"TWO\") && f.dim_len(\"TWO\") != 2) throw", "  if (false) throw", ["err_two"]),
-    # err_unknown_field: two guards (registry_var, then field_ref) give the same message, so no one-line change of
-    # behaviour can reach the CLI (each guard is killed in unit_io_core); the message the user sees can be changed
-    ("src/io/registry.cpp", "  if (!r) throw Error(\"variable '\" + name + \"' is not defined in MPAS-Atmosphere's Registry\");",
-     "  if (!r) throw Error(\"variable '\" + name + \"' is not in the Registry\");", ["err_unknown_field", "unit_io_core"]),
     # --- the two routines on arrays that hold values (unit_solve_diag): each zeroing of an accumulation
     (S, "    for (int k = 1; k <= nVertLevels; ++k) vorticity(k, iVertex) = 0.0;\n", "", ["unit_solve_diag"]),
     (S, "    for (int k = 1; k <= nVertLevels; ++k) divergence(k, iCell) = 0.0;\n", "", ["unit_solve_diag"]),
@@ -482,9 +495,11 @@ MUTATIONS = [
      "  if (a.rank() != 2 || a.extent(0) != nL)\n    throw", ["unit_solve_diag"]),
     (RC, "coeffs_reconstruct.extent(2) < nCells)\n    throw Error(",
      "coeffs_reconstruct.extent(2) < nCells)\n    (void)0;\n  if (false) throw Error(", ["unit_solve_diag"]),
-    # the harness itself: a test that was not run is not a kill
-    ("tests/mutation_check.py", "    return status is not None and status != \"Passed\" and \"Not Run\" not in status",
-     "    return status is not None and status != \"Passed\"", ["mutation_check_unit"]),
+    # the harness itself: a test that was not run is not a kill; a test that fails without the mutant is not a kill
+    ("tests/mutation_check.py", "    return {t for t in tests if test_status(out, t) != \"Passed\"}",
+     "    return {t for t in tests if test_status(out, t) is None}", ["mutation_check_unit"]),
+    ("tests/mutation_check.py", "status != \"Passed\" and \"Not Run\" not in status and", "status != \"Passed\" and",
+     ["mutation_check_unit"]),
     # --unverified on the CLI (sc_init.nc: nVertLevels = 3) and the exact verified lists
     (X, "    else if (s == \"--unverified\") a.unverified = true;", "    else if (s == \"--unverified\") a.unverified = false;",
      ["init_unverified_SC"]),
@@ -492,6 +507,79 @@ MUTATIONS = [
      "      if (false)", ["err_unverified"]),
     (A, "  const std::vector<std::string> pow_tail = {\"exner\", \"exner_base\", \"pressure_p\", \"pressure_base\"};",
      "  const std::vector<std::string> pow_tail = {\"exner\", \"pressure_p\", \"pressure_base\"};", ["unit_init_guards"]),
+    # --- hardening: guards, refusals before the file is created, the separators gfortran
+    # fails on, the C locale, the libm barrier of every port
+    ("src/core/decomp.cpp", "  const auto ext = [](const FArray<int>& a, int d) { return a.allocated() ? a.extent(d) : 0; };",
+     "  const auto ext = [](const FArray<int>& a, int d) { return a.extent(d); };", ["unit_decomp"]),
+    ("src/core/decomp.cpp", "      innerDim > ext(field, 0) || outerDim > ext(field, 1))", "      innerDim > ext(field, 0))",
+     ["unit_decomp"]),
+    ("src/core/decomp.cpp", "  if (nCellsGlobal == INT_MAX) throw", "  if (false) throw", ["unit_decomp"]),
+    ("src/core/decomp.cpp", "  if (maxEdges == INT_MAX || nCells == INT_MAX) throw", "  if (maxEdges == INT_MAX) throw",
+     ["unit_decomp"]),
+    ("src/core/decomp.cpp", "  if (nCells == INT_MAX || maxCells == INT_MAX || nEdges == INT_MAX)",
+     "  if (nCells == INT_MAX || maxCells == INT_MAX)", ["unit_decomp"]),
+    ("src/core/field.hpp", "      if (e != 0 && n > data_.max_size() / static_cast<std::size_t>(e))",
+     "      if (e != 0 && n > std::numeric_limits<std::size_t>::max() / static_cast<std::size_t>(e))", ["unit_decomp"]),
+    ("src/core/field.hpp", "    data_.assign(n, fill);  // first:", "    ext_ = extents;\n    data_.assign(n, fill);  // first:",
+     ["unit_decomp"]),
+    (N, "    if (n > std::numeric_limits<std::size_t>::max() / x)\n      throw", "    if (false)\n      throw", ["unit_io_core"]),
+    (A, "    if (ne < 1 || ne > m.maxEdges)", "    if (ne < 1)", ["unit_init_guards"]),
+    (A, "    if (ne < 1 || ne > m.maxEdges)", "    if (ne > m.maxEdges)", ["unit_init_guards"]),
+    (A, "  if (!m.meshDensity.allocated() || m.meshDensity.extent(0) < m.nCells)\n    throw", "  if (false)\n    throw",
+     ["unit_init_guards"]),
+    (X, "init_block_verified_fields(in.mesh.nVertLevels, mesh_scaling_unverified(in.mesh, cfg));",
+     "init_block_verified_fields(in.mesh.nVertLevels, false);", ["err_scaled_mesh"]),
+    (NL, "  return strtod_l(s.c_str(), nullptr, c);", "  return (void)c, std::strtod(s.c_str(), nullptr);", ["unit_namelist_locale"]),
+    (NL, "    if (commas > 1) throw", "    if (false) throw", ["unit_namelist"]),
+    (NL, "    if (v.quoted && i < s.size() && !std::isspace", "    if (false && i < s.size() && !std::isspace", ["unit_namelist"]),
+    (NL, "    out[key] = match;", "    out[key] = v;", ["unit_namelist"]),
+    (NL, "  if (c.config_physics_suite != \"none\")\n    throw", "  if (false)\n    throw", ["unit_namelist"]),
+    (NL, "  if (c.config_les_model != \"none\") throw", "  if (false) throw", ["unit_namelist"]),
+    (NL, "  if (!off(c.config_convection_scheme) || !off(c.config_pbl_scheme))", "  if (!off(c.config_pbl_scheme))",
+     ["unit_namelist"]),
+    (NL, "  if (!off(c.config_convection_scheme) || !off(c.config_pbl_scheme))", "  if (!off(c.config_convection_scheme))",
+     ["unit_namelist"]),
+    ("tools/gen_namelist_table.py", "            if rec in seen:", "            if False:", ["namelist_gen_errors"]),
+    (W, "    if (!names.insert(n).second) throw", "    if (false) throw", ["unit_io_core"]),
+    (W, "    if (ref.c && ref.c->size() > kStrLen) throw", "    if (false) throw", ["unit_io_core"]),
+    (W, "      if (d != \"Time\") (void)file_dim(m, d);", "      (void)d;", ["unit_io_core"]),
+    (W, "    f.put_att_text(\"\", \"git_version\", trimmed(opt.git_version));",
+     "    f.put_att_text(\"\", \"git_version\", opt.git_version);", ["unit_io_core"]),
+    (W, "      while (!s.empty() && s.back() == ' ') s.pop_back();\n      return s.substr(0, s.find('\\0'));",
+     "      return s.substr(0, s.find('\\0'));", ["global_atts"]),
+    # an empty parent_id not written at all: only a check of NetCDF's status finds the attribute missing
+    (W, "    f.put_att_text(\"\", \"parent_id\", trimmed(m.parent_id));",
+     "    if (!trimmed(m.parent_id).empty()) f.put_att_text(\"\", \"parent_id\", trimmed(m.parent_id));", ["global_atts"]),
+    (R, "rtrim(file_id).empty() ? parent_id :", "false ? parent_id :", ["global_atts"]),
+    (R, "(rtrim(file_id) + \"\\n\" + rtrim(parent_id)).substr(0, kStrKIND);", "(rtrim(file_id) + \"\\n\" + rtrim(parent_id));",
+     ["unit_io_core"]),
+    (L, "CPPMPAS_FORCEINLINE double sin(double x) { return ::cppwrf::glibc::sin(arg(x)); }",
+     "CPPMPAS_FORCEINLINE double sin(double x) { return ::cppwrf::glibc::sin(x); }", ["unit_libm"]),
+    (L, "CPPMPAS_FORCEINLINE double cos(double x) { return ::cppwrf::glibc::cos(arg(x)); }",
+     "CPPMPAS_FORCEINLINE double cos(double x) { return ::cppwrf::glibc::cos(x); }", ["unit_libm"]),
+    # removing arg() from asin, acos, atan2, pow or mvec_pow (either argument) changes no bit under g++ 14.2 -O3,
+    # even with -x written at the call (unit_libm calls every port so): g++ does not fold the negation there, so those
+    # mutants are equivalent today; unit_libm would fail on a compiler that folds it
+    (L, "  x = arg(x);\n  constexpr double hp0", "  constexpr double hp0", ["unit_libm"]),
+    # --- the harness: what kills, the selection, the baseline in one process at a time, the restored
+    # source checked again (unit tests of main() with a simulated cmake / ctest)
+    ("tests/mutation_check.py", " and \"Skipped\" not in status\n", "\n", ["mutation_check_unit"]),
+    ("tests/mutation_check.py", "            and \"Timeout\" not in status)", "            )", ["mutation_check_unit"]),
+    ("tests/mutation_check.py", "\n    return rc != 0 and killed(status) and t not in broken",
+     "\n    return rc != 0 and killed(status)", ["mutation_check_unit"]),
+    ("tests/mutation_check.py", "\n    return rc != 0 and killed(status) and t not in broken",
+     "\n    return killed(status) and t not in broken", ["mutation_check_unit"]),
+    ("tests/mutation_check.py", "    if not re.fullmatch(r\"[0-9]+(,[0-9]+)+\", sel):", "    if not re.match(r\"[0-9]+(,[0-9]+)+\", sel):",
+     ["mutation_check_unit"]),
+    ("tests/mutation_check.py", "\n    if len(set(idx)) != len(idx):", "\n    if False:", ["mutation_check_unit"]),
+    ("tests/mutation_check.py", "        if i >= n:\n", "        if i > n:\n", ["mutation_check_unit"]),
+    ("tests/mutation_check.py", "\n        if int(sel) >= n:", "\n        if int(sel) > n:", ["mutation_check_unit"]),
+    ("tests/mutation_check.py", "[\"ctest\", \"--test-dir\", str(build), \"-j\", \"1\", \"-R\"", "[\"ctest\", \"--test-dir\", str(build), \"-R\"",
+     ["mutation_check_unit"]),
+    ("tests/mutation_check.py", "    return \"^(\" + \"|\".join(re.escape(t) for t in tests) + \")$\"",
+     "    return \"^(\" + \"|\".join(tests) + \")$\"", ["mutation_check_unit"]),
+    ("tests/mutation_check.py", "\n        for t in sorted(not_passing(r.stdout, covered)):", "\n        for t in []:",
+     ["mutation_check_unit"]),
 ]
 
 
@@ -641,14 +729,14 @@ MUTATIONS += [
      ST(range(11), "Time")),
     (X, "      atm_timestep(dcfg, in.mesh, in.state, in.diag, f, dcfg.config_dt, add_seconds(start, n * dt_s));",
      "      atm_timestep(dcfg, in.mesh, in.state, in.diag, f, dcfg.config_dt, add_seconds(start, (n + 1) * dt_s));",
-     ST([1], "xtime u w")),
+     ST([1], "xtime u w") + ["dycore_restart_MW_output60_xtime"]),
     (X, "    write_step(0);", "", ST([0], "xtime Time u w rho_zz theta_m rho theta pressure_p qv")),
     (X, "    for (const auto& sn : in.state.scalar_names) fields.push_back(sn);", "", ST(range(11), "qv")),
     ("src/io/mpas_writer.cpp", '          f.put_att_text(n, k, "seconds since " + t);', "          f.put_att_text(n, k, v);",
      ST(range(11), "Time")),
     # the configuration checks, the CLI
     (DY, '  if (c.config_horiz_mixing != "2d_fixed") no(', '  if (c.config_horiz_mixing != "2d_smagorinsky") no(',
-     ["dycore_run_MW", "dycore_run_long_MW", "err_dycore_JW", "unit_dycore"]),
+     ["dycore_run_MW", "dycore_run_long_MW", "dycore_restart0_run_MW", "dycore_restart_run_long_MW", "err_dycore_JW", "unit_dycore"]),
     (DY, "  if (c.config_scalar_advection) check_advance_scalars_supported(c, m);",
      "  if (false) check_advance_scalars_supported(c, m);", ["unit_dycore"]),
     (DY, "    if (m.fEdge(iEdge) != 0.0) no(", "    if (false) no(", ["err_dycore_fEdge", "unit_dycore"]),
@@ -670,6 +758,35 @@ MUTATIONS += [
     (X, "    for (const auto& w : a.write_fields) (void)field_ref(in, w);", "", ["err_dycore_write_fields"]),
     (X, "    if (a.pos.size() != 2 || a.steps < 0 || a.namelist.empty() || !a.fields.empty())",
      "    if (a.pos.size() != 2 || a.namelist.empty() || !a.fields.empty())", ["err_dycore_no_steps"]),
+    # the restart run (src/io/mpas_restart.cpp, the restart branch of atm_mpas_init_block, the CLI)
+    (A, "  if (!cfg.config_do_restart || (cfg.config_do_restart && cfg.config_do_DAcycling)) atm_init_coupled_diagnostics(m, s, d);",
+     "  atm_init_coupled_diagnostics(m, s, d);",
+     RST0("rho_zz pressure_p exner ru rw rtheta_p rho_p") +
+     [f"dycore_restart_MW_output60_{f}" for f in "u w rho theta divergence vorticity ke uReconstructZonal uReconstructMeridional".split()]),
+    (A, "  if (restart) {", "  if (false) {", RST0("theta_m rho_zz ru rw rtheta_p rho_p exner pressure_p rtheta_base exner_base pressure_base")),
+    (A, "      if (r.a->extents() != r.ext)", "      if (false)", ["unit_init_guards"]),
+    (RS, "  if (rtrim(xtime) != start_stamp)", "  if (false)", ["err_restart_time", "restart_refusals_MW"]),
+    (RS, "  f.Time1 = r.in.state.Time(1);", "", RST0("Time")),
+    (X, "    if (cfg.config_do_restart) restart_dycore_fields(rst, f);", "", RST0("Time")),
+    (RS, '  return rv && (rv->var_struct == "sfc_input" || rv->var_struct == "diag_physics");',
+     '  return rv && rv->var_struct == "sfc_input";', ["dycore_restart0_run_MW"]),
+    (RS, '    throw Error(path + ": MPAS reads variable " + n + " from the restart stream; CPPMPAS has no port for it");',
+     "    continue;", ["restart_refusals_MW"]),
+    (RS, '    if (!f.has_var(n)) throw Error(path + ": variable " + n + " of the restart stream is missing");',
+     '    if (false) throw Error(path + ": variable " + n + " of the restart stream is missing");', ["restart_refusals_MW"]),
+    (RS, '"pressure_base", "ru", "rw"', '"pressure_base", "rw"', ["dycore_restart0_run_MW"]),
+    (X, "    if (!cfg.config_do_restart) check_stream_time(", "    if (false) check_stream_time(", ["restart_refusals_MW"]),
+    (X, '    if (cfg.config_do_restart)\n      throw Error("config_do_restart = true: init',
+     '    if (false)\n      throw Error("config_do_restart = true: init', ["namelist_MW"]),
+    (X, "    if (cfg.config_do_restart) {\n      rst = read_mpas_restart", "    if (false) {\n      rst = read_mpas_restart",
+     ["dycore_restart0_run_MW"]),
+    (A, "  s.xtime = stamp;                                    // :261-262",
+     '  s.xtime = stamp + "x";                              // :261-262', ["dycore_restart0_MW_xtime", "dycore_MW_step0_xtime"]),
+    (R, "        in.state.scalars(k, lev, i) = buf[static_cast<std::size_t>(g - 1) * m.nVertLevels + (lev - 1)];",
+     "        in.state.scalars(k, lev, i) = buf[static_cast<std::size_t>(g - 1) * m.nVertLevels + (lev - 1)] + 1.0e-12;",
+     ["dycore_restart0_MW_qv", "dycore_MW_step0_qv"]),
+    ("src/core/namelist_table.inc", r'"config_do_restart", "logical", "false", "false\ntrue")',
+     r'"config_do_restart", "logical", "false", "false")', ["dycore_restart0_run_MW", "namelist_MW"]),
 ]
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -843,15 +960,64 @@ def test_status(out, t):
 
 def killed(status):
     """A test kills the mutant only if it ran and failed. "Not Run" (a fixture setup the mutant broke, a missing
-    executable, a disabled test) is a check that did not run: not a kill (CONSTITUTION.md 3.2)."""
-    return status is not None and status != "Passed" and "Not Run" not in status
+    executable, a disabled test) is a check that did not run: not a kill (CONSTITUTION.md 3.2). Nor is "Skipped" (the
+    test reported that it could not run) or "Timeout" (a stalled machine looks the same as a mutant that hangs)."""
+    return (status is not None and status != "Passed" and "Not Run" not in status and "Skipped" not in status
+            and "Timeout" not in status)
+
+
+def is_kill(rc, status, t, broken):
+    """CTest failed (rc != 0), the test's own line shows a failure, and the test passed on the unmutated source."""
+    return rc != 0 and killed(status) and t not in broken
+
+
+def not_passing(out, tests):
+    """The tests that did not pass on the unmutated source: their failure under a mutant would not show a kill."""
+    return {t for t in tests if test_status(out, t) != "Passed"}
+
+
+def parse_selection(sel, n):
+    """The mutant indices of the command-line selection: 'k' (k .. n-1) or 'i,j,...' (two or more distinct indices).
+    Anything else (an empty item, a trailing ',', a sign, an index past the list, a repeated index) is refused."""
+    if re.fullmatch(r"[0-9]+", sel):
+        if int(sel) >= n:
+            raise SystemExit(f"mutation_check.py: first mutant {sel} is past the last one ({n - 1})")
+        return list(range(int(sel), n))
+    if not re.fullmatch(r"[0-9]+(,[0-9]+)+", sel):
+        raise SystemExit(f"mutation_check.py: mutant selection {sel!r} is neither an index nor a list i,j,... of "
+                         f"indices")
+    idx = [int(i) for i in sel.split(",")]
+    for i in idx:
+        if i >= n:
+            raise SystemExit(f"mutation_check.py: mutant {i} is past the last one ({n - 1})")
+    if len(set(idx)) != len(idx):
+        raise SystemExit(f"mutation_check.py: mutant selection {sel!r} repeats an index")
+    return idx
+
+
+def ctest(build, regex):
+    """CTest on the tests the regex selects, one at a time (-j 1 overrides CTEST_PARALLEL_LEVEL)"""
+    return subprocess.run(["ctest", "--test-dir", str(build), "-j", "1", "-R", regex, "-FA", "inputs"],
+                          capture_output=True, text=True)
+
+
+def any_of(tests):
+    return "^(" + "|".join(re.escape(t) for t in tests) + ")$"
 
 
 def main():
+    if len(sys.argv) not in (3, 4):
+        raise SystemExit(__doc__)
     src, build = Path(sys.argv[1]), Path(sys.argv[2])
-    sel = sys.argv[3] if len(sys.argv) > 3 else "0"
-    chosen = [MUTATIONS[int(i)] for i in sel.split(",")] if "," in sel else MUTATIONS[int(sel):]
+    chosen = [MUTATIONS[i] for i in parse_selection(sys.argv[3] if len(sys.argv) > 3 else "0", len(MUTATIONS))]
     covered, bad = set(), []
+    # every test a mutant must break has to pass first, on the unmutated source
+    subprocess.run(["cmake", "--build", str(build), "-j4"], capture_output=True, text=True, check=True)
+    needed = sorted({t for _, _, _, ts in chosen for t in ts})
+    r = ctest(build, any_of(needed))
+    broken = not_passing(r.stdout, needed)
+    for t in sorted(broken):
+        bad.append(f"{t} does not pass on the unmutated source (status {test_status(r.stdout, t)!r}): no kill counted")
     for path, old, new, tests in chosen:
         p = src / path
         orig = p.read_text()
@@ -865,11 +1031,10 @@ def main():
                 bad.append(f"{path}: mutant does not build")
                 continue
             # one CTest run for all the tests the mutant must break: a fixture they share runs once
-            r = subprocess.run(["ctest", "--test-dir", str(build), "-R", "^(" + "|".join(map(re.escape, tests)) + ")$",
-                                "-FA", "inputs"], capture_output=True, text=True) if tests else None
+            r = ctest(build, any_of(tests)) if tests else None
             for t in tests:
                 status = test_status(r.stdout, t)
-                failed = r.returncode != 0 and killed(status)
+                failed = is_kill(r.returncode, status, t, broken)
                 print(f"{'KILLED' if failed else 'SURVIVED'} {t:22s} by {path}: {new.strip()[:70]}")
                 if failed:
                     covered.add(t)
@@ -878,6 +1043,13 @@ def main():
         finally:
             p.write_text(orig)
     subprocess.run(["cmake", "--build", str(build), "-j4"], capture_output=True, text=True, check=True)
+    # the restored source: a test that killed a mutant must pass again (a stale object, a scratch file a mutant left
+    # behind or a change of the machine would otherwise show as kills)
+    if covered:
+        r = ctest(build, any_of(sorted(covered)))
+        for t in sorted(not_passing(r.stdout, covered)):
+            bad.append(f"{t} does not pass on the restored source (status {test_status(r.stdout, t)!r}): its kills "
+                       f"in this run are not trusted")
     for b in bad:
         print("PROBLEM", b)
     print(f"{len(covered)} tests killed by at least one mutant")

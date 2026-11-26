@@ -55,7 +55,8 @@ void check_microphysics_supported(const std::string& namelist_path, const Mesh& 
     no("config_physics_suite = '" + option(namelist_path, "config_physics_suite") + "'");
   if (mp != "mp_kessler" && mp != "off" && mp != "suite") no("config_microp_scheme = '" + mp + "'");
   if (option(namelist_path, "config_bucket_update") != "none") no("config_bucket_update (l_acrain, DRV:625)");
-  if (option(namelist_path, "config_do_restart") != "false") no("config_do_restart = true");
+  // a restart of the Kessler path (i_rainnc, rainnc from the restart file, INIT:262-273) is not verified
+  if (mp == "mp_kessler" && option(namelist_path, "config_do_restart") != "false") no("config_do_restart = true with Kessler");
   if (m.nVertLevels < 3) no("nVertLevels < 3 (the surface pressure of PI:950-964)");
 }
 

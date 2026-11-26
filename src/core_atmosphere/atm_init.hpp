@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 // The computations MPAS-Atmosphere's atm_mpas_init_block (src/core_atmosphere/mpas_atm_core.F:366-617) makes before
-// the first time step, in MPAS's order, for a cold start (config_do_restart = .false.) on one rank.
+// the first time step, in MPAS's order, on one rank: a cold start (config_do_restart = .false.), or a restart
+// (config_do_restart = .true., the state read by io/mpas_restart.hpp), which skips atm_init_coupled_diagnostics
+// (CORE:522). config_do_DAcycling = .true. is not ported.
 // Includes the initial atm_compute_solve_diagnostics (CORE:532-535, core_atmosphere/atm_solve_diagnostics.hpp) and the
 // first mpas_reconstruct (CORE:546-563, operators/vector_reconstruct.hpp).
 // Not included (later unit): for moist physics (SC) physics_tables_init / physics_registry_init / physics_run_init /
@@ -15,8 +17,9 @@
 namespace cppmpas {
 
 // Allocates the fields atm_mpas_init_block sets with MPAS's extents and Registry defaults (mesh pool:
-// Registry.xml:1434-1669; state theta_m / rho_zz; diag ru ... pressure_base).
-void allocate_init_fields(Mesh& mesh, State& state, Diag& diag);
+// Registry.xml:1434-1669; state theta_m / rho_zz; diag ru ... pressure_base). restart: the state and diag ones were
+// read from the restart stream and are kept.
+void allocate_init_fields(Mesh& mesh, State& state, Diag& diag, bool restart = false);
 
 // mpas_atm_core.F:1184-1271
 void atm_compute_signs(Mesh& mesh, std::vector<std::string>& log);

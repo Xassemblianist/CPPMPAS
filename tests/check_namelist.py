@@ -14,6 +14,8 @@ import sys
 from pathlib import Path
 
 PASSED = "cannot open"  # the namelist was accepted: the init file (which does not exist) is read next
+# config_do_restart = true is accepted by the namelist (the MW restart run), and init, a cold start, refuses it
+RESTART = "config_do_restart = true: init reads an input-stream file (a cold start)"
 
 
 def sub(pattern, repl):
@@ -43,11 +45,11 @@ CASES = [
     ("default_written", add("restart", "config_do_DAcycling = false"), PASSED),
     # refused values
     ("do_restart", sub(r"config_do_restart = false", "config_do_restart = true"),
-     "namelist option config_do_restart = true has no verified port"),
+     RESTART),
     ("do_restart_one_line", sub(r"&restart\n    config_do_restart = false\n/", "&restart config_do_restart = true /"),
-     "namelist option config_do_restart = true has no verified port"),
+     RESTART),
     ("do_restart_dotted", sub(r"    config_do_restart = false", "    config_do_restart = .true. ,"),
-     "namelist option config_do_restart = .true. has no verified port"),
+     RESTART),
     ("dacycling", add("restart", "config_do_DAcycling = true"),
      "namelist option config_do_DAcycling = true has no verified port"),
     ("xnutr", sub(r"config_xnutr = 0.1", "config_xnutr = 0.15"),

@@ -32,8 +32,11 @@ checks against WRF, all at tolerance 0). CPPMPAS applies the same method to MPAS
   microphysics with MPAS's microphysics interface (the Kessler kernel is shared with CPPWRF). **Verified at
   tolerance 0** against `mpas842-dbl-sc-001`: steps 1-10 in every field of the step files, and the output at
   30 min and the restart at 30:03 (cloud and rain present) in every field the port holds.
-  Every other configuration (Smagorinsky or 4th-order mixing, other physics, Coriolis, ...) is a hard error until
-  it is ported and verified.
+- Restart runs (`config_do_restart = true`): `cppmpas run` reads an MPAS restart file as MPAS reads its restart
+  stream and continues from it. **Verified at tolerance 0** on MW: restarted from the reference's 00:30:06 restart
+  file, the state at 01:00:00 is identical to the reference forecast's output in every field the port computes.
+- Every other configuration (Smagorinsky or 4th-order mixing, other physics, Coriolis, a Kessler restart, ...) is
+  a hard error until it is ported and verified.
 - The namelist: every option of MPAS-Atmosphere's Registry is known; a value that no verified reference runs with is a
   hard error naming the option.
 - The MPAS reference itself is reproducible across machines: the MW reference built and run on an AMD EPYC and on an

@@ -6,8 +6,11 @@
 // first-seen edge order: 4 1 2 5 3 6 7 (mpas_block_decomp.F:662-676). With owned cells {2}, the owned edges keep
 // their order at the front and the others go to the end backwards (mpas_block_decomp.F:596-609).
 #include <sys/mman.h>
+#include <sys/resource.h>
 
+#include <climits>
 #include <cstdio>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -124,6 +127,35 @@ int main() {
                        "negative dimension"),
            "partitioned edge list of -1 edges");
   }
+  // a count of INT_MAX (a loop i <= n would overflow): refused before any allocation or read. The address space is
+  // limited to 1 GiB meanwhile, so a missing check fails (std::bad_alloc or a crash) instead of filling 8 GiB
+  {
+    rlimit old{};
+    getrlimit(RLIMIT_AS, &old);
+    rlimit small = old;
+    small.rlim_cur = rlim_t(1) << 30;
+    setrlimit(RLIMIT_AS, &small);
+    const std::vector<int> one = {1};
+    std::vector<int> ids = {1};
+    const bool a = throws_with([] { (void)block_decomp_one_block_cell_list(INT_MAX); }, "nCellsGlobal = INT_MAX");
+    const bool b = throws_with([&] { (void)block_decomp_all_edges_in_block(3, INT_MAX, one.data(), one.data()); },
+                               "dimension INT_MAX");
+    const bool c = throws_with([&] { (void)block_decomp_all_edges_in_block(INT_MAX, 1, one.data(), one.data()); },
+                               "dimension INT_MAX");
+    const bool d = throws_with(
+        [&] { (void)block_decomp_partitioned_edge_list(1, one.data(), 2, INT_MAX, one.data(), ids.data()); },
+        "dimension INT_MAX");
+    const bool e = throws_with(
+        [&] { (void)block_decomp_partitioned_edge_list(INT_MAX, one.data(), 2, 1, one.data(), ids.data()); },
+        "dimension INT_MAX");
+    const bool f = throws_with(
+        [&] { (void)block_decomp_partitioned_edge_list(1, one.data(), INT_MAX, 1, one.data(), ids.data()); },
+        "dimension INT_MAX");
+    setrlimit(RLIMIT_AS, &old);
+    expect(a, "cell list of INT_MAX cells");
+    expect(b && c, "all edges in block: nCells / maxEdges = INT_MAX");
+    expect(d && e && f, "partitioned edge list: nEdges / nCells / maxCells = INT_MAX");
+  }
   expect(throws_with([&] { (void)mpas_binary_search(sorted, 4, 5); }, "n2 outside 0..size"), "binary search past the list");
   expect(throws_with([&] { (void)mpas_binary_search(sorted, -1, 5); }, "n2 outside 0..size"), "binary search, n2 < 0");
   {
@@ -132,6 +164,13 @@ int main() {
            "postread_reindex: indexSpaceDim past indexToID");
     expect(throws_with([&] { postread_reindex(c2, 4, 3, idx, 7); }, "dimension outside its array"),
            "postread_reindex: innerDim past the field");
+    expect(throws_with([&] { postread_reindex(c2, 3, 5, idx, 7); }, "dimension outside its array"),
+           "postread_reindex: outerDim past the field");
+    FArray<int> none;
+    expect(throws_with([&] { postread_reindex(none, 1, 1, idx, 7); }, "dimension outside its array"),
+           "postread_reindex: unallocated field");
+    expect(throws_with([&] { postread_reindex(c2, 3, 3, none, 1); }, "dimension outside its array"),
+           "postread_reindex: unallocated indexToID");
   }
 
   // FArray: an element count that overflows size_t, a negative dimension index
@@ -140,6 +179,25 @@ int main() {
   {
     FArray<int> x({2, 3});
     expect(throws_with([&] { (void)x.extent(-1); }, "negative dimension index"), "FArray::extent(-1)");
+  }
+  // 2^62 doubles: the element count fits size_t, the bytes do not (more than vector::max_size())
+  {
+    FArray<double> x;
+    expect(throws_with([&] { x.allocate({1 << 30, 1 << 30, 4}); }, "number of elements overflows") && !x.allocated(),
+           "FArray: 2^62 doubles");
+  }
+  // 2^59 doubles (4 EiB) fit max_size() but not the address space: std::bad_alloc, and the array keeps its old
+  // extents and data
+  {
+    FArray<double> x({2, 3}, 1.5);
+    bool bad_alloc = false;
+    try {
+      x.allocate({1 << 29, 1 << 30});
+    } catch (const std::bad_alloc&) {
+      bad_alloc = true;
+    }
+    expect(bad_alloc && x.rank() == 2 && x.extent(0) == 2 && x.extent(1) == 3 && x.size() == 6 && x(2, 3) == 1.5,
+           "FArray: a failed allocation keeps the old array");
   }
 
   if (fails == 0) std::printf("OK decomp unit test\n");
