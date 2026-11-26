@@ -66,6 +66,10 @@ add_library(cppmpas STATIC
   src/physics/mpas_atmphys_pbl.cpp
   src/physics/mpas_atmphys_sfclayer.cpp
   src/physics/mpas_atmphys_todynamics.cpp
+  src/physics/module_ra_rrtmg.cpp
+  src/physics/mpas_atmphys_radiation.cpp
+  src/physics/rrtmg/rrtmg_lw_tables.cpp
+  src/physics/rrtmg/rrtmg_sw_tables.cpp
   src/operators/vector_operations.cpp
   src/operators/vector_reconstruct.cpp
   src/io/netcdf_file.cpp
