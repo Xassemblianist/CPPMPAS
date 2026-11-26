@@ -5,7 +5,11 @@ it must break, require each of them to fail, restore the source. The tests must 
 (a test that already fails proves nothing). Run it through the workstation gate.
 
 usage: mutation_check.py <source dir> <build dir> [first | i,j,...]   (index of the first mutant to apply, default 0,
-       or a comma-separated list of mutant indices)
+       or a comma-separated list of two or more distinct mutant indices; anything else is refused)
+
+CTest runs one test at a time (-j 1, whatever CTEST_PARALLEL_LEVEL says): tests that share a scratch file must not race in
+the check of the unmutated source. A test that times out or is skipped does not kill a mutant. After the last mutant
+the source is rebuilt and every test that killed one must pass again, else no kill of the run is trusted.
 """
 import re
 import subprocess
@@ -485,8 +489,8 @@ MUTATIONS = [
     # the harness itself: a test that was not run is not a kill; a test that fails without the mutant is not a kill
     ("tests/mutation_check.py", "    return {t for t in tests if test_status(out, t) != \"Passed\"}",
      "    return {t for t in tests if test_status(out, t) is None}", ["mutation_check_unit"]),
-    ("tests/mutation_check.py", "    return status is not None and status != \"Passed\" and \"Not Run\" not in status",
-     "    return status is not None and status != \"Passed\"", ["mutation_check_unit"]),
+    ("tests/mutation_check.py", "status != \"Passed\" and \"Not Run\" not in status and", "status != \"Passed\" and",
+     ["mutation_check_unit"]),
     # --unverified on the CLI (sc_init.nc: nVertLevels = 3) and the exact verified lists
     (X, "    else if (s == \"--unverified\") a.unverified = true;", "    else if (s == \"--unverified\") a.unverified = false;",
      ["init_unverified_SC"]),
@@ -548,6 +552,25 @@ MUTATIONS = [
     # even with -x written at the call (unit_libm calls every port so): g++ does not fold the negation there, so those
     # mutants are equivalent today; unit_libm would fail on a compiler that folds it
     (L, "  x = arg(x);\n  constexpr double hp0", "  constexpr double hp0", ["unit_libm"]),
+    # --- the harness: what kills, the selection, the baseline in one process at a time, the restored
+    # source checked again (unit tests of main() with a simulated cmake / ctest)
+    ("tests/mutation_check.py", " and \"Skipped\" not in status\n", "\n", ["mutation_check_unit"]),
+    ("tests/mutation_check.py", "            and \"Timeout\" not in status)", "            )", ["mutation_check_unit"]),
+    ("tests/mutation_check.py", "\n    return rc != 0 and killed(status) and t not in broken",
+     "\n    return rc != 0 and killed(status)", ["mutation_check_unit"]),
+    ("tests/mutation_check.py", "\n    return rc != 0 and killed(status) and t not in broken",
+     "\n    return killed(status) and t not in broken", ["mutation_check_unit"]),
+    ("tests/mutation_check.py", "    if not re.fullmatch(r\"[0-9]+(,[0-9]+)+\", sel):", "    if not re.match(r\"[0-9]+(,[0-9]+)+\", sel):",
+     ["mutation_check_unit"]),
+    ("tests/mutation_check.py", "\n    if len(set(idx)) != len(idx):", "\n    if False:", ["mutation_check_unit"]),
+    ("tests/mutation_check.py", "        if i >= n:\n", "        if i > n:\n", ["mutation_check_unit"]),
+    ("tests/mutation_check.py", "\n        if int(sel) >= n:", "\n        if int(sel) > n:", ["mutation_check_unit"]),
+    ("tests/mutation_check.py", "[\"ctest\", \"--test-dir\", str(build), \"-j\", \"1\", \"-R\"", "[\"ctest\", \"--test-dir\", str(build), \"-R\"",
+     ["mutation_check_unit"]),
+    ("tests/mutation_check.py", "    return \"^(\" + \"|\".join(re.escape(t) for t in tests) + \")$\"",
+     "    return \"^(\" + \"|\".join(tests) + \")$\"", ["mutation_check_unit"]),
+    ("tests/mutation_check.py", "\n        for t in sorted(not_passing(r.stdout, covered)):", "\n        for t in []:",
+     ["mutation_check_unit"]),
 ]
 
 
@@ -606,8 +629,15 @@ def test_status(out, t):
 
 def killed(status):
     """A test kills the mutant only if it ran and failed. "Not Run" (a fixture setup the mutant broke, a missing
-    executable, a disabled test) is a check that did not run: not a kill (CONSTITUTION.md 3.2)."""
-    return status is not None and status != "Passed" and "Not Run" not in status
+    executable, a disabled test) is a check that did not run: not a kill (CONSTITUTION.md 3.2). Nor is "Skipped" (the
+    test reported that it could not run) or "Timeout" (a stalled machine looks the same as a mutant that hangs)."""
+    return (status is not None and status != "Passed" and "Not Run" not in status and "Skipped" not in status
+            and "Timeout" not in status)
+
+
+def is_kill(rc, status, t, broken):
+    """CTest failed (rc != 0), the test's own line shows a failure, and the test passed on the unmutated source."""
+    return rc != 0 and killed(status) and t not in broken
 
 
 def not_passing(out, tests):
@@ -615,16 +645,45 @@ def not_passing(out, tests):
     return {t for t in tests if test_status(out, t) != "Passed"}
 
 
+def parse_selection(sel, n):
+    """The mutant indices of the command-line selection: 'k' (k .. n-1) or 'i,j,...' (two or more distinct indices).
+    Anything else (an empty item, a trailing ',', a sign, an index past the list, a repeated index) is refused."""
+    if re.fullmatch(r"[0-9]+", sel):
+        if int(sel) >= n:
+            raise SystemExit(f"mutation_check.py: first mutant {sel} is past the last one ({n - 1})")
+        return list(range(int(sel), n))
+    if not re.fullmatch(r"[0-9]+(,[0-9]+)+", sel):
+        raise SystemExit(f"mutation_check.py: mutant selection {sel!r} is neither an index nor a list i,j,... of "
+                         f"indices")
+    idx = [int(i) for i in sel.split(",")]
+    for i in idx:
+        if i >= n:
+            raise SystemExit(f"mutation_check.py: mutant {i} is past the last one ({n - 1})")
+    if len(set(idx)) != len(idx):
+        raise SystemExit(f"mutation_check.py: mutant selection {sel!r} repeats an index")
+    return idx
+
+
+def ctest(build, regex):
+    """CTest on the tests the regex selects, one at a time (-j 1 overrides CTEST_PARALLEL_LEVEL)"""
+    return subprocess.run(["ctest", "--test-dir", str(build), "-j", "1", "-R", regex, "-FA", "inputs"],
+                          capture_output=True, text=True)
+
+
+def any_of(tests):
+    return "^(" + "|".join(re.escape(t) for t in tests) + ")$"
+
+
 def main():
+    if len(sys.argv) not in (3, 4):
+        raise SystemExit(__doc__)
     src, build = Path(sys.argv[1]), Path(sys.argv[2])
-    sel = sys.argv[3] if len(sys.argv) > 3 else "0"
-    chosen = [MUTATIONS[int(i)] for i in sel.split(",")] if "," in sel else MUTATIONS[int(sel):]
+    chosen = [MUTATIONS[i] for i in parse_selection(sys.argv[3] if len(sys.argv) > 3 else "0", len(MUTATIONS))]
     covered, bad = set(), []
     # every test a mutant must break has to pass first, on the unmutated source
     subprocess.run(["cmake", "--build", str(build), "-j4"], capture_output=True, text=True, check=True)
     needed = sorted({t for _, _, _, ts in chosen for t in ts})
-    r = subprocess.run(["ctest", "--test-dir", str(build), "-R", "^(" + "|".join(needed) + ")$", "-FA", "inputs"],
-                       capture_output=True, text=True)
+    r = ctest(build, any_of(needed))
     broken = not_passing(r.stdout, needed)
     for t in sorted(broken):
         bad.append(f"{t} does not pass on the unmutated source (status {test_status(r.stdout, t)!r}): no kill counted")
@@ -641,10 +700,9 @@ def main():
                 bad.append(f"{path}: mutant does not build")
                 continue
             for t in tests:
-                r = subprocess.run(["ctest", "--test-dir", str(build), "-R", f"^{t}$", "-FA", "inputs"],
-                                   capture_output=True, text=True)
+                r = ctest(build, any_of([t]))
                 status = test_status(r.stdout, t)
-                failed = r.returncode != 0 and killed(status) and t not in broken
+                failed = is_kill(r.returncode, status, t, broken)
                 print(f"{'KILLED' if failed else 'SURVIVED'} {t:22s} by {path}: {new.strip()[:70]}")
                 if failed:
                     covered.add(t)
@@ -653,6 +711,13 @@ def main():
         finally:
             p.write_text(orig)
     subprocess.run(["cmake", "--build", str(build), "-j4"], capture_output=True, text=True, check=True)
+    # the restored source: a test that killed a mutant must pass again (a stale object, a scratch file a mutant left
+    # behind or a change of the machine would otherwise show as kills)
+    if covered:
+        r = ctest(build, any_of(sorted(covered)))
+        for t in sorted(not_passing(r.stdout, covered)):
+            bad.append(f"{t} does not pass on the restored source (status {test_status(r.stdout, t)!r}): its kills "
+                       f"in this run are not trusted")
     for b in bad:
         print("PROBLEM", b)
     print(f"{len(covered)} tests killed by at least one mutant")
