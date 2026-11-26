@@ -80,14 +80,20 @@ int main(int argc, char** argv) {
       {"config_time_integration = 'RK4'", [](DycoreConfig& c) { c.config_time_integration = "RK4"; }},
       {"config_time_integration_order = 3", [](DycoreConfig& c) { c.config_time_integration_order = 3; }},
       {"config_split_dynamics_transport = true", [](DycoreConfig& c) { c.config_split_dynamics_transport = true; }},
-      {"config_scalar_advection = true", [](DycoreConfig& c) { c.config_scalar_advection = true; }},
+      {"config_monotonic = false", [](DycoreConfig& c) {
+         c.config_scalar_advection = true;
+         c.config_monotonic = false;
+       }},
+      {"config_positive_definite = true", [](DycoreConfig& c) {
+         c.config_scalar_advection = true;
+         c.config_positive_definite = true;
+       }},
       {"config_positive_definite = true", [](DycoreConfig& c) { c.config_positive_definite = true; }},
       {"config_horiz_mixing = '2d_smagorinsky'", [](DycoreConfig& c) { c.config_horiz_mixing = "2d_smagorinsky"; }},
       {"config_les_model = '3d_smagorinsky'", [](DycoreConfig& c) { c.config_les_model = "3d_smagorinsky"; }},
       {"config_mpas_cam_coef > 0", [](DycoreConfig& c) { c.config_mpas_cam_coef = 0.2; }},
       {"config_rayleigh_damp_u = true", [](DycoreConfig& c) { c.config_rayleigh_damp_u = true; }},
       {"config_mix_scalars = true", [](DycoreConfig& c) { c.config_mix_scalars = true; }},
-      {"config_mix_full = false", [](DycoreConfig& c) { c.config_mix_full = false; }},
       {"config_h_mom_eddy_visc4 > 0", [](DycoreConfig& c) { c.config_h_mom_eddy_visc4 = 1.0; }},
       {"config_h_theta_eddy_visc4 > 0", [](DycoreConfig& c) { c.config_h_theta_eddy_visc4 = 1.0; }},
       {"config_v_mom_eddy_visc2 <= 0", [](DycoreConfig& c) { c.config_v_mom_eddy_visc2 = 0.0; }},
@@ -96,7 +102,8 @@ int main(int argc, char** argv) {
       {"config_IAU_option = 'on'", [](DycoreConfig& c) { c.config_IAU_option = "on"; }},
       {"config_physics_suite = 'convection_permitting'",
        [](DycoreConfig& c) { c.config_physics_suite = "convection_permitting"; }},
-      {"config_microp_scheme = 'mp_kessler'", [](DycoreConfig& c) { c.config_microp_scheme = "mp_kessler"; }},
+      {"config_microp_scheme = 'mp_thompson'", [](DycoreConfig& c) { c.config_microp_scheme = "mp_thompson"; }},
+      {"scalars other than qv, qc, qr with Kessler", [](DycoreConfig& c) { c.config_microp_scheme = "mp_kessler"; }},
       {"config_convection_scheme = 'cu_tiedtke'", [](DycoreConfig& c) { c.config_convection_scheme = "cu_tiedtke"; }},
       {"config_pbl_scheme = 'bl_ysu'", [](DycoreConfig& c) { c.config_pbl_scheme = "bl_ysu"; }},
       {"radiation schemes", [](DycoreConfig& c) { c.config_radt_lw_scheme = "rrtmg_lw"; }},
@@ -139,6 +146,33 @@ int main(int argc, char** argv) {
     s.scalar_names = {"qv", "qc", "qr"};
     expect(throws_with([&] { check_dycore_supported(mw, in.mesh, s); }, "scalars other than qv"),
            "refuses qv, qc, qr");
+    DycoreConfig k = mw;  // qv, qc, qr with Kessler need the scalar transport
+    k.config_microp_scheme = "mp_kessler";
+    expect(throws_with([&] { check_dycore_supported(k, in.mesh, s); }, "moist scalars without scalar advection"),
+           "refuses moist scalars without transport");
+    k.config_scalar_advection = true;
+    try {
+      check_dycore_supported(k, in.mesh, s);
+    } catch (const Error& e) {
+      expect(false, std::string("Kessler with qv, qc, qr and transport refused: ") + e.what());
+    }
+    // the scalar transport's hexagon-only paths (TI:4801-4821, 5394-5404, 5450-5463)
+    DycoreConfig a = mw;
+    a.config_scalar_advection = true;
+    m = in.mesh;
+    m.nAdvCellsForEdge(5) = 9;
+    expect(throws_with([&] { check_dycore_supported(a, m, in.state); }, "nAdvCellsForEdge != 10"),
+           "refuses nAdvCellsForEdge 9");
+    m = in.mesh;
+    m.nEdgesOnCell(7) = 5;
+    expect(throws_with([&] { check_dycore_supported(a, m, in.state); }, "nEdgesOnCell != 6"), "refuses a pentagon");
+    DycoreConfig p = mw;  // mixing of the perturbation from the initial state (SC) is ported
+    p.config_mix_full = false;
+    try {
+      check_dycore_supported(p, in.mesh, in.state);
+    } catch (const Error& e) {
+      expect(false, std::string("config_mix_full = false refused: ") + e.what());
+    }
   }
 
   // add_seconds

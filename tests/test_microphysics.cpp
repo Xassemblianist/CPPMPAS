@@ -1,0 +1,116 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Unit tests of src/core_atmosphere/atm_microphysics.cpp and src/physics/mp_kessler.hpp that the SC step files cannot
+// show:
+//  * microphysics_init on the SC reference: Kessler active, dt_dyn = dt_microp = 3 s, mp_top_level = nVertLevels
+//    (mpas_atmphys_init.F:276-282); a model top above config_microphysics_top (mp_top_level < nVertLevels, the
+//    untaken PI:938-946) is refused; the MW namelist (microphysics off) leaves it inactive;
+//  * the MPAS parameter es_cap of the Kessler kernel (module_mp_kessler.F:219 es = min(es, 0.99*pressure)): it
+//    changes a column where es > 0.99*pressure and leaves an ordinary column unchanged. No SC column reaches the cap
+//    (es is a few kPa at most against >= 5 kPa of pressure), so the step files cannot show it.
+//
+// usage: test_microphysics <SC init file> <SC namelist.atmosphere> <MW namelist.atmosphere>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <vector>
+
+#include "core/error.hpp"
+#include "core_atmosphere/atm_init.hpp"
+#include "core_atmosphere/atm_microphysics.hpp"
+#include "io/mpas_reader.hpp"
+#include "physics/mp_kessler.hpp"
+
+using namespace cppmpas;
+
+static int fails = 0;
+static void expect(bool ok, const std::string& what) {
+  if (!ok) {
+    std::printf("FAIL %s\n", what.c_str());
+    ++fails;
+  }
+}
+
+// one column of nz levels through the kernel; returns qv, qc, qr, t after the call
+static std::vector<real> column(bool es_cap, real pii, real theta, real qv0) {
+  const int nz = 4;
+  std::vector<real> t(nz, theta), qv(nz, qv0), qc(nz, 1.e-4), qr(nz, 1.e-4), rho(nz, 0.1), pi(nz, pii), dz(nz, 500.0),
+      z(nz), rainnc(1, 0.0), rainncv(1, 0.0);
+  for (int k = 0; k < nz; ++k) z[k] = 250.0 + 500.0 * k;
+  using phys::kessler::View2;
+  using phys::kessler::View3;
+  phys::kessler::KesslerKernel kk{};
+  kk.t = View3<real>{t.data(), 0, 1};
+  kk.qv = View3<real>{qv.data(), 0, 1};
+  kk.qc = View3<real>{qc.data(), 0, 1};
+  kk.qr = View3<real>{qr.data(), 0, 1};
+  kk.rho = View3<const real>{rho.data(), 0, 1};
+  kk.pii = View3<const real>{pi.data(), 0, 1};
+  kk.dz8w = View3<const real>{dz.data(), 0, 1};
+  kk.z = View3<const real>{z.data(), 0, 1};
+  kk.rainnc = View2<real>{rainnc.data(), 0};
+  kk.rainncv = View2<real>{rainncv.data(), 0};
+  kk.dt = 3.0;
+  kk.xlv = 2.50e6;
+  kk.cp = 7.0 * 287.0 / 2.0;
+  kk.ep2 = 287.0 / 461.6;
+  kk.svp1 = 0.6112;
+  kk.svp2 = 17.67;
+  kk.svp3 = 29.65;
+  kk.svpt0 = 273.15;
+  kk.rhowater = 1000.0;
+  kk.nz = nz;
+  kk.i0 = 0;
+  kk.ni = 1;
+  kk.es_cap = es_cap;
+  kk(0, 0);
+  std::vector<real> out;
+  for (int k = 0; k < nz; ++k) {
+    out.push_back(qv[k]);
+    out.push_back(qc[k]);
+    out.push_back(qr[k]);
+    out.push_back(t[k]);
+  }
+  return out;
+}
+
+int main(int argc, char** argv) {
+  if (argc != 4) {
+    std::printf("usage: test_microphysics <SC init file> <SC namelist.atmosphere> <MW namelist.atmosphere>\n");
+    return 2;
+  }
+  InitConfig icfg = read_init_config(argv[2]);
+  MpasInput in = read_mpas_init(argv[1], {"qv", "qc", "qr"});
+  std::vector<std::string> log;
+  atm_core_init(in.mesh, in.state, in.diag, icfg, log);
+
+  MicrophysicsFields mp;
+  microphysics_init(argv[2], in.mesh, 3.0, mp);
+  expect(mp.active, "SC: Kessler active");
+  expect(mp.mp_top_level == in.mesh.nVertLevels, "SC: mp_top_level = nVertLevels (" + std::to_string(mp.mp_top_level) + ")");
+  expect(mp.dt_dyn == 3.0 && mp.dt_microp == 3.0, "SC: dt_dyn = dt_microp = 3");
+  expect(mp.i_rainnc.allocated() && mp.i_rainnc(1) == 0 && mp.rainnc(1) == 0.0, "SC: i_rainnc, rainnc zero");
+  {  // a model top above config_microphysics_top = 45 km: refused
+    Mesh m = in.mesh;
+    for (int k = 1; k <= m.nVertLevels; ++k) m.dzu(k) = 3.0 * m.dzu(k);
+    MicrophysicsFields mp2;
+    bool threw = false;
+    try {
+      microphysics_init(argv[2], m, 3.0, mp2);
+    } catch (const Error& e) {
+      threw = std::strstr(e.what(), "mp_top_level") != nullptr;
+    }
+    expect(threw, "refuses mp_top_level < nVertLevels");
+  }
+  {
+    MicrophysicsFields mp3;
+    microphysics_init(argv[3], in.mesh, 6.0, mp3);
+    expect(!mp3.active, "MW: microphysics off");
+  }
+  // es_cap: pii = 0.1 (p = 1e5 * 0.1^(1004/287) = 32 Pa) and theta = 3000 K (T = 300 K, es = 3.5 kPa): capped
+  expect(column(true, 0.1, 3000.0, 1.e-3) != column(false, 0.1, 3000.0, 1.e-3), "es_cap changes a capped column");
+  expect(column(true, 0.95, 300.0, 1.e-2) == column(false, 0.95, 300.0, 1.e-2), "es_cap leaves an ordinary column");
+  if (fails) std::printf("%d failures\n", fails);
+  else std::printf("all passed\n");
+  return fails ? 1 : 0;
+}
