@@ -691,6 +691,9 @@ SCQ = lambda steps: SCT(steps, "qv")
 # the Kessler kernel's condensation, rain and sedimentation act only once cloud forms: their mutants are exact on the
 # ten steps (every column subsaturated: product = max(prod, -qc) = 0, qrprod = ern = 0) and must break the 30-min
 # state (label long)
+# the limiter acts where the high-order update would leave the local bounds, which the smooth qv of the first 30 s
+# does not reach: these mutants must break the 30-min qv (label long)
+SCLIM = ["dycore_SC_restart_qv", "dycore_SC_output30_qv"]
 SCLONG = [f"dycore_SC_restart_{f}" for f in "theta_m qv qc qr".split()] + \
     [f"dycore_SC_output30_{f}" for f in "qc qr".split()]
 MUTATIONS += [
@@ -711,13 +714,13 @@ MUTATIONS += [
      "    atm_advance_scalars_work(cfg, m, s, f, rk_timestep[3], horiz_flux_array);", SCQ([1])),
     # atm_advance_scalars_mono_work (rk_step 3)
     (AS, "          const int ii = uhAvg(k, iEdge) > 0 ? 1 : 2;", "          const int ii = uhAvg(k, iEdge) > 0 ? 2 : 1;", SCQ([1])),
-    (AS, "        for (int j = 1; j <= 6; ++j) {", "        for (int j = 1; j <= 5; ++j) {", SCQ([1, 2])),
+    (AS, "        for (int j = 1; j <= 6; ++j) {", "        for (int j = 1; j <= 5; ++j) {", SCLIM),
     (AS, "        flux_upwind_arr[k] = dt * (fmax0(wwAvg(k, iCell)) * scalar_old(k - 1, iCell) +",
      "        flux_upwind_arr[k] = dt * (fmin0(wwAvg(k, iCell)) * scalar_old(k - 1, iCell) +", SCQ([1])),
     (AS, "        scale_arr(k, SCALE_IN, iCell) = -(rdnw(k) * (fmin0(wdtn(k + 1, iCell)) - fmax0(wdtn(k, iCell))));",
      "        scale_arr(k, SCALE_IN, iCell) = -(rdnw(k) * (fmin0(wdtn(k, iCell)) - fmax0(wdtn(k, iCell))));", SCQ([1])),
     (AS, "        scale_arr(k, SCALE_IN, iCell) = fmin1(fmax0(scale_factor));",
-     "        scale_arr(k, SCALE_IN, iCell) = fmax0(scale_factor);", SCQ([1, 2])),
+     "        scale_arr(k, SCALE_IN, iCell) = fmax0(scale_factor);", SCLIM),
     (AS, "          flux = fmax0(flux) * vmin(scale_arr(k, SCALE_OUT, cell1), scale_arr(k, SCALE_IN, cell2)) +",
      "          flux = fmax0(flux) * vmin(scale_arr(k, SCALE_OUT, cell1), scale_arr(k, SCALE_OUT, cell2)) +", SCQ([1, 2])),
     (AS, "        flux = fmax0(flux) * vmin(scale_arr(k - 1, SCALE_OUT, iCell), scale_arr(k, SCALE_IN, iCell)) +",
@@ -725,7 +728,7 @@ MUTATIONS += [
     (AS, "          flux_arr(k, iEdge) = dt * flux_arr(k, iEdge) - flux_upwind;",
      "          flux_arr(k, iEdge) = dt * flux_arr(k, iEdge) + flux_upwind;", SCQ([1])),
     (AS, "      for (int k = 1; k <= nVertLevels; ++k) scalars_new(iScalar, k, iCell) = fmax0(scalar_new(k, iCell));",
-     "      for (int k = 1; k <= nVertLevels; ++k) scalars_new(iScalar, k, iCell) = scalar_new(k, iCell);", SCQ([1, 2])),
+     "      for (int k = 1; k <= nVertLevels; ++k) scalars_new(iScalar, k, iCell) = scalar_new(k, iCell);", SCLIM),
     (AS, "            (scalar_new(k, iCell) + (-(rdnw(k) * (wdtn(k + 1, iCell) - wdtn(k, iCell))))) / rho_zz_new(k, iCell);",
      "            (scalar_new(k, iCell) + (-(rdnw(k) * (wdtn(k + 1, iCell) - wdtn(k, iCell))))) / rho_zz_old(k, iCell);",
      SCQ([1])),
@@ -738,28 +741,26 @@ MUTATIONS += [
     (DY, "  if (s.scalar_names != want) no(", "  if (false) no(", ["unit_dycore"]),
     # vertical mixing of the perturbation (DM:850-882, 1442-1466)
     (DP, "      u_mix[k] = u(k, iEdge) - u_init(k) * cosa + v_init(k) * sina;",
-     "      u_mix[k] = u(k, iEdge) - u_init(k) * cosa;", SCT([1], "u")),
-    (DP, "      u_mix[k] = u(k, iEdge) - u_init(k) * cosa + v_init(k) * sina;",
      "      u_mix[k] = u(k, iEdge) - u_init(k) * sina + v_init(k) * cosa;", SCT([1], "u")),
     (DP, "              (((theta_m(k + 1, iCell) - t_init(k + 1, iCell)) - (theta_m(k, iCell) - t_init(k, iCell))) / (zp - z0) -",
      "              (((theta_m(k + 1, iCell) - t_init(k, iCell)) - (theta_m(k, iCell) - t_init(k, iCell))) / (zp - z0) -",
      SCT([1], "theta_m")),
     (DS, "      u_vertical_mixing_perturbation(m, a, u, rho_edge, tend_u_euler);\n      return;",
-     "      return;", SCT([1], "u")),
+     "      return;", SCT([10], "u") + ["dycore_SC_restart_u"]),
     (DS, "      theta_vertical_mixing_perturbation(m, a, theta_m, rho_zz, tend_theta_euler);\n      return;",
      "      return;", SCT([1], "theta_m")),
     # Kessler microphysics and its interface
     (DY, "    driver_microphysics(m, s, f.theta_m2, f.rho_zz2, f.scalars2, d, f.rt_diabatic_tend, f.mp);", "",
-     SCT([1], "theta_m qv")),
+     SCT([1], "theta_m")),
     (MP, "      rt_diabatic_tend(k, i) = (theta_m(k, i) - rt_diabatic_tend(k, i)) / dt_dyn;",
      "      rt_diabatic_tend(k, i) = 0.0;", SCT([2], "theta_m")),
     (MP, "      exner(k, i) = libm::pow(zz(k, i) * (R_d / P0) * (rtheta_p(k, i) + rtheta_b(k, i)), rcv);",
      "      exner(k, i) = libm::mvec_pow(zz(k, i) * (R_d / P0) * (rtheta_p(k, i) + rtheta_b(k, i)), rcv);",
      SCT([2], "theta_m")),
     (MP, "      P(th_p, i, k) = theta_m(k, i) / (1.0 + R_v / R_d * fmax0(P(qv_p, i, k)));",
-     "      P(th_p, i, k) = theta_m(k, i) / (1.0 + rvord * fmax0(P(qv_p, i, k)));", SCT([1], "theta_m")),
+     "      P(th_p, i, k) = theta_m(k, i) / (1.0 + R_v / R_d * 0.5 * fmax0(P(qv_p, i, k)));", SCT([1], "theta_m")),
     (MP, "      theta_m(k, i) = P(th_p, i, k) * (1.0 + rvord * P(qv_p, i, k));",
-     "      theta_m(k, i) = P(th_p, i, k) * (1.0 + rvord * scalars(index_qv, k, i));", SCT([1], "theta_m")),
+     "      theta_m(k, i) = P(th_p, i, k) * (1.0 + rvord * 0.5 * P(qv_p, i, k));", SCT([1], "theta_m")),
     (MP, "      rtheta_p(k, i) = rho_zz(k, i) * theta_m(k, i) - rtheta_b(k, i);",
      "      rtheta_p(k, i) = rho_zz(k, i) * theta_m(k, i);", SCT([2], "theta_m")),
     (MP, "      pressure_p(k, i) = zz(k, i) * R_d * (exner(k, i) * rtheta_p(k, i) + (exner(k, i) - exner_b(k, i)) * rtheta_b(k, i));",
@@ -780,7 +781,10 @@ MUTATIONS += [
     # dropped as equivalent on SC: "kk.es_cap = true" -> false (es <= 0.99*pressure in every SC column, so the cap
     # never acts; unit_microphysics shows the cap itself); the source update of TI:5208 deleted (scalar_tend is 0,
     # it only turns a -0.0 of time level 1 into +0.0, and no -0.0 reaches it); fmax0(qv) -> qv in th_p (qv >= +0);
-    # sincos -> sin / cos of angleEdge in u_mix (the SC angleEdge values, multiples of pi/6, give the same bits)
+    # sincos -> sin / cos of angleEdge in u_mix (the SC angleEdge values pi/6, pi/2, 5pi/6 give the same bits); the
+    # v_init term of u_mix deleted (SC's v_init is 0); R_v / R_d -> rvord in th_p (the same constant, 461.6/287);
+    # theta_m from scalars(index_qv) instead of qv_p (equal: the scalar was set from qv_p one line above); the
+    # first four were run and survive every SC step test, the last three survived the step-1 tests they had.
 ]
 
 
