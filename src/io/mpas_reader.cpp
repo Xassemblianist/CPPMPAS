@@ -507,6 +507,12 @@ FieldRef field_ref(MpasInput& in, const std::string& name) {
   throw Error("variable '" + name + "' has no CPPMPAS port (not read or written)");
 }
 
+void read_registry_field(const NcFile& f, const Mesh& m, const std::string& name, FArray<real>& a) {
+  read_into(f, m, registry_var(name), a);
+}
+
+void read_field_ref(const NcFile& f, MpasInput& in, const std::string& name) { read_field(f, in, name); }
+
 MpasInput read_mpas_grid(const std::string& path) {
   const NcFile f = NcFile::open_read(path);
   MpasInput in;
