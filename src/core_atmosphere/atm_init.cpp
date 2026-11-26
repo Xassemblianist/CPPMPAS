@@ -583,7 +583,7 @@ void atm_mpas_init_block(Mesh& m, State& s, Diag& d, const InitConfig& cfg, std:
   allocate_solve_diag_work(m, work);  // :492-499 module ke_vertex / ke_edge, garbage column zeroed
   // :502-517 thread ranges: one thread, cellThreadStart(1) = 1, cellThreadEnd(1) = nCells etc.
   // (mpas_atm_threading.F:114-125); :519 mpas_atm_pre_compute_solve_diagnostics only moves data for OpenACC
-  atm_init_coupled_diagnostics(m, s, d);  // :519-530 (cold start; the call at :523)
+  atm_init_coupled_diagnostics(m, s, d);  // :522-530 (cold start; the call at :523)
   atm_compute_solve_diagnostics(cfg.config_dt, cfg.config_apvm_upwinding, m, s.rho_zz, s.u, d, work, 1, m.nCells, 1,
                                 m.nVertices, 1, m.nEdges);  // :532-535, time level 1, dt = config_dt, no rk_step
   // :538 mpas_atm_post_compute_solve_diagnostics (OpenACC data only); :540-541 deallocate ke_vertex / ke_edge

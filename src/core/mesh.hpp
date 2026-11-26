@@ -95,7 +95,7 @@ struct Diag {
   FArray<real> ru;                                       // (nVertLevels, nEdges+1)
   FArray<real> rw;                                       // (nVertLevelsP1, nCells+1)
   FArray<real> rho_p, rtheta_base, rtheta_p, exner, exner_base, pressure_p, pressure_base;  // (nVertLevels, nCells+1)
-  // set by atm_compute_solve_diagnostics (mpas_atm_time_integration.F:6967-7437, Registry.xml:1846-1908) and
+  // set by atm_compute_solve_diagnostics (mpas_atm_time_integration.F:6967-7437, Registry.xml:1846-1909) and
   // mpas_reconstruct (mpas_vector_reconstruction.F:205-339, Registry.xml:1882-1894); allocated by
   // allocate_solve_diag_fields (core_atmosphere/atm_solve_diagnostics.hpp)
   FArray<real> v, rho_edge, pv_edge, gradPVt, gradPVn;                // (nVertLevels, nEdges+1)
