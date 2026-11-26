@@ -944,6 +944,7 @@ MUTATIONS += [
     (A, "  if (restart) {", "  if (false) {", RST0("theta_m rho_zz ru rw rtheta_p rho_p exner pressure_p rtheta_base exner_base pressure_base")),
     (A, "      if (r.a->extents() != r.ext)", "      if (false)", ["unit_init_guards"]),
     (RS, "  if (rtrim(xtime) != start_stamp)", "  if (false)", ["err_restart_time", "restart_refusals_MW"]),
+    (RS, '  if (!NcFile::open_read(path).has_var("Time")) throw', '  if (false) throw', ["restart_refusals_MW"]),
     # the restart's Time is State::Time(1) as read (the copy into f.Time2 is overwritten before it is read: no mutant)
     (RS, '  read_field_ref(f, in, "Time");', '  read_field_ref(f, in, "Time"); in.state.Time(1) = 0.0;', RST0("Time")),
     # (deleting the restart_dycore_fields call is exact since Time lives in State::Time: ru_p and rw_p are overwritten

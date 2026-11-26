@@ -52,8 +52,11 @@ void check_stream_time(const std::string& path, const std::string& xtime, const 
 RestartInput read_mpas_restart(const std::string& path, const std::vector<std::string>& scalars,
                                const std::string& start_stamp) {
   RestartInput r;
+  // Time is in both streams (Registry.xml:615, 668): a restart file without it is refused as the restart stream
+  if (!NcFile::open_read(path).has_var("Time")) throw Error(path + ": variable Time of the restart stream is missing");
   // the mesh (invariant stream, Registry.xml:657) and the restart-stream fields the input stream has as well:
-  // initial_time, xtime, u_init, v_init, t_init, u, w, rho, theta, rho_base, theta_base, surface_pressure, scalars
+  // initial_time, xtime, Time, u_init, v_init, t_init, u, w, rho, theta, rho_base, theta_base, surface_pressure,
+  // scalars
   r.in = read_mpas_init(path, scalars);
   MpasInput& in = r.in;
   // the one record of the file (the reader refuses more) must be the start time (MPAS_STREAM_EXACT_TIME)
@@ -63,8 +66,7 @@ RestartInput read_mpas_restart(const std::string& path, const std::vector<std::s
     if (!f.has_var(n)) throw Error(path + ": variable " + n + " of the restart stream is missing");
     read_field_ref(f, in, n);
   }
-  if (!f.has_var("Time")) throw Error(path + ": variable Time of the restart stream is missing");
-  read_field_ref(f, in, "Time");  // state Time, time level 1 (Registry.xml:668)
+  read_field_ref(f, in, "Time");  // state Time, time level 1 (Registry.xml:668; read_mpas_init read it already)
   const std::pair<const char*, FArray<real>*> extra[] = {
       {"ru_p", &r.ru_p}, {"rw_p", &r.rw_p}, {"rt_diabatic_tend", &r.rt_diabatic_tend}, {"rthdynten", &r.rthdynten}};
   std::vector<std::string> read_extra;
