@@ -62,6 +62,9 @@ add_library(cppmpas STATIC
   src/operators/geometry_utils.cpp
   src/physics/module_mp_wsm6.cpp
   src/physics/mpas_atmphys_microphysics.cpp
+  src/physics/module_sf_noahdrv.cpp
+  src/physics/mpas_atmphys_driver_lsm.cpp
+  src/physics/mpas_atmphys_lsm_noahinit.cpp
   src/operators/vector_operations.cpp
   src/operators/vector_reconstruct.cpp
   src/io/netcdf_file.cpp
