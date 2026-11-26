@@ -1,0 +1,79 @@
+// SPDX-License-Identifier: GPL-3.0-or-later AND LicenseRef-AER-RRTMG
+// Shared with CPPWRF (SHARED_WITH_CPPWRF.md): CPPWRF 7fac5bf src/phys/ra_rrtmg_sw/rrtmg_sw_vrtqdr.hpp, copied unchanged except the namespace
+// (cppmpas::phys::rrtmg), the CPPMPAS_ macro prefix, the include paths and the real type.
+#pragma once
+
+#include "core/backend.hpp"
+#include "physics/rrtmg/parkind.hpp"
+#include "physics/rrtmg/strided.hpp"
+
+namespace cppmpas::phys::rrtmg {
+
+template <int ML>
+CPPMPAS_FORCEINLINE void vrtqdr_sw_direct(
+    int klev,
+    const rb* pref,       // (klev+1)
+    const rb* prefd,      // (klev+1)
+    const rb* ptra,       // (klev+1)
+    const rb* ptrad,      // (klev+1)
+    const rb* pdbt,       // (klev+1)
+    const rb* ptdbt,      // (klev+1)
+    rb zincflx,
+    SD2 pfd_out,
+    SD2 pfu_out,
+    int iw
+) {
+  rb ztdn[ML + 1], prdnd[ML + 1], prup[ML + 1], prupd[ML + 1];
+
+  // Link lowest layer with surface
+  rb zreflect = rb(1.0) / (rb(1.0) - prefd[klev] * prefd[klev - 1]);
+  prup[klev - 1] = pref[klev - 1] + (ptrad[klev - 1] *
+      ((ptra[klev - 1] - pdbt[klev - 1]) * prefd[klev] +
+       pdbt[klev - 1] * pref[klev])) * zreflect;
+  prupd[klev - 1] = prefd[klev - 1] + ptrad[klev - 1] * ptrad[klev - 1] *
+      prefd[klev] * zreflect;
+
+  // Pass from bottom to top
+  for (int ikx = klev - 2; ikx >= 0; --ikx) {
+    int ikp = ikx + 1;
+    zreflect = rb(1.0) / (rb(1.0) - prupd[ikp] * prefd[ikx]);
+    prup[ikx] = pref[ikx] + (ptrad[ikx] *
+        ((ptra[ikx] - pdbt[ikx]) * prupd[ikp] +
+         pdbt[ikx] * prup[ikp])) * zreflect;
+    prupd[ikx] = prefd[ikx] + ptrad[ikx] * ptrad[ikx] *
+        prupd[ikp] * zreflect;
+  }
+
+  // Upper boundary conditions
+  ztdn[0] = rb(1.0);
+  prdnd[0] = rb(0.0);
+  ztdn[1] = ptra[0];
+  prdnd[1] = prefd[0];
+
+  // Pass from top to bottom
+  for (int jk = 1; jk < klev; ++jk) {
+    int ikp = jk + 1;
+    zreflect = rb(1.0) / (rb(1.0) - prefd[jk] * prdnd[jk]);
+    ztdn[ikp] = ptdbt[jk] * ptra[jk] +
+        (ptrad[jk] * ((ztdn[jk] - ptdbt[jk]) +
+         ptdbt[jk] * pref[jk] * prdnd[jk])) * zreflect;
+    prdnd[ikp] = prefd[jk] + ptrad[jk] * ptrad[jk] *
+        prdnd[jk] * zreflect;
+  }
+
+  // Up- and down-welling fluxes at levels
+  prup[klev] = pref[klev];
+  prupd[klev] = prefd[klev];
+  for (int jk = 0; jk <= klev; ++jk) {
+    int ikl = klev - jk;
+    zreflect = rb(1.0) / (rb(1.0) - prdnd[jk] * prupd[jk]);
+    rb pfu = (ptdbt[jk] * prup[jk] +
+        (ztdn[jk] - ptdbt[jk]) * prupd[jk]) * zreflect;
+    rb pfd = ptdbt[jk] + (ztdn[jk] - ptdbt[jk] +
+        ptdbt[jk] * prup[jk] * prdnd[jk]) * zreflect;
+    pfu_out[ikl][iw] = zincflx * pfu;
+    pfd_out[ikl][iw] = zincflx * pfd;
+  }
+}
+
+}  // namespace cppmpas::phys::rrtmg

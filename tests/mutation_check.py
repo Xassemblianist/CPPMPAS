@@ -30,6 +30,7 @@ def D(fields, cases="MW SC JW"):
 
 ALL3 = "MW SC JW"
 RS = "src/io/mpas_restart.cpp"
+RAD, RDRV = "src/physics/module_ra_rrtmg.cpp", "src/physics/mpas_atmphys_radiation.cpp"
 
 
 def RST0(fields):
@@ -1137,6 +1138,76 @@ EQUIVALENT_ON_SC = {
     ('src/core_atmosphere/atm_init.cpp', 'd.rho_p(k, iCell) = s.rho(k, iCell) - s.rho_base(k, iCell);'):
         ['initdump_SC_rho_p'],
 }
+MUTATIONS += [
+    # --- physics column checks, appended after the supercell's mutants (merge of the physics branches: the
+    # supercell keeps its indices 493-534; WSM6 535-537, YSU / surface layer 538-547, radiation 548-560, Noah 561-569)
+    # WSM6 column check (tests/wsm6_column): the libmvec lanes of MPAS's -O3 build (scalar log / exp everywhere,
+    # CPPWRF's kernel as WRF calls it), the max(0, qv) of th_p (PI:665; cells of regime 4 have qv < 0), the
+    # background radius above mp_top_level (PI:1010; case 9:41:2:33)
+    ("src/physics/module_mp_wsm6.cpp", "pii.data(), p.data(), delz.data(), rain, rainncv, snow, snowncv, graupel, graupelncv, sr, i - its,\n           ite - its + 1);",
+     "pii.data(), p.data(), delz.data(), rain, rainncv, snow, snowncv, graupel, graupelncv, sr, i - its,\n           1);", ["wsm6_column"]),
+    ("src/physics/mpas_atmphys_microphysics.cpp", "P(th_p, i, k) = m.theta_m(k, i) / (1. + R_v / R_d * fmax0(P(qv_p, i, k)));",
+     "P(th_p, i, k) = m.theta_m(k, i) / (1. + R_v / R_d * P(qv_p, i, k));", ["wsm6_column"]),
+    ("src/physics/mpas_atmphys_microphysics.cpp", "        m.re_snow(k, i) = re_qs_bg;", "        m.re_snow(k, i) = re_qi_bg;", ["wsm6_column"]),
+    # surface layer / YSU column check (tests/pbl_column): loop 30's thcon lanes (sf_sfclayrev.F90:258) off, WRF's
+    # scalar table loop instead of MPAS's -O3 one (sf_sfclayrev_init), WRF 4.8.0's ent_eff (bl_ysu.F90:855; cloud-topped
+    # columns with config_ysu_pblmix), MPAS_to_physics' top pressure without libmvec lanes (PI:504), qv_p without
+    # max(0, qv) (PI:330; regime 5 has qv < 0 and -0.0), kzq from kzm (PB:604 takes kzh), the sea-ice regime kept
+    # from xice >= 0.6 (SL:731; xice in [0.3, 1]), the sea-ice skin temperature floor (SL:524), the cell2 north term
+    # of tend_toEdges (TD:547-549), the moist theta coupling (TD:492)
+    ("src/physics/mpas_atmphys_sfclayer.cpp", "  k.thcon_lanes = true;", "  k.thcon_lanes = false;", ["pbl_column"]),
+    ("src/physics/mpas_atmphys_sfclayer.cpp", "    sfclayrev::init_sfclayrev_tables_o3(tables);", "    sfclayrev::init_sfclayrev_tables(tables);", ["pbl_column"]),
+    ("src/physics/mpas_atmphys_pbl.cpp", "    k.ent_eff_mpas = true;", "    k.ent_eff_mpas = false;", ["pbl_column"]),
+    ("src/physics/mpas_atmphys_interface.cpp", "      if (lane(i - its, n))", "      if (false)", ["pbl_column"]),
+    ("src/physics/mpas_atmphys_interface.cpp", "      v.qv_p(i, k) = fmax0(q(m.index_qv, k, i));", "      v.qv_p(i, k) = q(m.index_qv, k, i);", ["pbl_column"]),
+    ("src/physics/mpas_atmphys_pbl.cpp", "      m.kzq(k, i) = kzh_p(i, k);", "      m.kzq(k, i) = kzm_p(i, k);", ["pbl_column"]),
+    ("src/physics/mpas_atmphys_sfclayer.cpp", "        if (x >= 0.5) m.regime(i)", "        if (x >= 0.6) m.regime(i)", ["pbl_column"]),
+    ("src/physics/mpas_atmphys_sfclayer.cpp", "        sea.tsk[I(i)] = sfclayrev::c_max(sst_p[I(i)], real(271.4));", "        sea.tsk[I(i)] = sst_p[I(i)];", ["pbl_column"]),
+    ("src/physics/mpas_atmphys_todynamics.cpp", "+ Uy_tend(k, cell2) * 0.5 * (n(1, iEdge) * m.north(1, cell2)", "+ Uy_tend(k, cell2) * 0.5 * (n(1, iEdge) * m.east(1, cell2)", ["pbl_column"]),
+    ("src/physics/mpas_atmphys_todynamics.cpp", "      tend_th(k, i) = coeff * tend_th(k, i) + R_v / R_d", "      tend_th(k, i) = tend_th(k, i) + R_v / R_d", ["pbl_column"]),
+    # --- radiation (tests/radiation_column): cloudiness, RRTMG wrappers and drivers, ozone climatology
+    # LW buffer layer count (LW 11822)
+    (RAD, 'std::max(static_cast<int>(std::lround(pw1d[K(kte + 1)] / deltap)), 1)',
+     'std::max(static_cast<int>(std::lround(pw1d[K(kte + 1)] / deltap)), 2)', ["radiation_column"]),
+    # table temperature profile matched at level kte (LW 11993)
+    (RAD, 'tlev[K(k)] = varint[K(k)] + (tlev[K(kte)] - varint[K(kte)]);',
+     'tlev[K(k)] = varint[K(k)] + (tlev[K(kte + 1)] - varint[K(kte + 1)]);', ["radiation_column"]),
+    # vinterp_ozn interpolation weights (VI:126-127)
+    (RAD, '          V(i, k) = (O(i, ku) * dpl + O(i, ku + 1) * dpu) / (dpl + dpu);\n        }\n        found',
+     '          V(i, k) = (O(i, ku) * dpu + O(i, ku + 1) * dpl) / (dpl + dpu);\n        }\n        found', ["radiation_column"]),
+    # LW inirad ozone on every layer with config_o3climatology = false (LW 12024-12026)
+    (RAD, 'for (int k = kts; k <= nlayers; ++k) o3vmr[K(k)] = o3mmr[K(k)] * amdo;',
+     'for (int k = kts; k <= nlayers - 1; ++k) o3vmr[K(k)] = o3mmr[K(k)] * amdo;', ["radiation_column"]),
+    # relcalc snow ramp (LW 12493)
+    (RAD, '    r = r + (rliqocean - r) * std::min(1.0, std::max(0.0, snowh * 10.));',
+     '    r = r + (rliqocean - r) * std::min(1.0, std::max(0.0, snowh * 1.));', ["radiation_column"]),
+    # LW McICA permuteseed 150 (LW 12183)
+    (RAD, 'mcica_subcol(icld, 150, 140,',
+     'mcica_subcol(icld, 151, 140,', ["radiation_column"]),
+    # zenith angle: the reference's sincos of xxlat (SW 10205). SURVIVES: on the check's latitudes sincos and sin / cos
+    # round the same (s_sincos.c differs from __sin only in some ulps of 0.855 <= |x| < 2.43); kept as a known survivor
+    (RAD, '    libm::sincos(xxlat, &sinlat, &coslat);',
+     '    sinlat = libm::sin(xxlat); coslat = libm::cos(xxlat);', ["radiation_column"]),
+    # SW flux adjustment scon / rrsw_scon (inatm_sw)
+    (RAD, '  const rb rrsw_scon = rb(1.36822e+03);',
+     '  const rb rrsw_scon = rb(1.3682e+03);', ["radiation_column"]),
+    # radconst eccentricity factor (RS:1045)
+    (RDRV, '  const real eccfac = 1.000110 + 0.034221 * c1 + 0.001280 * s1 +',
+     '  const real eccfac = 1.000110 + 0.034221 * c1 + 0.001280 * c1 +', ["radiation_column"]),
+    # calc_cldfraction exp argument floor (CL:358)
+    (RDRV, '        const real arg = std::max(-6.9, -alpha0 * qcld / denom);',
+     '        const real arg = std::max(-6.8, -alpha0 * qcld / denom);', ["radiation_column"]),
+    # o3climatology_from_MPAS day offset (OZ:279)
+    (RDRV, '  double intjulian_r8 = double(julian + 1.0);  // OZ:279',
+     '  double intjulian_r8 = double(julian);  // OZ:279', ["radiation_column"]),
+    # init_o3climatology latitude interpolation order (OZ:178-179)
+    (RDRV, '            m.ozmixm(mm, k, iCell) = OZI(j, k, i1, mm) + (OZI(j, k, i2, mm) - OZI(j, k, i1, mm)) * dlatCell / dlat;',
+     '            m.ozmixm(mm, k, iCell) = OZI(j, k, i1, mm) + (OZI(j, k, i2, mm) - OZI(j, k, i1, mm)) * (dlatCell / dlat);', ["radiation_column"]),
+    # o3vmr diagnostic pressures in hPa (RL:489)
+    (RDRV, '        p2d(i, k) = v.pres_hyd_p(i, k) / 100.;',
+     '        p2d(i, k) = v.pres_hyd_p(i, k) / 10.;', ["radiation_column"]),
+]
+
 MUTATIONS = [(p, o, n, [t for t in ts if t not in EQUIVALENT_ON_SC.get((p, n), [])]) for p, o, n, ts in MUTATIONS]
 
 
