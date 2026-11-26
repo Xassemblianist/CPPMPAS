@@ -184,10 +184,8 @@ endforeach()
 add_test(NAME history_JW COMMAND ${PY} ${T}/check_history.py ${EXE} ${INIT_JW} ${CPPMPAS_MPAS_REGISTRY} ${W}/ref_JW "${HIST_FIELDS},qv" qv)
 # the namelist reader on variants of the MW reference namelist
 add_test(NAME namelist_MW COMMAND ${PY} ${T}/check_namelist.py ${EXE} ${REF_MW}/steps/namelist.atmosphere ${W}/namelist)
-# an array computed by a port not yet proven needs --unverified (since the initdump tests every array of the init
-# block is proven for an even nVertLevels; the odd case is checked in unit_init_guards)
-add_test(NAME init_unverified_MW COMMAND ${CMAKE_COMMAND} -E env sh -c
-  "mkdir -p '${W}' && '${EXE}' init '${INIT_MW}' '${W}/init_unverified_MW.nc' --namelist '${REF_MW}/steps/namelist.atmosphere' --fields dss,invAreaCell --unverified && rm '${W}/init_unverified_MW.nc'")
+# --unverified: since the initdump tests every array of the init block is proven for an even nVertLevels, and every
+# reference has one, so no CLI case can exercise the refusal; unit_init_guards checks the odd-level list
 # guards and atm_core_init steps on the MW reference init file
 add_executable(test_init_guards test_init_guards.cpp)
 target_link_libraries(test_init_guards PRIVATE cppmpas)

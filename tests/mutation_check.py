@@ -189,8 +189,6 @@ MUTATIONS = [
      ["unit_init_guards"]),
     (V, "    if (m.cellsOnEdge(1, iEdge) == nCells + 1 || m.cellsOnEdge(2, iEdge) == nCells + 1)",
      "    if (m.cellsOnEdge(1, iEdge) == nCells + 1)", ["unit_init_guards"]),
-    (X, "    else if (s == \"--unverified\") a.unverified = true;", "    else if (s == \"--unverified\") a.unverified = false;",
-     ["init_unverified_MW"]),
     (R, "    buf = f.get_double(rv.name, record);", "    buf = f.get_double(rv.name, record), buf[0] = buf[0] * 0.5;",
      ["readrestart_MW", "readrestart_SC", "readrestart_JW"]),
     ("tests/compare_arrays.py", "            out[k] = (arr.dtype.str, arr.tobytes())", "            out[k] = str(a)",
