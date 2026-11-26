@@ -978,6 +978,22 @@ MUTATIONS += [
     ("src/physics/mpas_atmphys_microphysics.cpp", "P(th_p, i, k) = m.theta_m(k, i) / (1. + R_v / R_d * fmax0(P(qv_p, i, k)));",
      "P(th_p, i, k) = m.theta_m(k, i) / (1. + R_v / R_d * P(qv_p, i, k));", ["wsm6_column"]),
     ("src/physics/mpas_atmphys_microphysics.cpp", "        m.re_snow(k, i) = re_qs_bg;", "        m.re_snow(k, i) = re_qi_bg;", ["wsm6_column"]),
+    # surface layer / YSU column check (tests/pbl_column): loop 30's thcon lanes (sf_sfclayrev.F90:258) off, WRF's
+    # scalar table loop instead of MPAS's -O3 one (sf_sfclayrev_init), WRF 4.8.0's ent_eff (bl_ysu.F90:855; cloud-topped
+    # columns with config_ysu_pblmix), MPAS_to_physics' top pressure without libmvec lanes (PI:504), qv_p without
+    # max(0, qv) (PI:330; regime 5 has qv < 0 and -0.0), kzq from kzm (PB:604 takes kzh), the sea-ice regime kept
+    # from xice >= 0.6 (SL:731; xice in [0.3, 1]), the sea-ice skin temperature floor (SL:524), the cell2 north term
+    # of tend_toEdges (TD:547-549), the moist theta coupling (TD:492)
+    ("src/physics/mpas_atmphys_sfclayer.cpp", "  k.thcon_lanes = true;", "  k.thcon_lanes = false;", ["pbl_column"]),
+    ("src/physics/mpas_atmphys_sfclayer.cpp", "    sfclayrev::init_sfclayrev_tables_o3(tables);", "    sfclayrev::init_sfclayrev_tables(tables);", ["pbl_column"]),
+    ("src/physics/mpas_atmphys_pbl.cpp", "    k.ent_eff_mpas = true;", "    k.ent_eff_mpas = false;", ["pbl_column"]),
+    ("src/physics/mpas_atmphys_interface.cpp", "      if (lane(i - its, n))", "      if (false)", ["pbl_column"]),
+    ("src/physics/mpas_atmphys_interface.cpp", "      v.qv_p(i, k) = fmax0(q(m.index_qv, k, i));", "      v.qv_p(i, k) = q(m.index_qv, k, i);", ["pbl_column"]),
+    ("src/physics/mpas_atmphys_pbl.cpp", "      m.kzq(k, i) = kzh_p(i, k);", "      m.kzq(k, i) = kzm_p(i, k);", ["pbl_column"]),
+    ("src/physics/mpas_atmphys_sfclayer.cpp", "        if (x >= 0.5) m.regime(i)", "        if (x >= 0.6) m.regime(i)", ["pbl_column"]),
+    ("src/physics/mpas_atmphys_sfclayer.cpp", "        sea.tsk[I(i)] = sfclayrev::c_max(sst_p[I(i)], real(271.4));", "        sea.tsk[I(i)] = sst_p[I(i)];", ["pbl_column"]),
+    ("src/physics/mpas_atmphys_todynamics.cpp", "+ Uy_tend(k, cell2) * 0.5 * (n(1, iEdge) * m.north(1, cell2)", "+ Uy_tend(k, cell2) * 0.5 * (n(1, iEdge) * m.east(1, cell2)", ["pbl_column"]),
+    ("src/physics/mpas_atmphys_todynamics.cpp", "      tend_th(k, i) = coeff * tend_th(k, i) + R_v / R_d", "      tend_th(k, i) = tend_th(k, i) + R_v / R_d", ["pbl_column"]),
 ]
 
 
