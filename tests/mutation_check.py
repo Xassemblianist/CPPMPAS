@@ -836,8 +836,10 @@ MUTATIONS += [
      "        flux_upwind_arr[k] = dt * (fmin0(wwAvg(k, iCell)) * scalar_old(k - 1, iCell) +", SCQ([1])),
     (AS, "        scale_arr(k, SCALE_IN, iCell) = -(rdnw(k) * (fmin0(wdtn(k + 1, iCell)) - fmax0(wdtn(k, iCell))));",
      "        scale_arr(k, SCALE_IN, iCell) = -(rdnw(k) * (fmin0(wdtn(k, iCell)) - fmax0(wdtn(k, iCell))));", SCQ([1])),
-    (AS, "        scale_arr(k, SCALE_IN, iCell) = fmin1(fmax0(scale_factor));",
-     "        scale_arr(k, SCALE_IN, iCell) = fmax0(scale_factor);", SCLIM),
+    # min(1, .) of SCALE_IN deleted is exact (shown on the 30-min state): every use of SCALE_IN is a min with a
+    # SCALE_OUT that is <= 1 (TI:5680-5681, 5703-5704), and symmetrically for SCALE_OUT
+    (AS, "        real scale_factor = (s_max(k, iCell) * rho_zz_new(k, iCell) - scalar_new(k, iCell)) /",
+     "        real scale_factor = (s_max(k, iCell) * rho_zz_old(k, iCell) - scalar_new(k, iCell)) /", SCLIM),
     (AS, "          flux = fmax0(flux) * vmin(scale_arr(k, SCALE_OUT, cell1), scale_arr(k, SCALE_IN, cell2)) +",
      "          flux = fmax0(flux) * vmin(scale_arr(k, SCALE_OUT, cell1), scale_arr(k, SCALE_OUT, cell2)) +", SCQ([1, 2])),
     (AS, "        flux = fmax0(flux) * vmin(scale_arr(k - 1, SCALE_OUT, iCell), scale_arr(k, SCALE_IN, iCell)) +",
