@@ -87,7 +87,8 @@ struct State {
   // time level 1 of the prognostic state that atm_init_coupled_diagnostics sets (mpas_atm_time_integration.F:7498,
   // 7500); u, w and scalars above are time level 1 as read
   FArray<real> theta_m, rho_zz;             // (nVertLevels, nCells+1)
-  // state Time of time level 1 (Registry.xml state var Time: CF time, s since the start), (1); set by the dycore run
+  // state Time of time level 1 (Registry.xml:1680, CF time in s), (1): read from the input stream (Registry.xml:615,
+  // mpas_atm_core.F:137), advanced by the dycore (atm_timestep, shift_time_levels)
   FArray<real> Time;
 };
 

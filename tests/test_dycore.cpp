@@ -169,6 +169,26 @@ int main(int argc, char** argv) {
            "refuses qv, qc, qr");
   }
 
+  // Time (F3 of the dycore review): time level 1 is the Time of the input stream (Registry.xml:615), time level 2
+  // starts as its copy (mpas_atm_core.F:213-218), atm_timestep sets Time(2) = Time(1) + dt (TI:1844-1849) and the
+  // shift makes it time level 1
+  {
+    MpasInput t = in;
+    t.state.Time(1) = 1800.0;
+    DycoreFields tf;
+    allocate_dycore_fields(t.mesh, t.state, tf);
+    expect(tf.Time2 == 1800.0, "Time: time level 2 starts as time level 1");
+    atm_timestep(mw, t.mesh, t.state, t.diag, tf, 6.0, "0000-01-01_00:30:06");
+    shift_time_levels(t.state, tf);
+    expect(t.state.Time(1) == 1806.0 && tf.Time2 == 1800.0, "Time: 1800 + 6 after one step");
+    State s0 = in.state;
+    s0.Time = FArray<real>();
+    DycoreFields f0;
+    expect(throws_with([&] { allocate_dycore_fields(in.mesh, s0, f0); }, "the state Time was not read"),
+           "allocate_dycore_fields refuses a state without Time");
+    expect(in.state.Time.rank() == 1 && in.state.Time(1) == 0.0, "Time is read from the MW init file (0)");
+  }
+
   // add_seconds
   expect(add_seconds("0000-01-01_00:00:00", 6) == "0000-01-01_00:00:06", "add_seconds 6");
   expect(add_seconds("0000-01-01_00:00:54", 6) == "0000-01-01_00:01:00", "add_seconds minute");

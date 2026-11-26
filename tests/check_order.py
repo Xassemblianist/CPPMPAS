@@ -37,7 +37,7 @@ MESH_OPTIONAL = ["fEdge", "fVertex", "edgeNormalVectors", "localVerticalUnitVect
                  "nominalMinDc", "bdyMaskCell", "bdyMaskEdge", "bdyMaskVertex", "cf1", "cf2", "cf3", "zgrid", "rdzw",
                  "dzu", "rdzu", "fzm", "fzp", "zxu", "zz", "zb", "zb3", "dss", "deriv_two", "coeffs_reconstruct"]
 STATE = ["initial_time", "xtime", "u_init", "v_init", "t_init", "u", "w", "rho", "theta", "rho_base", "theta_base",
-         "surface_pressure"]
+         "surface_pressure", "Time"]
 MOIST = ["qv", "qc", "qr", "qi", "qs", "qg"]  # var_array scalars, Registry order
 
 

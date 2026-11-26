@@ -180,6 +180,8 @@ void allocate_dycore_fields(const Mesh& m, const State& s, DycoreFields& f) {
   for (std::size_t k = 0; k < s.scalar_names.size(); ++k)
     if (s.scalar_names[k] == "qv") f.index_qv = static_cast<int>(k) + 1;
   if (f.index_qv == 0) throw Error("allocate_dycore_fields: qv is not an active scalar");
+  if (s.Time.rank() != 1 || s.Time.extent(0) != 1) throw Error("allocate_dycore_fields: the state Time was not read");
+  f.Time2 = s.Time(1);  // mpas_pool_initialize_time_levels (mpas_atm_core.F:213-218): time level 2 = time level 1
   // array_group "moist" (Registry.xml:1701-1748): qv, qc, qr, ... in Registry order, all of the active scalars
   f.moist_start = 1;
   f.moist_end = ns;
@@ -911,7 +913,7 @@ void atm_timestep(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, Dyc
                   const std::string& xtime_new) {
   atm_srk3(cfg, m, s, d, f, dt);  // TI:1829
   f.xtime2 = xtime_new;           // TI:1836-1842
-  f.Time2 = f.Time1 + dt;         // TI:1844-1849
+  f.Time2 = s.Time(1) + dt;         // TI:1844-1849
 }
 
 void shift_time_levels(State& s, DycoreFields& f) {
@@ -921,7 +923,7 @@ void shift_time_levels(State& s, DycoreFields& f) {
   std::swap(s.rho_zz, f.rho_zz2);
   std::swap(s.scalars, f.scalars2);
   std::swap(s.xtime, f.xtime2);
-  std::swap(f.Time1, f.Time2);
+  std::swap(s.Time(1), f.Time2);
 }
 
 void atm_compute_output_diagnostics(const Mesh& m, State& s) {

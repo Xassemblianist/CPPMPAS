@@ -641,10 +641,12 @@ MUTATIONS += [
      ST(range(11), "rho") + JST(range(11), "rho")),
     (DY, "      s.theta(k, iCell) = s.theta_m(k, iCell) / (1. + rvord * s.scalars(index_qv, k, iCell));",
      "      s.theta(k, iCell) = s.theta_m(k, iCell) / (1.5 + rvord * s.scalars(index_qv, k, iCell));", ST(range(11), "theta") + JST(range(11), "theta")),
-    (DY, "  f.Time2 = f.Time1 + dt;", "  f.Time2 = f.Time1 + dt + 1.0;", ST(range(1, 11), "Time") + ["dycore_MW_restart_Time"] +
+    (DY, "  f.Time2 = s.Time(1) + dt;", "  f.Time2 = s.Time(1) + dt + 1.0;", ST(range(1, 11), "Time") + ["dycore_MW_restart_Time"] +
      JST(range(1, 11), "Time") + ["dycore_JW_restart_Time"]),
-    ("src/core_atmosphere/atm_dycore.hpp", "  real Time1 = 0.0, Time2 = 0.0;", "  real Time1 = 1.0, Time2 = 0.0;",
-     ST(range(11), "Time") + JST(range(11), "Time")),
+    # Time read from the input stream (review F3); the copy into time level 2 at allocation (mpas_atm_core.F:213-218)
+    # has no mutant: atm_timestep overwrites Time2 before anything reads it
+    (R, '"theta_base", "surface_pressure", "Time"};', '"theta_base", "surface_pressure"};', ["dycore_run_MW", "unit_dycore"]),
+    (DY, "  std::swap(s.Time(1), f.Time2);", "", ST(range(1, 11), "Time") + JST(range(1, 11), "Time") + ["unit_dycore"]),
     (X, "      atm_timestep(dcfg, in.mesh, in.state, in.diag, f, dcfg.config_dt, add_seconds(start, n * dt_s));",
      "      atm_timestep(dcfg, in.mesh, in.state, in.diag, f, dcfg.config_dt, add_seconds(start, (n + 1) * dt_s));",
      ST([1], "xtime u w")),

@@ -64,7 +64,7 @@ struct DycoreFields {
   // state, time level 2 (Registry.xml:1672-1711); time level 1 is State::u, w, theta_m, rho_zz, scalars
   FArray<real> u2, w2, theta_m2, rho_zz2, scalars2;
   std::string xtime2;
-  real Time1 = 0.0, Time2 = 0.0;  // state Time (CF time, s), time levels 1 and 2
+  real Time2 = 0.0;  // state Time (CF time, s) of time level 2; time level 1 is State::Time(1)
   // diag
   FArray<real> ru_save, rw_save, rtheta_p_save, rho_p_save, rho_zz_old_split, cqw, cqu;
   FArray<real> cofrz, cofwr, cofwz, coftz, cofwt, a_tri, alpha_tri, gamma_tri;

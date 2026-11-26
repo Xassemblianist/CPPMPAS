@@ -267,7 +267,6 @@ int run(int argc, char** argv) {
     for (const auto& w : a.write_fields) (void)field_ref(in, w);  // a field without a port: refused before the run
     auto write_step = [&](long n) {
       atm_compute_output_diagnostics(in.mesh, in.state);  // mpas_atm_core.F:686 (t = 0) and :848
-      in.state.Time.allocate({1}, f.Time1);
       std::string ts = in.state.xtime.substr(0, 19);
       for (auto& c : ts)
         if (c == ':') c = '.';
