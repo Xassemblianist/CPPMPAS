@@ -143,7 +143,7 @@ int main(int argc, char** argv) {
     const std::string undefined = "is not defined in MPAS-Atmosphere's Registry";
     expect(throws_with([&] { (void)registry_var("notavar"); }, undefined), "registry_var of an undefined name");
     expect(throws_with([&] { (void)field_ref(in, "notavar"); }, undefined), "field_ref of an undefined name");
-    expect(throws_with([&] { (void)field_ref(in, "pressure"); }, "has no CPPMPAS port"), "field_ref of an unported name");
+    expect(throws_with([&] { (void)field_ref(in, "relhum"); }, "has no CPPMPAS port"), "field_ref of an unported name");
   }
 
   if (fails == 0) std::printf("OK io/core unit test\n");

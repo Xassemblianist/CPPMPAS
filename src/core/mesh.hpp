@@ -105,6 +105,8 @@ struct Diag {
   FArray<real> vorticity, pv_vertex;                                  // (nVertLevels, nVertices+1)
   FArray<real> divergence, ke, pv_cell;                               // (nVertLevels, nCells+1)
   FArray<real> uReconstructX, uReconstructY, uReconstructZ, uReconstructZonal, uReconstructMeridional;
+  // set by atm_compute_output_diagnostics (mpas_atm_core.F:961, Registry.xml:1923), (nVertLevels, nCells+1)
+  FArray<real> pressure;
 };
 
 // MPAS's local numbering on one rank from the file's cell connectivity (global IDs, Fortran order):

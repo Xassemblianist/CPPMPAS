@@ -1093,8 +1093,9 @@ void shift_time_levels(State& s, DycoreFields& f) {
   std::swap(s.Time(1), f.Time2);
 }
 
-void atm_compute_output_diagnostics(const Mesh& m, State& s) {
+void atm_compute_output_diagnostics(const Mesh& m, State& s, Diag& d) {
   if (m.nVertLevels < 1 || !has(s.theta_m, {m.nVertLevels, m.nCells + 1}, true) ||
+      !has(d.pressure_p, {m.nVertLevels, m.nCells + 1}, true) || !has(d.pressure_base, {m.nVertLevels, m.nCells + 1}, true) ||
       !has(s.rho_zz, {m.nVertLevels, m.nCells + 1}, true) || !has(s.theta, {m.nVertLevels, m.nCells + 1}, true) ||
       !has(s.rho, {m.nVertLevels, m.nCells + 1}, true) || !has(m.zz, {m.nVertLevels, m.nCells}, false) ||
       s.scalars.rank() != 3 || s.scalars.extent(1) != m.nVertLevels || s.scalars.extent(2) != m.nCells + 1)
@@ -1103,10 +1104,12 @@ void atm_compute_output_diagnostics(const Mesh& m, State& s) {
   for (std::size_t k = 0; k < s.scalar_names.size(); ++k)
     if (s.scalar_names[k] == "qv") index_qv = static_cast<int>(k) + 1;
   if (index_qv == 0) throw Error("atm_compute_output_diagnostics: qv is not an active scalar");
+  if (!d.pressure.allocated()) d.pressure.allocate({m.nVertLevels, m.nCells + 1}, 0.0);  // Registry default 0
   for (int iCell = 1; iCell <= m.nCells; ++iCell)  // mpas_atm_core.F:957-963
     for (int k = 1; k <= m.nVertLevels; ++k) {
       s.theta(k, iCell) = s.theta_m(k, iCell) / (1. + rvord * s.scalars(index_qv, k, iCell));
       s.rho(k, iCell) = s.rho_zz(k, iCell) * m.zz(k, iCell);
+      d.pressure(k, iCell) = d.pressure_base(k, iCell) + d.pressure_p(k, iCell);
     }
 }
 

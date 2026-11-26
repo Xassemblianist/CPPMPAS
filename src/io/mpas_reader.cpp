@@ -490,7 +490,7 @@ FieldRef field_ref(MpasInput& in, const std::string& name) {
   CPPMPAS_D(exner_base) CPPMPAS_D(pressure_p) CPPMPAS_D(pressure_base)
   CPPMPAS_D(v) CPPMPAS_D(rho_edge) CPPMPAS_D(vorticity) CPPMPAS_D(divergence) CPPMPAS_D(ke) CPPMPAS_D(pv_edge)
   CPPMPAS_D(pv_vertex) CPPMPAS_D(pv_cell) CPPMPAS_D(gradPVt) CPPMPAS_D(gradPVn) CPPMPAS_D(uReconstructX)
-  CPPMPAS_D(uReconstructY) CPPMPAS_D(uReconstructZ) CPPMPAS_D(uReconstructZonal) CPPMPAS_D(uReconstructMeridional)
+  CPPMPAS_D(uReconstructY) CPPMPAS_D(uReconstructZ) CPPMPAS_D(uReconstructZonal) CPPMPAS_D(uReconstructMeridional) CPPMPAS_D(pressure)
 #undef CPPMPAS_D
 #undef CPPMPAS_R
 #undef CPPMPAS_I

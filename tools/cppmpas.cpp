@@ -266,14 +266,18 @@ int run(int argc, char** argv) {
       if (n > a.steps) throw Error("--write-at " + std::to_string(n) + " is after the last step");
     for (const auto& w : a.write_fields) (void)field_ref(in, w);  // a field without a port: refused before the run
     auto write_step = [&](long n) {
-      atm_compute_output_diagnostics(in.mesh, in.state);  // mpas_atm_core.F:686 (t = 0) and :848
+      const bool step_file = a.every > 0 && n % a.every == 0;
+      const bool state_file = std::find(a.write_at.begin(), a.write_at.end(), n) != a.write_at.end();
+      if (!step_file && !state_file) return;
+      // mpas_atm_core.F:686 (t = 0) and :848: only when an output stream writes
+      atm_compute_output_diagnostics(in.mesh, in.state, in.diag);
       std::string ts = in.state.xtime.substr(0, 19);
       for (auto& c : ts)
         if (c == ':') c = '.';
       HistoryOptions opt;
       opt.file_id = a.file_id;
-      if (a.every > 0 && n % a.every == 0) write_history(in, a.pos[1] + "/step." + ts + ".nc", fields, opt);
-      if (std::find(a.write_at.begin(), a.write_at.end(), n) != a.write_at.end())
+      if (step_file) write_history(in, a.pos[1] + "/step." + ts + ".nc", fields, opt);
+      if (state_file)
         write_history(in, a.pos[1] + "/state." + ts + ".nc", a.write_fields, opt);
     };
     write_step(0);

@@ -515,7 +515,7 @@ def JST(steps, fields="u w rho_zz theta_m rho theta pressure_p"):
 S1 = ST([1])
 ALLDYN = ST(range(1, 11)) + ["dycore_MW_mpas_compare"]
 LONG_R = "u w rho_zz theta_m pressure_p rho theta exner ru rw rtheta_p rho_p".split()
-LONG_O = "u w rho theta divergence vorticity ke uReconstructZonal uReconstructMeridional".split()
+LONG_O = "u w pressure rho theta divergence vorticity ke uReconstructZonal uReconstructMeridional".split()
 LONG = [f"dycore_MW_restart_{f}" for f in LONG_R] + [f"dycore_MW_output30_{f}" for f in LONG_O]
 J1 = JST([1])
 JALLDYN = JST(range(1, 11)) + ["dycore_JW_mpas_compare"]
@@ -700,6 +700,10 @@ MUTATIONS += [
      "      const real r_areaCell = a.h_theta_eddy_visc4 * a.prandtl_inv * m.invAreaCell(iCell) * 0.5;",
      JST([1], "theta_m theta")),
     (DY, "  da.config_del4u_div_factor = cfg.config_del4u_div_factor;", "  da.config_del4u_div_factor = 1.0;", J1),
+    # output diagnostics (review F10): pressure (mpas_atm_core.F:961); computing them only on output steps has no
+    # mutant (theta, rho and pressure are read by no routine of the step)
+    (DY, "      d.pressure(k, iCell) = d.pressure_base(k, iCell) + d.pressure_p(k, iCell);",
+     "      d.pressure(k, iCell) = d.pressure_p(k, iCell);", ["dycore_MW_output30_pressure", "dycore_JW_output24h_pressure"]),
     # time stamps (review F8, F18); the blank padding of xtime itself has no file-level mutant: the writer pads
     # character fields with blanks too (mpas_writer.cpp write_values), unit_dycore compares the string
     (DY, "    form = want == '0' ? (ts[i] >= '0' && ts[i] <= '9') : ts[i] == want;",

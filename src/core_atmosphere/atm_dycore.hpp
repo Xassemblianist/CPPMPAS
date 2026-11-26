@@ -117,9 +117,9 @@ void atm_timestep(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, Dyc
 // mpas_pool_shift_time_levels(state) (mpas_atm_core.F:823): time level 2 becomes time level 1 and back.
 void shift_time_levels(State& s, DycoreFields& f);
 // atm_compute_output_diagnostics(state, 1, diag, mesh) (mpas_atm_core.F:916-965): theta, rho of the diag pool
-// (State::theta, State::rho) from time level 1. pressure (= pressure_base + pressure_p) is not held: no stream
-// the references write has it.
-void atm_compute_output_diagnostics(const Mesh& m, State& s);
+// (State::theta, State::rho) from time level 1, and pressure = pressure_base + pressure_p (Diag::pressure, allocated
+// here on the first call). MPAS calls it only when an output stream writes (mpas_atm_core.F:686, 848).
+void atm_compute_output_diagnostics(const Mesh& m, State& s, Diag& d);
 
 // "YYYY-MM-DD_hh:mm:ss" + seconds (proleptic Gregorian calendar, year >= 0; mpas_timekeeping's gregorian clock).
 std::string add_seconds(const std::string& timestamp, long long seconds);

@@ -95,7 +95,7 @@ cppmpas_error_test(missing_init_var "required variable zz of the input stream is
 cppmpas_error_test(missing_scalar "active scalar qr is missing" info --init --scalars qv,qc,qr ${W}/err_missing_qr.nc)
 cppmpas_error_test(bad_dims "variable u has dimensions (Time, nVertLevels, nEdges)" info --init ${W}/err_bad_dims_u.nc)
 cppmpas_error_test(unknown_scalar "scalar 'qz' is not a constituent" info --init --scalars qv,qz ${W}/mw_init.nc)
-cppmpas_error_test(unported_field "variable 'pressure' has no CPPMPAS port" history ${W}/mw_init.nc ${W}/x.nc --fields u,pressure)
+cppmpas_error_test(unported_field "variable 'relhum' has no CPPMPAS port" history ${W}/mw_init.nc ${W}/x.nc --fields u,relhum)
 cppmpas_error_test(boundary_edge "edge 8 lies on the mesh boundary (cellsOnEdge = 0)" info ${W}/err_boundary_edge.nc)
 cppmpas_error_test(boundary_vertex "vertex 10 lies on the mesh boundary (cellsOnVertex = 0)" info ${W}/err_boundary_vertex.nc)
 cppmpas_error_test(cellsOnEdge_range "cellsOnEdge(2, 8) = 1601 outside 1..1600" info ${W}/err_cellsOnEdge_range.nc)
@@ -301,8 +301,8 @@ cppmpas_error_test(dycore_no_steps "usage: cppmpas run" run ${INIT_MW} ${W}/x_di
 # (record 1, after step 300) and restart.0000-01-01_00.30.06.nc (after step 301); every field of these streams the
 # port holds is compared at tolerance 0
 set(DYCORE_RESTART_FIELDS xtime Time u w rho_zz theta_m pressure_p rho theta exner ru rw rtheta_p rho_p qv)
-set(DYCORE_OUTPUT_FIELDS xtime u w rho theta divergence vorticity ke uReconstructZonal uReconstructMeridional qv)
-set(DYCORE_LONG_FIELDS ${DYCORE_RESTART_FIELDS} divergence vorticity ke uReconstructZonal uReconstructMeridional)
+set(DYCORE_OUTPUT_FIELDS xtime u w pressure rho theta divergence vorticity ke uReconstructZonal uReconstructMeridional qv)
+set(DYCORE_LONG_FIELDS ${DYCORE_RESTART_FIELDS} pressure divergence vorticity ke uReconstructZonal uReconstructMeridional)
 list(REMOVE_DUPLICATES DYCORE_LONG_FIELDS)
 string(REPLACE ";" "," DYCORE_LONG_LIST "${DYCORE_LONG_FIELDS}")
 add_test(NAME dycore_run_long_MW COMMAND ${CMAKE_COMMAND} -E env sh -c
@@ -355,5 +355,5 @@ foreach(f IN LISTS DYCORE_OUTPUT_FIELDS)
 endforeach()
 cppmpas_error_test(dycore_write_at "--write-at 12 is after the last step" run ${INIT_MW} ${W}/x_dir
   --namelist ${REF_MW}/steps/namelist.atmosphere --steps 10 --write-at 12 --write-fields u)
-cppmpas_error_test(dycore_write_fields "variable 'pressure' has no CPPMPAS port" run ${INIT_MW} ${W}/x_dir
-  --namelist ${REF_MW}/steps/namelist.atmosphere --steps 10 --write-at 1 --write-fields u,pressure)
+cppmpas_error_test(dycore_write_fields "variable 'relhum' has no CPPMPAS port" run ${INIT_MW} ${W}/x_dir
+  --namelist ${REF_MW}/steps/namelist.atmosphere --steps 10 --write-at 1 --write-fields u,relhum)

@@ -300,7 +300,7 @@ int main(int argc, char** argv) {
     {
       State s0 = t.state;
       s0.theta = FArray<real>();
-      expect(throws_with([&] { atm_compute_output_diagnostics(t.mesh, s0); }, "not allocated with MPAS's extents"),
+      expect(throws_with([&] { atm_compute_output_diagnostics(t.mesh, s0, t.diag); }, "not allocated with MPAS's extents"),
              "output diagnostics without theta");
     }
   }
