@@ -971,7 +971,7 @@ MUTATIONS += [
     ("src/core/namelist_table.inc", r'"config_do_restart", "logical", "false", "false\ntrue")',
      r'"config_do_restart", "logical", "false", "false")', ["dycore_restart0_run_MW", "namelist_MW"]),
     # WSM6 column check (tests/wsm6_column): the libmvec lanes of MPAS's -O3 build (scalar log / exp everywhere,
-    # CPPWRF's kernel as WRF calls it), the max(0, qv) of th_p (PI:723; cells of regime 4 have qv < 0), the
+    # CPPWRF's kernel as WRF calls it), the max(0, qv) of th_p (PI:665; cells of regime 4 have qv < 0), the
     # background radius above mp_top_level (PI:1010; case 9:41:2:33)
     ("src/physics/module_mp_wsm6.cpp", "pii.data(), p.data(), delz.data(), rain, rainncv, snow, snowncv, graupel, graupelncv, sr, i - its,\n           ite - its + 1);",
      "pii.data(), p.data(), delz.data(), rain, rainncv, snow, snowncv, graupel, graupelncv, sr, i - its,\n           1);", ["wsm6_column"]),
