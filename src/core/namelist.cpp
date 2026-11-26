@@ -25,6 +25,8 @@ namespace {
 // library caller may have set LC_NUMERIC to a locale whose decimal point is ','
 double c_strtod(const std::string& s) {
   static const locale_t c = newlocale(LC_ALL_MASK, "C", static_cast<locale_t>(nullptr));
+  // newlocale fails only when memory runs out; strtod_l with a null locale is undefined
+  if (c == static_cast<locale_t>(nullptr)) throw Error("namelist: cannot create the \"C\" locale to read reals");
   return strtod_l(s.c_str(), nullptr, c);
 }
 
