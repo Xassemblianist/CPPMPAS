@@ -24,5 +24,7 @@ const RegistryVar& registry_var(const std::string& name);  // throws Error for a
 const std::vector<RegistryVar>& registry_vars();
 // variables of the atmosphere "input" stream (Registry.xml:602-648, nested "invariant" stream expanded)
 const std::vector<std::string>& input_stream_vars();
+// variables of the atmosphere "restart" stream (Registry.xml:650-925, nested "invariant" stream expanded)
+const std::vector<std::string>& restart_stream_vars();
 
 }  // namespace cppmpas

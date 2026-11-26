@@ -7,7 +7,8 @@ metadata (src/tools/registry/gen_inc.c): type, dimensions (Fortran order), defau
 attributes MPAS writes (every XML attribute except those in ATTRS_TO_IGNORE, gen_inc.c:43-53, with 'description'
 renamed 'long_name' and 'missing_value' renamed '_FillValue' (written as a number, gen_inc.c:39-41, 55-58),
 in XML order. It also lists the variables of the atmosphere 'input' stream
-(Registry.xml:602-648, with the nested 'invariant' stream, Registry.xml:499-600, expanded).
+(Registry.xml:602-648) and of its 'restart' stream (Registry.xml:650-925), each with the nested
+'invariant' stream, Registry.xml:499-600, expanded.
 
 The registry is preprocessed as MPAS's build does for the atmosphere core: DO_PHYSICS defined
 (core_atmosphere/Makefile:9-10), MPAS_CAM_DYCORE and MPAS_USE_MUSICA undefined.
@@ -124,6 +125,10 @@ def main():
     print("#ifdef CPPMPAS_INPUT_STREAM_VAR")
     for n in expand("input"):
         print(f"CPPMPAS_INPUT_STREAM_VAR({cstr(n)})")
+    print("#endif")
+    print("#ifdef CPPMPAS_RESTART_STREAM_VAR")
+    for n in expand("restart"):
+        print(f"CPPMPAS_RESTART_STREAM_VAR({cstr(n)})")
     print("#endif")
 
 

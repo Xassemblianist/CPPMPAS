@@ -484,7 +484,7 @@ FieldRef field_ref(MpasInput& in, const std::string& name) {
   CPPMPAS_R(meshScalingRegionalEdge) CPPMPAS_R(etp) CPPMPAS_R(etm) CPPMPAS_R(ewp) CPPMPAS_R(ewm)
   CPPMPAS_R(specZoneMaskCell) CPPMPAS_R(specZoneMaskEdge) CPPMPAS_R(specZoneMaskVertex)
   CPPMPAS_I(nearestRelaxationCell)
-  CPPMPAS_S(theta_m) CPPMPAS_S(rho_zz)
+  CPPMPAS_S(theta_m) CPPMPAS_S(rho_zz) CPPMPAS_S(Time)
   CPPMPAS_D(ru) CPPMPAS_D(rw) CPPMPAS_D(rho_p) CPPMPAS_D(rtheta_base) CPPMPAS_D(rtheta_p) CPPMPAS_D(exner)
   CPPMPAS_D(exner_base) CPPMPAS_D(pressure_p) CPPMPAS_D(pressure_base)
   CPPMPAS_D(v) CPPMPAS_D(rho_edge) CPPMPAS_D(vorticity) CPPMPAS_D(divergence) CPPMPAS_D(ke) CPPMPAS_D(pv_edge)
@@ -506,6 +506,12 @@ FieldRef field_ref(MpasInput& in, const std::string& name) {
   if (!find_registry_var(name)) throw Error("variable '" + name + "' is not defined in MPAS-Atmosphere's Registry");
   throw Error("variable '" + name + "' has no CPPMPAS port (not read or written)");
 }
+
+void read_registry_field(const NcFile& f, const Mesh& m, const std::string& name, FArray<real>& a) {
+  read_into(f, m, registry_var(name), a);
+}
+
+void read_field_ref(const NcFile& f, MpasInput& in, const std::string& name) { read_field(f, in, name); }
 
 MpasInput read_mpas_grid(const std::string& path) {
   const NcFile f = NcFile::open_read(path);

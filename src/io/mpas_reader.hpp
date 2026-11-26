@@ -46,6 +46,11 @@ struct FieldRef {
   int scalar_slot = 0;  // > 0: constituent of State::scalars
 };
 FieldRef field_ref(MpasInput& in, const std::string& name);  // throws Error for a field CPPMPAS does not handle
+// Reads the Registry field `name` of a file opened by the reader into a with MPAS's memory extents and local order
+// (the Registry default in the garbage element), checking its type and dimensions; the record is the file's only one.
+void read_registry_field(const NcFile& f, const Mesh& m, const std::string& name, FArray<real>& a);
+// read_registry_field into the field field_ref(in, name) names, recorded as read (in.source).
+void read_field_ref(const NcFile& f, MpasInput& in, const std::string& name);
 std::vector<std::string> handled_mesh_fields();
 std::vector<std::string> handled_init_fields();             // without scalars constituents
 

@@ -55,6 +55,8 @@ add_library(cppmpas STATIC
   src/core/decomp.cpp
   src/core/mesh.cpp
   src/core/namelist.cpp
+  src/core_atmosphere/atm_dissipation.cpp
+  src/core_atmosphere/atm_dycore.cpp
   src/core_atmosphere/atm_init.cpp
   src/core_atmosphere/atm_solve_diagnostics.cpp
   src/operators/geometry_utils.cpp
@@ -63,6 +65,7 @@ add_library(cppmpas STATIC
   src/io/netcdf_file.cpp
   src/io/registry.cpp
   src/io/mpas_reader.cpp
+  src/io/mpas_restart.cpp
   src/io/mpas_writer.cpp
 )
 target_include_directories(cppmpas PUBLIC ${CMAKE_SOURCE_DIR}/src ${NETCDF_INCDIR})

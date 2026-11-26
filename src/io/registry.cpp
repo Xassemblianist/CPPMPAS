@@ -54,6 +54,14 @@ std::vector<std::string> build_input() {
   return v;
 }
 
+std::vector<std::string> build_restart() {
+  std::vector<std::string> v;
+#define CPPMPAS_RESTART_STREAM_VAR(n) v.emplace_back(n);
+#include "io/registry_atm_table.inc"
+#undef CPPMPAS_RESTART_STREAM_VAR
+  return v;
+}
+
 const std::map<std::string, std::size_t>& index() {
   static const std::map<std::string, std::size_t> idx = [] {
     std::map<std::string, std::size_t> m;
@@ -79,6 +87,11 @@ const std::vector<RegistryVar>& registry_vars() {
 
 const std::vector<std::string>& input_stream_vars() {
   static const std::vector<std::string> v = build_input();
+  return v;
+}
+
+const std::vector<std::string>& restart_stream_vars() {
+  static const std::vector<std::string> v = build_restart();
   return v;
 }
 

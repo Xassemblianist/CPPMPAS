@@ -136,9 +136,11 @@ add_executable(test_libm test_libm.cpp)
 target_link_libraries(test_libm PRIVATE cppmpas mvec m)
 add_test(NAME unit_libm COMMAND test_libm 2000000)
 
-# src/core/namelist_table.inc is what tools/gen_namelist_table.py makes of the Registry and the reference namelists
+# src/core/namelist_table.inc is what tools/gen_namelist_table.py makes of the Registry and the reference namelists,
+# and of the namelist of the MW restart run (tests/namelists/MW_restart: the MW forecast namelist restarted from the
+# reference's restart file at 00:30:06, verified by the dycore_restart_MW_* tests)
 add_test(NAME namelist_table_current COMMAND ${CMAKE_COMMAND} -E env sh -c
-  "${Python3_EXECUTABLE} -I '${CMAKE_SOURCE_DIR}/tools/gen_namelist_table.py' '${CPPMPAS_MPAS_REGISTRY}' ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/forecast/namelist.atmosphere > '${W}/namelist_table.inc' && ${CMAKE_COMMAND} -E compare_files '${W}/namelist_table.inc' '${CMAKE_SOURCE_DIR}/src/core/namelist_table.inc'")
+  "${Python3_EXECUTABLE} -I '${CMAKE_SOURCE_DIR}/tools/gen_namelist_table.py' '${CPPMPAS_MPAS_REGISTRY}' ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/forecast/namelist.atmosphere '${CMAKE_SOURCE_DIR}/tests/namelists/MW_restart/namelist.atmosphere' > '${W}/namelist_table.inc' && ${CMAKE_COMMAND} -E compare_files '${W}/namelist_table.inc' '${CMAKE_SOURCE_DIR}/src/core/namelist_table.inc'")
 set_tests_properties(namelist_table_current PROPERTIES FIXTURES_REQUIRED work_dir)
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -268,3 +270,101 @@ add_test(NAME unit_solve_diag COMMAND test_solve_diag
 
 # tests/mutation_check.py's reading of CTest's output: a test that was not run does not kill a mutant
 add_test(NAME mutation_check_unit COMMAND ${PY} ${T}/test_mutation_check.py)
+
+# ---------------------------------------------------------------------------------------------------------------
+# The dycore (src/core_atmosphere/atm_dycore.cpp, atm_dissipation.cpp): ten 6-s steps of the mountain wave from the
+# reference init file with the reference namelist, against the every-step "bisection" stream of
+# mpas842-dbl-mw-001 (step.*.nc, written by MPAS at t = 0 and after every step). One test per step and field,
+# tolerance 0 (tests/compare_arrays.py: type, dimensions, attributes, raw bytes), and the whole directory through
+# tools/mpas_compare.py.
+set(DYCORE_MW_FIELDS xtime Time u w rho_zz theta_m rho theta pressure_p qv)
+set(DYCORE_MW_STAMPS 00.00.00 00.00.06 00.00.12 00.00.18 00.00.24 00.00.30 00.00.36 00.00.42 00.00.48 00.00.54 00.01.00)
+add_test(NAME dycore_run_MW COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/dycore_MW' && mkdir -p '${W}/dycore_MW' && '${EXE}' run '${INIT_MW}' '${W}/dycore_MW' --namelist '${REF_MW}/steps/namelist.atmosphere' --steps 10")
+set_tests_properties(dycore_run_MW PROPERTIES FIXTURES_SETUP dycore_MW)
+set(step 0)
+foreach(stamp IN LISTS DYCORE_MW_STAMPS)
+  foreach(f IN LISTS DYCORE_MW_FIELDS)
+    add_test(NAME dycore_MW_step${step}_${f} COMMAND ${PY} ${T}/compare_arrays.py
+      ${REF_MW}/steps/step.0000-01-01_${stamp}.nc ${W}/dycore_MW/step.0000-01-01_${stamp}.nc ${f})
+    set_tests_properties(dycore_MW_step${step}_${f} PROPERTIES FIXTURES_REQUIRED dycore_MW)
+  endforeach()
+  math(EXPR step "${step} + 1")
+endforeach()
+# tools/mpas_compare.py on the two directories: every variable of every step identical; the only difference allowed
+# is the global attributes (the namelist options MPAS writes as attributes, not written yet, mpas_writer.hpp)
+add_test(NAME dycore_MW_mpas_compare COMMAND ${PY} ${T}/dycore_compare.py ${CPPMPAS_MPAS_COMPARE} ${REF_MW}/steps
+  ${W}/dycore_MW ${W}/dycore_MW_compare.json 110)
+set_tests_properties(dycore_MW_mpas_compare PROPERTIES FIXTURES_REQUIRED dycore_MW)
+# the configuration checks and the clock arithmetic
+add_executable(test_dycore test_dycore.cpp)
+target_link_libraries(test_dycore PRIVATE cppmpas)
+add_test(NAME unit_dycore COMMAND test_dycore ${INIT_MW} ${REF_MW}/steps/namelist.atmosphere)
+# configurations of the other references, and meshes, that the dycore refuses before it writes anything
+cppmpas_error_test(dycore_JW "config_horiz_mixing = '2d_smagorinsky' has no verified port" run ${INIT_JW} ${W}/x_dir
+  --namelist ${REF_JW}/steps/namelist.atmosphere --steps 1)
+cppmpas_error_test(dycore_SC "config_scalar_advection = true" run ${INIT_SC} ${W}/x_dir
+  --namelist ${REF_SC}/steps/namelist.atmosphere --scalars qv,qc,qr --steps 1)
+cppmpas_error_test(dycore_fEdge "fEdge != 0" run ${INIT_JW} ${W}/x_dir --namelist ${REF_MW}/steps/namelist.atmosphere
+  --steps 1)
+cppmpas_error_test(dycore_odd_levels "nVertLevels = 3 (only an even nVertLevels >= 4 is verified)" run ${W}/sc_init.nc
+  ${W}/x_dir --namelist ${REF_MW}/steps/namelist.atmosphere --steps 1)
+cppmpas_error_test(dycore_steps "--steps needs a whole number 0..1000000, not '1x'" run ${INIT_MW} ${W}/x_dir
+  --namelist ${REF_MW}/steps/namelist.atmosphere --steps 1x)
+cppmpas_error_test(dycore_no_steps "usage: cppmpas run" run ${INIT_MW} ${W}/x_dir
+  --namelist ${REF_MW}/steps/namelist.atmosphere)
+# 301 steps (label "long", about 2 minutes): the forecast run of the same reference writes output.nc at 30 min
+# (record 1, after step 300) and restart.0000-01-01_00.30.06.nc (after step 301); every field of these streams the
+# port holds is compared at tolerance 0
+set(DYCORE_RESTART_FIELDS xtime Time u w rho_zz theta_m pressure_p rho theta exner ru rw rtheta_p rho_p qv)
+set(DYCORE_OUTPUT_FIELDS xtime u w rho theta divergence vorticity ke uReconstructZonal uReconstructMeridional qv)
+set(DYCORE_LONG_FIELDS ${DYCORE_RESTART_FIELDS} divergence vorticity ke uReconstructZonal uReconstructMeridional)
+list(REMOVE_DUPLICATES DYCORE_LONG_FIELDS)
+string(REPLACE ";" "," DYCORE_LONG_LIST "${DYCORE_LONG_FIELDS}")
+add_test(NAME dycore_run_long_MW COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/dycore_long_MW' && mkdir -p '${W}/dycore_long_MW' && '${EXE}' run '${INIT_MW}' '${W}/dycore_long_MW' --namelist '${REF_MW}/steps/namelist.atmosphere' --steps 301 --every 0 --write-at 300,301 --write-fields ${DYCORE_LONG_LIST}")
+set_tests_properties(dycore_run_long_MW PROPERTIES FIXTURES_SETUP dycore_long_MW LABELS long TIMEOUT 900)
+foreach(f IN LISTS DYCORE_RESTART_FIELDS)
+  add_test(NAME dycore_MW_restart_${f} COMMAND ${PY} ${T}/compare_arrays.py ${RST_MW}
+    ${W}/dycore_long_MW/state.0000-01-01_00.30.06.nc ${f})
+  set_tests_properties(dycore_MW_restart_${f} PROPERTIES FIXTURES_REQUIRED dycore_long_MW LABELS long)
+endforeach()
+foreach(f IN LISTS DYCORE_OUTPUT_FIELDS)
+  add_test(NAME dycore_MW_output30_${f} COMMAND ${PY} ${T}/compare_arrays.py ${REF_MW}/forecast/output.nc
+    ${W}/dycore_long_MW/state.0000-01-01_00.30.00.nc ${f} --record 1)
+  set_tests_properties(dycore_MW_output30_${f} PROPERTIES FIXTURES_REQUIRED dycore_long_MW LABELS long)
+endforeach()
+# A restart run (config_do_restart = true; tests/namelists/MW_restart is the MW forecast namelist started at 00:30:06)
+# from the reference's restart.0000-01-01_00.30.06.nc. At step 0 the state written is what the restart stream holds
+# (no atm_init_coupled_diagnostics, mpas_atm_core.F:522); after 299 steps (01:00:00) every field of output.nc record 2
+# the port holds is compared at tolerance 0 (label "long", about 3 minutes).
+set(NML_RST_MW ${CMAKE_SOURCE_DIR}/tests/namelists/MW_restart/namelist.atmosphere)
+set(DYCORE_RESTART0_FIELDS ${DYCORE_RESTART_FIELDS} rtheta_base exner_base pressure_base)
+string(REPLACE ";" "," DYCORE_RESTART0_LIST "${DYCORE_RESTART0_FIELDS}")
+add_test(NAME dycore_restart0_run_MW COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/dycore_restart0_MW' && mkdir -p '${W}/dycore_restart0_MW' && '${EXE}' run '${RST_MW}' '${W}/dycore_restart0_MW' --namelist '${NML_RST_MW}' --steps 0 --every 0 --write-at 0 --write-fields ${DYCORE_RESTART0_LIST}")
+set_tests_properties(dycore_restart0_run_MW PROPERTIES FIXTURES_SETUP dycore_restart0_MW)
+foreach(f IN LISTS DYCORE_RESTART0_FIELDS)
+  add_test(NAME dycore_restart0_MW_${f} COMMAND ${PY} ${T}/compare_arrays.py ${RST_MW}
+    ${W}/dycore_restart0_MW/state.0000-01-01_00.30.06.nc ${f})
+  set_tests_properties(dycore_restart0_MW_${f} PROPERTIES FIXTURES_REQUIRED dycore_restart0_MW)
+endforeach()
+string(REPLACE ";" "," DYCORE_OUTPUT_LIST "${DYCORE_OUTPUT_FIELDS}")
+add_test(NAME dycore_restart_run_long_MW COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/dycore_restart_long_MW' && mkdir -p '${W}/dycore_restart_long_MW' && '${EXE}' run '${RST_MW}' '${W}/dycore_restart_long_MW' --namelist '${NML_RST_MW}' --steps 299 --every 0 --write-at 299 --write-fields ${DYCORE_OUTPUT_LIST}")
+set_tests_properties(dycore_restart_run_long_MW PROPERTIES FIXTURES_SETUP dycore_restart_long_MW LABELS long TIMEOUT 900)
+foreach(f IN LISTS DYCORE_OUTPUT_FIELDS)
+  add_test(NAME dycore_restart_MW_output60_${f} COMMAND ${PY} ${T}/compare_arrays.py ${REF_MW}/forecast/output.nc
+    ${W}/dycore_restart_long_MW/state.0000-01-01_01.00.00.nc ${f} --record 2)
+  set_tests_properties(dycore_restart_MW_output60_${f} PROPERTIES FIXTURES_REQUIRED dycore_restart_long_MW LABELS long)
+endforeach()
+# the restart reader's refusals (missing restart-stream fields, a field of an active package) and the start time
+add_test(NAME restart_refusals_MW COMMAND ${PY} ${T}/check_restart.py ${EXE} ${RST_MW} ${NML_RST_MW} ${INIT_MW}
+  ${W}/restart_refusals)
+set_tests_properties(restart_refusals_MW PROPERTIES FIXTURES_REQUIRED work_dir)
+cppmpas_error_test(restart_time "does not contain the time 0000-01-01_00:30:06" run ${INIT_MW} ${W}/x_dir
+  --namelist ${NML_RST_MW} --steps 1)
+cppmpas_error_test(dycore_write_at "--write-at 12 is after the last step" run ${INIT_MW} ${W}/x_dir
+  --namelist ${REF_MW}/steps/namelist.atmosphere --steps 10 --write-at 12 --write-fields u)
+cppmpas_error_test(dycore_write_fields "variable 'pressure' has no CPPMPAS port" run ${INIT_MW} ${W}/x_dir
+  --namelist ${REF_MW}/steps/namelist.atmosphere --steps 10 --write-at 1 --write-fields u,pressure)
