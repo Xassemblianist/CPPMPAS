@@ -558,6 +558,28 @@ foreach(f IN LISTS DYCORE_RG_HISTORY_FIELDS)
   set_tests_properties(dycore_RG_history2h_${f} PROPERTIES FIXTURES_REQUIRED dycore_RG)
 endforeach()
 
+# RG24 (mpas842-dbl-rg24-001, the v0.1 target: the RG case for 24 h; label "long", about 15 minutes): one run of 144
+# steps in the steps configuration writes the fields of the forecast run's history (every 3 h to 2026-10-13_00) and
+# restart (12:10, after step 73) streams; relhum is left out as for RG (l_diags).
+set(REF_RG24 ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg24-001/RG24)
+set(DYCORE_RG24_HISTORY_STAMPS 2026-10-12_03.00.00 2026-10-12_06.00.00 2026-10-12_09.00.00 2026-10-12_12.00.00
+  2026-10-12_15.00.00 2026-10-12_18.00.00 2026-10-12_21.00.00 2026-10-13_00.00.00)
+add_test(NAME dycore_run_long_RG24 COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/dycore_long_RG24' && mkdir -p '${W}/dycore_long_RG24' && '${EXE}' run '${REF_RG24}/init/x1.10242.init.nc' '${W}/dycore_long_RG24' --namelist '${REF_RG24}/steps/namelist.atmosphere' --scalars qv,qc,qr,qi,qs,qg --steps 144 --every 0 --write-at 18,36,54,72,73,90,108,126,144 --write-fields ${DYCORE_RG_LONG_LIST} --tables '${CPPMPAS_MPAS_TABLES}' --rrtmg '${CPPMPAS_CPPWRF_RRTMG}'")
+set_tests_properties(dycore_run_long_RG24 PROPERTIES FIXTURES_SETUP dycore_long_RG24 LABELS long TIMEOUT 7200)
+foreach(f IN LISTS DYCORE_RG_RESTART_FIELDS)
+  add_test(NAME dycore_RG24_restart_${f} COMMAND ${PY} ${T}/compare_arrays.py
+    ${REF_RG24}/forecast/restart.2026-10-12_12.10.00.nc ${W}/dycore_long_RG24/state.2026-10-12_12.10.00.nc ${f})
+  set_tests_properties(dycore_RG24_restart_${f} PROPERTIES FIXTURES_REQUIRED dycore_long_RG24 LABELS long)
+endforeach()
+foreach(stamp IN LISTS DYCORE_RG24_HISTORY_STAMPS)
+  foreach(f IN LISTS DYCORE_RG_HISTORY_FIELDS)
+    add_test(NAME dycore_RG24_history_${stamp}_${f} COMMAND ${PY} ${T}/compare_arrays.py
+      ${REF_RG24}/forecast/history.${stamp}.nc ${W}/dycore_long_RG24/state.${stamp}.nc ${f})
+    set_tests_properties(dycore_RG24_history_${stamp}_${f} PROPERTIES FIXTURES_REQUIRED dycore_long_RG24 LABELS long)
+  endforeach()
+endforeach()
+
 # ---------------------------------------------------------------------------------------------------------------
 # GPU proof: the CUDA build of the same sources (cppmpas_gpu, CMake option CPPMPAS_ENABLE_CUDA; every kernel on the
 # GPU, core/backend.hpp) against the same references at tolerance 0, and against the CPU build's own output
