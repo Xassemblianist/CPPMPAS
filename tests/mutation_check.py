@@ -1567,6 +1567,73 @@ MUTATIONS += [
     (CVD, '    m.ktop_deep(i) = ktop_deep_p(i);', '    m.ktop_deep(i) = 0;', ["gf_column"]),
 ]
 
+# MYNN PBL (bl_mynn) and its MPAS driver, column check (tests/mynn_column): bl_mynn_pre's qs/(1+qs), bl_mynn_post's
+# rqsblten conversion, the dissipative-heating lanes (_ZGVbN2vv_pow / _ZGVbN2v_exp), DMP_mf's _ZGVbN2vv_pow plume
+# loop, mym_initialize's qke, mym_level2, mym_length, mym_turbulence, mym_predict, mym_condensation (tropopause, rh
+# hack), mynn_tendencies (surface vapour flux limit), get_pblh, scale_aware, phim, phih, condensation_edmf, DMP_mf's
+# plume start and entrainment, thetav, the 1/L update, the DA-cycling qke test, and the driver / interface /
+# todynamics: dx_p's scalar pow, initflag with config_do_restart, kzq from kzh_p, ni_p's max(0, ni), the qs and ni
+# tendencies of physics_get_tend
+MYK, MYC = "src/physics/bl_mynn.hpp", "src/physics/bl_mynn_common.hpp"
+PBD, PIF, PTD = "src/physics/mpas_atmphys_pbl.cpp", "src/physics/mpas_atmphys_interface.cpp", "src/physics/mpas_atmphys_todynamics.cpp"
+MUTATIONS += [
+    (MYK, '      for (int k = kts; k <= kte; ++k) sqs1[k] = qs_hv[k] / (1. + qs_hv[k]);',
+     '      for (int k = kts; k <= kte; ++k) sqs1[k] = qs_hv[k] / (1. + qv_hv[k]);', ["mynn_column"]),
+    (MYK, '    if (f_qs)  // BO:139-147: MPAS converts rqsblten too', '    if (false)  // BO:139-147: MPAS converts rqsblten too',
+     ["mynn_column"]),
+    # (the lanes themselves: ln = false survives, see the report; the heating statement)
+    (MYK, '        const real ea = -10000. / fmx(p1[k], 1.);', '        const real ea = -11000. / fmx(p1[k], 1.);', ["mynn_column"]),
+    (MYK, '      const real N = Cc * libm::mvec_pow(l, d);', '      const real N = Cc * libm::pow(l, d);', ["mynn_column"]),
+    (MYK, '    qke[kts] = 1.5 * (ust * ust) * b1pmz_2_3;  // BS:529', '    qke[kts] = 1.4 * (ust * ust) * b1pmz_2_3;  // BS:529',
+     ["mynn_column"]),
+    (MYK, '    const real f2 = b1 * (g1 + g2) - 3.0 * a1 * (1.0 - c2);\n    const real rf1',
+     '    const real f2 = b1 * (g1 + g2) - 3.1 * a1 * (1.0 - c2);\n    const real rf1', ["mynn_column"]),
+    (MYK, '  const real h2 = h1 * 0.5;', '  const real h2 = h1 * 0.4;', ["mynn_column"]),
+    (MYK, '    elf = elf / (1. + (elf / 800.));  // BS:1171', '    elf = elf / (1. + (elf / 900.));  // BS:1171', ["mynn_column"]),
+    (MYK, '  const real Prlimit = 5.0;  // BS:1649', '  const real Prlimit = 4.0;  // BS:1649', ["mynn_column"]),
+    (MYK, '    qke[k] = fmx(x[k], 1.e-4);', '    qke[k] = fmx(x[k], 1.e-3);', ["mynn_column"]),
+    (MYK, '      b2l = b2 * 0.25 * (el[k + 1] + el[k]) / qkw[k];\n    }\n    tsq[k]',
+     '      b2l = b2 * 0.26 * (el[k + 1] + el[k]) / qkw[k];\n    }\n    tsq[k]', ["mynn_column"]),
+    (MYK, '  const int k_tropo = k + 2 > kts + 2 ? k + 2 : kts + 2;  // MAX(kts+2, k+2)',
+     '  const int k_tropo = k + 3 > kts + 2 ? k + 3 : kts + 2;  // MAX(kts+2, k+2)', ["mynn_column"]),
+    (MYK, '      rh_hack = fmn(rhmax, rhcrit + wt2 * 0.08 * (6.0 + libm::log10(qc[k])));',
+     '      rh_hack = fmn(rhmax, rhcrit + wt2 * 0.09 * (6.0 + libm::log10(qc[k])));', ["mynn_column"]),
+    (MYK, '      ql_ice = sgm[k] * (em1 + 0.66 * q1k + 0.086 * (q1k * q1k));',
+     '      ql_ice = sgm[k] * (em1 + 0.66 * q1k + 0.087 * (q1k * q1k));', ["mynn_column"]),
+    (MYK, '    if (qvflux < 0.0) qvflux = fmx(qvflux, (fmn(0.9 * I.sqv[kts] - 1e-8, 0.0) / dtz[kts]));',
+     '    if (qvflux < -1.0) qvflux = fmx(qvflux, (fmn(0.9 * I.sqv[kts] - 1e-8, 0.0) / dtz[kts]));', ["mynn_column"]),
+    (MYK, '    delt_thv = 1.25;', '    delt_thv = 1.5;', ["mynn_column"]),
+    (MYK, '  Psig_bl = ((dxdh * dxdh) + 0.106 * pw) / ((dxdh * dxdh) + 0.066 * pw + 0.071);',
+     '  Psig_bl = ((dxdh * dxdh) + 0.116 * pw) / ((dxdh * dxdh) + 0.066 * pw + 0.071);', ["mynn_column"]),
+    (MYK, '  const real am_st = 6.1, bm_st = 2.5, rbm_st = 1. / bm_st, am_unst = 10.;',
+     '  const real am_st = 6.2, bm_st = 2.5, rbm_st = 1. / bm_st, am_unst = 10.;', ["mynn_column"]),
+    (MYK, '    const real dummy_psi = 2. * libm::log(0.5 * (1. + dummy_0)) + libm::log(0.5 * (1. + dummy_0 * dummy_0)) -',
+     '    const real dummy_psi = 2. * libm::log(0.51 * (1. + dummy_0)) + libm::log(0.5 * (1. + dummy_0 * dummy_0)) -',
+     ["mynn_column"]),
+    (MYK, '  const real diff = 1.e-6;', '  const real diff = 1.e-3;', ["mynn_column"]),
+    (MYK, '      exc_fac = 0.58;', '      exc_fac = 0.6;', ["mynn_column"]),
+    (MYK, '        ENT[k][i] = 0.33 / (fmn(fmx(UPW[k - 1][i], wmin_k), 0.9) * l);',
+     '        ENT[k][i] = 0.34 / (fmn(fmx(UPW[k - 1][i], wmin_k), 0.9) * l);', ["mynn_column"]),
+    (MYK, '      thetav[k] = th1[k] * (1. + 0.608 * sqv1[k]);', '      thetav[k] = th1[k] * (1. + c.p608 * sqv1[k]);',
+     ["mynn_column"]),
+    (MYK, '    rmol1 = -c.karman * c.gtr * fltv / fmx(ust1 * ust1 * ust1, 1.0e-6);  // BM:823',
+     '    rmol1 = -c.karman * c.gtr * flt / fmx(ust1 * ust1 * ust1, 1.0e-6);  // BM:823', ["mynn_column"]),
+    (MYK, '        initialize_qke = qke1[kts] < 0.0002;', '        initialize_qke = true;', ["mynn_column"]),
+    (PBD, '    dx_p[I(i)] = len_disp / libm::pow(m.meshDensity(i), 0.25);',
+     '    dx_p[I(i)] = len_disp / libm::mvec_pow(m.meshDensity(i), 0.25);', ["mynn_column"]),
+    (MYK, '    if (initflag > 0 && !do_restart) {  // BM:703', '    if (initflag > 0 || do_restart) {  // BM:703', ["mynn_column"]),
+    (PBD, '      m.kzq(k, i) = kzh_p(i, k);  // PB:604: kzh_p, as MPAS\n    }\n  });\n  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // PB:659-690',
+     '      m.kzq(k, i) = kzm_p(i, k);  // PB:604: kzh_p, as MPAS\n    }\n  });\n  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // PB:659-690',
+     ["mynn_column"]),
+    (PIF, '        for (int k = kts; k <= kte; ++k) v.ni_p(i, k) = fmax0(m.scalars(m.index_ni, k, i));',
+     '        for (int k = kts; k <= kte; ++k) v.ni_p(i, k) = m.scalars(m.index_ni, k, i);', ["mynn_column"]),
+    (PTD, '          tend_scalars(m.index_qs, k, i) = tend_scalars(m.index_qs, k, i) + m.rqsblten(k, i) * mass(k, i);',
+     '          tend_scalars(m.index_qs, k, i) = tend_scalars(m.index_qs, k, i) + m.rqiblten(k, i) * mass(k, i);',
+     ["mynn_column"]),
+    (PTD, '          tend_scalars(m.index_ni, k, i) = tend_scalars(m.index_ni, k, i) + m.rniblten(k, i) * mass(k, i);',
+     '          tend_scalars(m.index_ni, k, i) = tend_scalars(m.index_ni, k, i);', ["mynn_column"]),
+]
+
 MUTATIONS = [(p, o, n, [t for t in ts if t not in EQUIVALENT_ON_SC.get((p, n), [])]) for p, o, n, ts in MUTATIONS]
 
 

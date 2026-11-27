@@ -9,7 +9,7 @@
 # levels as RG, 41 and 56 levels (the odd and even trip counts of the dissipative-heating lanes, k = 1..nVertLevels-1),
 # the first step (initflag = 1: mym_initialize) and two later ones, a restart (initflag = 0 from the first step),
 # DA cycling, the convection branches of physics_get_tend (cu_grell_freitas as convection_permitting, off,
-# cu_kain_fritsch), radiation on and off, config_len_disp 240 km (the scale-aware path at 240 km) and 3 km,
+# cu_kain_fritsch), radiation on and off, config_len_disp 240 km (the scale-aware path at 240 km), 12 km, 3 km and 500 m (Psig_bl < 1),
 # config_mynn_scaleaware 0 and config_mynn_dheat_opt 0.
 set -u
 [ $# -ge 4 ] || { echo "FAIL: usage: run_check.sh <mpas src> <mmm-physics> <work dir> <test_mynn_column> (CPPMPAS_MPAS_SRC / CPPMPAS_MMM_PHYSICS unset?)"; exit 1; }
@@ -17,7 +17,7 @@ mpas=$1; mmm=$2; work=$3; cpp=$4; shift 4
 [ -f "$mpas/src/core_atmosphere/physics/mpas_atmphys_driver_pbl.F" ] || { echo "FAIL: no MPAS v8.4.2 source tree at '$mpas' (CPPMPAS_MPAS_SRC)"; exit 1; }
 [ -f "$mmm/bl_mynn.F90" ] || { echo "FAIL: no MMM-physics a4baf7f tree at '$mmm' (CPPMPAS_MMM_PHYSICS)"; exit 1; }
 here=$(dirname "$(realpath "$0")")
-cases=${*:-"1:55:3:1:0:0:1:1:1:1:240000 2:55:3:2:0:0:1:1:1:1:240000 3:55:3:3:0:0:0:0:1:1:240000 7:55:3:4:0:0:1:1:1:1:240000 64:55:3:5:0:0:1:1:1:1:240000 64:41:3:6:0:0:2:1:1:1:240000 63:56:3:7:0:0:1:0:1:1:240000 9:55:2:8:1:0:1:1:1:1:240000 16:55:2:9:0:1:1:1:1:1:240000 24:55:3:10:0:0:1:1:1:1:3000 8:41:2:11:0:0:0:1:0:0:240000 33:56:2:12:1:0:1:1:1:1:12000"}
+cases=${*:-"1:55:3:1:0:0:1:1:1:1:240000 2:55:3:2:0:0:1:1:1:1:240000 3:55:3:3:0:0:0:0:1:1:240000 7:55:3:4:0:0:1:1:1:1:240000 64:55:3:5:0:0:1:1:1:1:240000 64:41:3:6:0:0:2:1:1:1:240000 63:56:3:7:0:0:1:0:1:1:240000 9:55:2:8:1:0:1:1:1:1:240000 16:55:2:9:0:1:1:1:1:1:240000 24:55:3:10:0:0:1:1:1:1:3000 8:41:2:11:0:0:0:1:0:0:240000 33:56:2:12:1:0:1:1:1:1:12000 24:55:2:13:0:0:1:1:1:1:500"}
 mkdir -p "$work"
 "$here/build_ref.sh" "$mpas" "$mmm" "$work/ref" > "$work/build_ref.log" 2>&1 || { cat "$work/build_ref.log"; echo "FAIL: reference build"; exit 1; }
 head -1 "$work/build_ref.log"
