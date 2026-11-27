@@ -273,9 +273,10 @@ PHYSICS_MUTATIONS = [
      "      getcape(nVertLevels, p_in.data(), t_in.data(), td_in.data(), cape_out, cin_out);",
      dev("      getcape(nVertLevels, p_in.data(), t_in.data(), td_in.data(), cape_out, cin_out);", "      (void)p_in;"),
      RGS("diag.2026-10-12_00.00.00")),
-    # KernelCopy in the CUDA build copies zero tables in place of the scheme's (the CPU build reads the tables directly)
+    # KernelCopy in the CUDA build copies zero tables in place of the scheme's (the CPU build reads the tables directly):
+    # the GPU run itself fails (its step and restart checks are then Not Run, which counts for nothing)
     (PH + "mpas_atmphys_interface.hpp", "  void set(const T& x) { s.assign(1, x); }", "  void set(const T& x) { (void)x; s.assign(1, T{}); }",
-     ["gpu_dycore_RG_step1_theta_m"] + RGV),
+     ["gpu_dycore_run_RG"]),
 ]
 
 
