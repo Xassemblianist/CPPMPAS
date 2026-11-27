@@ -1,0 +1,216 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The CPPMPAS CPU test suite (CTest, tests/CMakeLists.txt) on GitHub-hosted runners, against the MPAS 8.4.2 FP64
+# references of Xassemblianist/cppmpas-data at tolerance 0.
+# - build: the Debian 13 image of the references (ci/Dockerfile: glibc 2.41, gcc / gfortran 14.2), the Release CPU
+#   build, the Intel libmvec preload, and the split of the selected tests into jobs (ci/plan.py).
+# - data: every input the jobs need (ci/data.tsv), checked against its SHA-256 and kept in the Actions cache (one
+#   entry per release tag and SHA-256).
+# - test: one job per part of the split; ctest under LD_PRELOAD of the preload (ci/run_tests.sh).
+# - summary: every selected test must pass; the GPU tests must be skipped (this is a CPU build) and are counted
+#   as skipped, never as passed (ci/summary.py).
+# Start: gh workflow run cpu_suite.yml --ref <branch holding this file> -f ref=<branch or commit> -f labels=all
+name: cpu_suite
+run-name: cpu_suite ${{ inputs.labels || 'all' }} ${{ inputs.ref || github.sha }}
+on:
+  workflow_dispatch:
+    inputs:
+      ref: {description: "CPPMPAS branch or commit to test", required: true, default: main}
+      labels: {description: "short (tests without the label long), long, or all", type: choice,
+               options: [all, short, long], default: all}
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: cpu_suite-${{ github.event_name }}-${{ inputs.ref || github.ref }}-${{ inputs.labels || 'all' }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+env:
+  REF: ${{ inputs.ref || github.sha }}
+  LABELS: ${{ inputs.labels || 'all' }}
+  # Xassemblianist/cppmpas-data at the commit whose ci/mvec_intel built the references' preload
+  MVEC_REPO: Xassemblianist/cppmpas-data
+  MVEC_COMMIT: 6065fe34c6cc846f2153a314dc28ffcb425192d8
+  GH_TOKEN: ${{ github.token }}
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    outputs:
+      commit: ${{ steps.src.outputs.commit }}
+      image_key: ${{ steps.key.outputs.image_key }}
+      common_key: ${{ steps.plan.outputs.common_key }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      data: ${{ steps.plan.outputs.data }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {path: tools}
+      - uses: actions/checkout@v4
+        with: {ref: "${{ env.REF }}", path: src}
+      - uses: actions/checkout@v4
+        with: {repository: "${{ env.MVEC_REPO }}", ref: "${{ env.MVEC_COMMIT }}", path: mvec-repo,
+               sparse-checkout: ci/mvec_intel, sparse-checkout-cone-mode: false}
+      - name: commit under test
+        id: src
+        run: |
+          echo "commit=$(git -C src rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          mkdir -p plan && git -C src log -1 --format='%H %s' | tee plan/commit.txt
+      - name: image key
+        id: key
+        run: echo "image_key=cpu-suite-image-$(cat tools/ci/Dockerfile tools/ci/debian-packages.txt | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        id: image
+        with: {path: dl/image, key: "${{ steps.key.outputs.image_key }}"}
+      - name: image (Debian 13, pinned snapshot)
+        run: |
+          if [ "${{ steps.image.outputs.cache-hit }}" = true ]; then
+            zstd -dc dl/image/image.tar.zst | docker load
+          else
+            docker build -t cppmpas-ci tools/ci
+            mkdir -p dl/image && docker save cppmpas-ci | zstd -T0 -6 -q -o dl/image/image.tar.zst
+          fi
+          docker run --rm cppmpas-ci cat /opt/packages.tsv > packages.tsv
+          ls -l dl/image
+      - uses: actions/cache/save@v4
+        if: steps.image.outputs.cache-hit != 'true'
+        with: {path: dl/image, key: "${{ steps.key.outputs.image_key }}"}
+      - name: build (Release, CPU) and the libmvec preload
+        run: bash tools/ci/in_container.sh "$PWD/w" bash /w/ci/build.sh build
+      - name: plan
+        id: plan
+        run: |
+          python3 tools/ci/plan.py w/out/tests.json "$LABELS" plan | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "matrix=$(cat plan/matrix.json)" >> "$GITHUB_OUTPUT"
+          echo "data=$(cat plan/data.json)" >> "$GITHUB_OUTPUT"
+          echo "common_key=$(python3 -c 'import json; print(json.load(open("plan/data.json"))["include"][0]["key"])')" >> "$GITHUB_OUTPUT"
+          cp w/out/tests.json w/out/versions.txt packages.tsv plan/
+      - name: pack the build tree
+        run: |
+          tar -C w --exclude='*.o' --exclude='*.a' -cf - build | zstd -T0 -q -o build.tar.zst
+          ls -l build.tar.zst
+      - uses: actions/upload-artifact@v4
+        with: {name: build, path: build.tar.zst, retention-days: 3, compression-level: 0}
+      - uses: actions/upload-artifact@v4
+        with: {name: plan, path: plan/, retention-days: 30}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: logs-build, path: "w/out/*.log\nw/out/*.txt", retention-days: 30}
+
+  data:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.build.outputs.data) }}
+    name: data ${{ matrix.item }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {path: tools}
+      - uses: actions/cache/restore@v4
+        id: c
+        with: {path: "dl/${{ matrix.item }}", key: "${{ matrix.key }}", lookup-only: true}
+      - name: fetch and check
+        if: steps.c.outputs.cache-hit != 'true'
+        run: bash tools/ci/data.sh fetch "${{ matrix.item }}" "dl/${{ matrix.item }}"
+      - uses: actions/cache/save@v4
+        if: steps.c.outputs.cache-hit != 'true'
+        with: {path: "dl/${{ matrix.item }}", key: "${{ matrix.key }}"}
+
+  test:
+    needs: [build, data]
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.timeout_min }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.build.outputs.matrix) }}
+    name: test ${{ matrix.name }}
+    steps:
+      - name: disk
+        run: |
+          if [ "${{ matrix.ref1 }}" != "" ]; then
+            sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache \
+              /usr/local/share/boost /usr/share/swift /usr/local/julia* /usr/local/share/powershell /usr/local/share/chromium
+            sudo docker image prune -af > /dev/null
+          fi
+          df -h / /mnt 2>/dev/null || df -h /
+          # the run directory on the larger disk (CTest only sees the container's fixed /w paths)
+          free_ws=$(df --output=avail -B1 "$GITHUB_WORKSPACE" | tail -1)
+          free_mnt=$(df --output=avail -B1 /mnt 2>/dev/null | tail -1 || echo 0)
+          if [ "${free_mnt:-0}" -gt "$free_ws" ] && sudo mkdir -p /mnt/w && sudo chown "$(id -u):$(id -g)" /mnt/w; then
+            echo "BASE=/mnt/w" >> "$GITHUB_ENV"
+          else
+            echo "BASE=$GITHUB_WORKSPACE/w" >> "$GITHUB_ENV"
+          fi
+      - uses: actions/checkout@v4
+        with: {path: tools}
+      - uses: actions/checkout@v4
+        with: {ref: "${{ needs.build.outputs.commit }}", path: src}
+      - uses: actions/download-artifact@v4
+        with: {name: plan, path: plan}
+      - uses: actions/download-artifact@v4
+        with: {name: build, path: .}
+      - uses: actions/cache/restore@v4
+        with: {path: dl/image, key: "${{ needs.build.outputs.image_key }}", fail-on-cache-miss: true}
+      - uses: actions/cache/restore@v4
+        if: ${{ !matrix.gpu }}
+        with: {path: dl/common, key: "${{ needs.build.outputs.common_key }}", fail-on-cache-miss: true}
+      - uses: actions/cache/restore@v4
+        if: matrix.ref1 != ''
+        with: {path: "dl/${{ matrix.ref1 }}", key: "${{ matrix.key1 }}", fail-on-cache-miss: true}
+      - uses: actions/cache/restore@v4
+        if: matrix.ref2 != ''
+        with: {path: "dl/${{ matrix.ref2 }}", key: "${{ matrix.key2 }}", fail-on-cache-miss: true}
+      - uses: actions/cache/restore@v4
+        if: matrix.ref3 != ''
+        with: {path: "dl/${{ matrix.ref3 }}", key: "${{ matrix.key3 }}", fail-on-cache-miss: true}
+      - uses: actions/cache/restore@v4
+        if: matrix.ref4 != ''
+        with: {path: "dl/${{ matrix.ref4 }}", key: "${{ matrix.key4 }}", fail-on-cache-miss: true}
+      - uses: actions/cache/restore@v4
+        if: matrix.ref5 != ''
+        with: {path: "dl/${{ matrix.ref5 }}", key: "${{ matrix.key5 }}", fail-on-cache-miss: true}
+      - uses: actions/cache/restore@v4
+        if: matrix.ref6 != ''
+        with: {path: "dl/${{ matrix.ref6 }}", key: "${{ matrix.key6 }}", fail-on-cache-miss: true}
+      - name: unpack (image, build tree, data)
+        env: {REFS: "${{ matrix.ref1 }} ${{ matrix.ref2 }} ${{ matrix.ref3 }} ${{ matrix.ref4 }} ${{ matrix.ref5 }} ${{ matrix.ref6 }}",
+              GPU: "${{ matrix.gpu }}"}
+        run: |
+          zstd -dc dl/image/image.tar.zst | docker load && rm -rf dl/image
+          mkdir -p "$BASE" && zstd -dc build.tar.zst | tar -xf - -C "$BASE" && rm build.tar.zst
+          if [ "$GPU" != true ]; then bash tools/ci/data.sh extract common dl/common "$BASE/data"; fi
+          for r in $REFS; do bash tools/ci/data.sh extract "$r" "dl/$r" "$BASE/data"; done
+          df -h "$BASE"
+      - name: ctest (${{ matrix.count }} tests)
+        run: bash tools/ci/in_container.sh "$BASE" bash /w/ci/run_tests.sh "/w/plan/${{ matrix.tests }}" ${{ matrix.gpu && 'gpu' || 'cpu' }}
+      - name: disk after
+        if: always()
+        run: df -h "$BASE"; du -sh "$BASE"/* 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: "logs-${{ matrix.name }}", path: "${{ env.BASE }}/out/", retention-days: 30}
+
+  summary:
+    needs: [build, test]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with: {path: tools}
+      - uses: actions/download-artifact@v4
+        with: {name: plan, path: plan}
+      - uses: actions/download-artifact@v4
+        with: {pattern: "logs-*", path: results}
+      - name: verdict
+        run: |
+          for d in results/logs-*; do [ -d "$d" ] && mv "$d" "results/${d#results/logs-}"; done
+          set +e
+          python3 tools/ci/summary.py plan results summary
+          st=$?
+          cat summary/summary.md >> "$GITHUB_STEP_SUMMARY"
+          [ "${{ needs.build.result }}" = success ] || { echo "build: ${{ needs.build.result }}"; st=1; }
+          exit $st
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: summary, path: summary/, retention-days: 30}
