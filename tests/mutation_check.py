@@ -994,6 +994,23 @@ MUTATIONS += [
     ("src/physics/mpas_atmphys_sfclayer.cpp", "        sea.tsk[I(i)] = sfclayrev::c_max(sst_p[I(i)], real(271.4));", "        sea.tsk[I(i)] = sst_p[I(i)];", ["pbl_column"]),
     ("src/physics/mpas_atmphys_todynamics.cpp", "+ Uy_tend(k, cell2) * 0.5 * (n(1, iEdge) * m.north(1, cell2)", "+ Uy_tend(k, cell2) * 0.5 * (n(1, iEdge) * m.east(1, cell2)", ["pbl_column"]),
     ("src/physics/mpas_atmphys_todynamics.cpp", "      tend_th(k, i) = coeff * tend_th(k, i) + R_v / R_d", "      tend_th(k, i) = tend_th(k, i) + R_v / R_d", ["pbl_column"]),
+    # New Tiedtke (cu_ntiedtke) and its MPAS driver, column check (tests/cu_gwdo_column): 503 cuinin's cuadjtqn
+    # without the -O3 libmvec exp lanes (CPPWRF / WRF's scalar kernel), 504 dx_p (CV:840) without the
+    # _ZGVbN2vv_pow lanes, 505 initflag without config_do_restart (CV:478; restart cases), 506 thften without the
+    # shortwave heating (CV:846-847), 507 pratec = rn / dt without stepcu (PO:96; the n_cu = 2 case), 508 the
+    # rainc bucket without the i_rainc count (CV:1094; acrain cases)
+    ("src/physics/module_cu_ntiedtke.cpp", "    c.cuinin_mvec = lane(i - its, im);", "    c.cuinin_mvec = false;", ["cu_gwdo_column"]),
+    ("src/physics/mpas_atmphys_convection.cpp", "    dx_p(i) = m.config_len_disp / (lane(i - its, ite - its + 1) ? libm::mvec_pow", "    dx_p(i) = m.config_len_disp / (false ? libm::mvec_pow", ["cu_gwdo_column"]),
+    ("src/physics/mpas_atmphys_convection.cpp", "  if (m.config_do_restart || itimestep > 1) initflag = 0;", "  if (itimestep > 1) initflag = 0;", ["cu_gwdo_column"]),
+    ("src/physics/mpas_atmphys_convection.cpp", "          (m.rthdynten(k, i) + m.rthblten(k, i) + m.rthratenlw(k, i) + m.rthratensw(k, i)) * v.pi_p(i, k);", "          (m.rthdynten(k, i) + m.rthblten(k, i) + m.rthratenlw(k, i)) * v.pi_p(i, k);", ["cu_gwdo_column"]),
+    ("src/physics/module_cu_ntiedtke.cpp", "    (*a.pratec)(i) = rn / (real(a.stepcu) * a.dt);", "    (*a.pratec)(i) = rn / a.dt;", ["cu_gwdo_column"]),
+    ("src/physics/mpas_atmphys_convection.cpp", "      m.i_rainc(i) = m.i_rainc(i) + 1;", "      m.i_rainc(i) = m.i_rainc(i);", ["cu_gwdo_column"]),
+    # GWDO (bl_ysu_gwdo) and its MPAS driver, column check (tests/cu_gwdo_column): 509 WRF 4.8.0's cg = 1 (MPAS's
+    # MMM-physics a4baf7f bl_gwdo.F90:153 has 0.5), 510 WRF 4.8.0's olmin floor on ol (GW:342 has none; regime 4
+    # has ol = 0), 511 rubldiff without the PBL tendency removed (GD:680)
+    ("src/physics/bl_gwdo.hpp", "const T xl = T(4.0e4), gmax = T(1.), veleps = T(1.0), frc = T(1.0), ce = T(0.8), cg = T(0.5);", "const T xl = T(4.0e4), gmax = T(1.), veleps = T(1.0), frc = T(1.0), ce = T(0.8), cg = T(1.);", ["cu_gwdo_column"]),
+    ("src/physics/bl_gwdo.hpp", "    ol = ol4[(nwd - 1) % 4 + 1];", "    ol = c_max(ol4[(nwd - 1) % 4 + 1], olmin);", ["cu_gwdo_column"]),
+    ("src/physics/mpas_atmphys_gwdo.cpp", "      m.rubldiff(k, i) = rublten_p(i, k) - m.rublten(k, i);", "      m.rubldiff(k, i) = rublten_p(i, k);", ["cu_gwdo_column"]),
 ]
 
 
