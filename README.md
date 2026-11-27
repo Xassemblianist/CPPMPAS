@@ -10,63 +10,38 @@ checks against WRF, all at tolerance 0). CPPMPAS applies the same method to MPAS
 
 ## Status
 
-**Early work.** What exists, all on the CPU in FP64:
+On `main` (`3ca63da`), the CPU and CUDA FP64 builds match MPAS-Atmosphere 8.4.2 at tolerance 0.
 
-- The mesh and I/O layer: MPAS grid, init and restart files are read into arrays laid out as MPAS holds them in
-  memory on one MPI rank (MPAS's local edge and vertex numbering, local connectivity, garbage elements), and written
-  back in MPAS's file order. Checked on the reference's own init files (round trip identical, numbering against an
-  independent re-implementation) for the JW, SC and MW cases.
-- All of `atm_mpas_init_block` before the first step: the mesh coefficients (signs, inverses, deformation and
-  advection coefficients, mesh scaling, damping coefficients, boundary masks, `mpas_initialize_vectors`, the RBF
-  reconstruction coefficients), `atm_init_coupled_diagnostics`, and the initial `atm_compute_solve_diagnostics` and
-  `mpas_reconstruct`, with ports of the exact glibc 2.41 libm / libmvec entries the reference executable calls.
-  **Verified at tolerance 0** against the MPAS v8.4.2 FP64 references in all three cases: every one of the 57 fields
-  the init block computes (cppmpas-data releases `mpas842-dbl-mw-003`, `-sc-002`, `-jw-002`, whose `initdump.nc` holds
-  them at the initial time), and the restart and first-step fields of `mpas842-dbl-{mw,sc,jw}-001`.
-- The dynamical core for the mountain-wave (MW) and JW baroclinic-wave configurations (`cppmpas run --steps N`):
-  `atm_srk3` with the acoustic steps, divergence damping, the 2nd-order horizontal mixing with a fixed (MW) or
-  Smagorinsky (JW) eddy viscosity, the 4th-order filters (JW), the full vertical mixing (MW), Coriolis on the sphere
-  and the per-step diagnostics. **Verified at tolerance 0** against `mpas842-dbl-mw-001` (steps 1-10 in every field
-  of the step files, the restart at 30:06, the output at 30 and 60 min) and `mpas842-dbl-jw-001` (steps 1-10 in
-  every field, the output at 24 h and the restart at 24:07:30).
-- The supercell configuration on top of it: monotonic scalar transport of qv, qc, qr (`atm_advance_scalars` /
-  `atm_advance_scalars_mono`), vertical mixing of the perturbation from the initial state, and Kessler
-  microphysics with MPAS's microphysics interface (the Kessler kernel is shared with CPPWRF). **Verified at
-  tolerance 0** against `mpas842-dbl-sc-001`: steps 1-10 in every field of the step files, and the output at
-  30 min and the restart at 30:03 (cloud and rain present) in every field the port holds.
-- Restart runs (`config_do_restart = true`): `cppmpas run` reads an MPAS restart file as MPAS reads its restart
-  stream and continues from it. **Verified at tolerance 0** on MW: restarted from the reference's 00:30:06 restart
-  file, the state at 01:00:00 is identical to the reference forecast's output in every field the port computes.
-- The CUDA FP64 build (`-DCPPMPAS_ENABLE_CUDA=ON`, executable `cppmpas_gpu`, CUDA 12.1 or later): the same sources,
-  every loop over cells, edges and vertices of the init block, the solve diagnostics and the dycore (the JW
-  Smagorinsky viscosity and 4th-order filters, the SC scalar transport, perturbation mixing and Kessler microphysics
-  included) a kernel with one thread per element (MPAS's neighbour and level order inside the thread), glibc's libm / libmvec ports on the device, `--fmad=false`. **Verified at
-  tolerance 0** on an NVIDIA L4 (sm_89, CUDA 13.0, driver 580.82.07; `ctest -L gpu`, 706 GPU tests), against the
-  references and against the CPU build: every initdump field of MW, SC and JW and the init block's restart-stream
-  fields; MW steps 1-10, the 30:06 restart, the 30 and 60 min output and the restart run to 01:00:00; JW steps 1-10,
-  the 24 h output and the 24:07:30 restart; SC steps 1-10, the 30-min output and the 30:03 restart. Without a CUDA build or device the GPU tests are reported as skipped.
-- The mesoscale_reference physics on the GPU (`cppmpas_gpu run` with RG's namelists): the physics driver,
-  MPAS_to_physics, the revised MM5 surface layer, Noah with the sea-ice driver and the surface diagnostics, YSU, GWDO,
-  New Tiedtke, WSM6 with the radar reflectivity and relhum, the RRTMG LW / SW radiation with the cloudiness and the
-  ozone climatology, physics_get_tend and the isobaric and convective diagnostics, every loop a kernel with one
-  thread per column (MPAS's level order inside the thread, the reference's libmvec lanes). **Verified at tolerance
-  0** on an NVIDIA RTX PRO 6000 Blackwell (sm_120, nvcc 13.0.88 with g++ 14 as the host compiler, driver
-  580.82.07): RG steps 1-10, the 01:10 restart and the 1 h / 2 h histories against `mpas842-dbl-rg-004`, the
-  rg-004 forecast's five stream files, and the 24 h forecast of `mpas842-dbl-rg24-001` (all 19 history, diag and
-  restart files, 2168 variables); MW, JW and SC still pass on the GPU. The physics init (table reading, landuse,
-  lsminit), the greenness update (physics_update_surface) and the clock and alarms run on the host, on the same
-  managed arrays.
-- Every other configuration (LES, LBCs, other physics, a Kessler restart, ...) is
-  a hard error until it is ported and verified.
-- The namelist: every option of MPAS-Atmosphere's Registry is known; a value that no verified reference runs with is a
-  hard error naming the option.
-- The MPAS reference itself is reproducible across machines: the MW reference built and run on an AMD EPYC and on an
-  Intel Xeon runner is identical in every output file.
+- **RG24.** The 24 h real-data forecast on the x1.10242 mesh uses the full `mesoscale_reference` suite. Both
+  builds match `mpas842-dbl-rg24-001` bit for bit across all 19 history, diagnostics and restart files and
+  all 2168 variables. The comparison excludes the random `file_id` and `parent_id` global attributes.
+- **GPU.** The RG24 run used a G4 NVIDIA RTX PRO 6000 Blackwell (`sm_120`, `nvcc` 13.0.88, CUDA runtime 13.1).
+  Radiation ran on the device. Physics initialization, the greenness update, the clock and stream output ran
+  on the host. The GPU run used `842125d`. Later changes through `3ca63da` were limited to the README and GPU
+  mutation checks.
+- **RG.** Both builds match `mpas842-dbl-rg-004` for the checked fields at steps 0 through 10 and all
+  702 variables in the 5 forecast stream files.
+- **Idealized cases.** MW (mountain wave), JW (Jablonowski–Williamson baroclinic wave) and SC (supercell with
+  Kessler microphysics) match on the CPU and GPU for the 57 initdump fields per case, the tested initial
+  restart-stream fields, and the checked fields at steps 0 through 10.
+  - MW matches the checked output fields at 30 and 60 min and the restart fields at 00:30:06. A run that
+    reads that restart matches the checked output fields at 01:00:00.
+  - JW matches the checked output fields at 24 h and the restart fields at 24:07:30.
+  - SC matches the checked output fields at 30 min and the restart fields at 00:30:03.
+- **CPU suites.** With the Intel `libmvec` preload, `ctest -LE long` reports 2425/2425 and
+  `ctest -L long` reports 306/306. The CPU build skips the GPU tests.
 
-Build: `cmake -S . -B build && cmake --build build` (C++20, NetCDF-C; FP64). Tests need
-`-DCPPMPAS_CASES_DIR=<extracted NCAR test-case tarballs>
--DCPPMPAS_MPAS_REGISTRY=<MPAS v8.4.2 src/core_atmosphere/Registry.xml> -DCPPMPAS_REFS_DIR=<directory with the
-extracted mpas842-dbl-{mw,sc,jw}-001, mw-003, sc-002 and jw-002 releases>`; they compare with the in-tree `tools/mpas_compare.py`, whose own
+Open work includes restart runs with physics, the `convection_permitting` suite, variable-resolution meshes,
+MPI and multi-GPU runs, and performance work.
+
+## Build and tests
+
+Build with `cmake -S . -B build && cmake --build build` (C++20, NetCDF-C, FP64). Configure with
+`-DCPPMPAS_ENABLE_CUDA=ON` to build `cppmpas_gpu`.
+
+For tests, set `CPPMPAS_CASES_DIR` to the extracted NCAR test cases, `CPPMPAS_MPAS_REGISTRY` to MPAS's
+`src/core_atmosphere/Registry.xml`, and `CPPMPAS_REFS_DIR` to the directory holding the extracted
+[reference releases](docs/REFERENCES.md). The tests compare with the in-tree `tools/mpas_compare.py`, whose own
 tests run as `compare_unit` and `compare_mutants`. `unit_libm` needs glibc 2.41 on an x86-64 CPU with FMA and AVX2.
 
 ## Goal
