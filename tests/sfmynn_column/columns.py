@@ -14,7 +14,9 @@ array, then, with config_frac_seaice, the *_sea arrays that outlive the driver),
 
 nCells = nCellsSolve + 2 (two halo cells MPAS_to_physics and the driver never touch). Cell i (1-based) gets regime
 (i - 1) % 10:
-  0 land, daytime convective (hot ground, light wind; qsfc = 0 for every third cell: the water formula)
+  0 land, daytime convective (hot ground, light wind; qsfc = 0 for every third cell: the water formula); by
+    (i - 1) // 10 % 3: pblh near 3 km (wstar's 4000 m cap), snowh 0.09 (just below the snow threshold), or a thin
+    (za = 3 m), very rough (z0 ~ 2 m), calm, strongly heated layer (the 2 m theta fallback)
   1 land, stable night, calm (wind down to 0.02 m/s: wspd = wmin with len_disp 3 km; ust = max(ust, 0.005))
   2 sea, unstable (warm sea, moist): charnock_1955 and fairall_etal_2003 (restar <= 2 and > 2)
   3 sea, stable, strong wind (wsp10m > 18: the Charnock coefficient at its cap)
@@ -22,8 +24,10 @@ nCells = nCellsSolve + 2 (two halo cells MPAS_to_physics and the driver never to
     snow on the ice for half of them (andreas_2002 in the first call, the open-water call over the rest)
   5 land, snow, strong wind and rough (andreas_2002 with ren2 > 1000 once ust has grown)
   6 land, snow, calm and smooth (andreas_2002 with 0.135 < ren2 < 2.5)
-  7 sea, cold air over warm sea, light wind (br at its lower limit, z/L beyond -10: the full unstable functions)
-  8 land, strong surface inversion (z/L up to 20: the full stable functions, and the 9.99 <= z/L < 10 table end)
+  7 sea, cold air over warm sea, calm, shallow pblh (br at its lower limits, z/L beyond -10: the full unstable
+    functions)
+  8 land, strong surface inversion, calm (z/L at its cap 20: the full stable functions; every other such cell has
+    za = 20.01 + 2 z0, so that (10 + z0)/L falls in 9.99..10, the end of MPAS's tables: nzol + 1 = 1000)
   9 sea, xice 0.01 (below the threshold) or 0.02 (on it), cloud water at the lowest level, ust < 0.001
 The first two layers vary with the cell ((7 i + seed) % 4): za = 20 m (the flux-profile 10 m wind), 10 m (the
 neutral log), 5 m with za2 in (7, 13) (the second level's wind) and 3 m with za2 >= 13 (the neutral log again).
@@ -88,9 +92,15 @@ def make(path, nC, nV, nsteps, seed, seaice, restart, len_disp):
     for i in range(nCt + 1):
         reg = i % 10  # array index i = cell i + 1
         land = reg in LAND
+        znt8 = rng.uniform(0.01, 0.1) if reg == 8 else 0.0
         hs = rng.uniform(0.0, 1200.0) if land else 0.0
         dz1, dz2 = [(40.0, 45.0), (20.0, 25.0), (10.0, 5.0), (6.0, 30.0)][(7 * i + seed) % 4]
         dz1 *= rng.uniform(0.98, 1.02)
+        thin = reg == 0 and (i // 10) % 3 == 2  # thin first layer, very rough, calm, strongly heated
+        if thin:
+            dz1, dz2 = 6.0, 30.0
+        if reg == 8 and (i // 10) % 2 == 0:  # za = 20.01 + 2 z0: with z/L at its cap 20, (10 + z0)/L is 9.995
+            dz1, dz2 = 40.02 + 4.0 * znt8, 45.0
         z2 = dz1 + dz2
         eta = np.linspace(0.0, 1.0, nV - 1) ** 1.5
         zrel = np.concatenate(([0.0, dz1], z2 + eta * (ztop - hs - z2)))
@@ -149,7 +159,9 @@ def make(path, nC, nV, nsteps, seed, seaice, restart, len_disp):
         f["rtheta_p"][i] = f["rho_zz"][i] * thm - f["rtheta_base"][i]
         spd = {0: rng.uniform(1.0, 4.0), 1: rng.uniform(0.02, 1.5), 2: rng.uniform(3.0, 9.0),
                3: rng.uniform(18.0, 26.0), 4: rng.uniform(4.0, 12.0), 5: rng.uniform(18.0, 28.0),
-               6: rng.uniform(0.3, 1.0), 7: rng.uniform(0.5, 1.5), 8: rng.uniform(1.0, 3.0), 9: rng.uniform(4.0, 9.0)}[reg]
+               6: rng.uniform(0.3, 1.0), 7: rng.uniform(0.2, 0.8), 8: rng.uniform(0.3, 1.5), 9: rng.uniform(4.0, 9.0)}[reg]
+        if thin:
+            spd *= 0.05
         prof = np.log(1.0 + z / 0.1) / np.log(1.0 + 1000.0 / 0.1)
         dirn = rng.uniform(0, 2 * np.pi) + 0.3 * z / 5000.0
         f["uReconstructZonal"][i] = spd * np.minimum(prof, 1.5 + z / 10000.0) * np.cos(dirn)
@@ -158,7 +170,9 @@ def make(path, nC, nV, nsteps, seed, seaice, restart, len_disp):
         w[i, 0] = 0.0
         surface_pressure[i] = ps * rng.uniform(0.999, 1.001)
         # surface: the ground, sea or ice temperature relative to the air
-        dT = {0: 8.0, 1: -6.0, 2: 1.5, 3: -2.5, 4: -3.0, 5: -2.0, 6: -4.0, 7: 10.0, 8: -9.0, 9: 0.8}[reg]
+        dT = {0: 8.0, 1: -6.0, 2: 1.5, 3: -2.5, 4: -3.0, 5: -2.0, 6: -4.0, 7: 15.0, 8: -14.0, 9: 0.8}[reg]
+        if thin:
+            dT = 25.0
         sfc["skintemp"][i] = T[0] + 0.0098 * z[0] + dT * rng.uniform(0.6, 1.4)
         sfc["xland"][i] = 1.0 if land else 2.0
         sfc["sst"][i] = sfc["skintemp"][i] if not land else 285.0
@@ -175,19 +189,24 @@ def make(path, nC, nV, nsteps, seed, seaice, restart, len_disp):
             sfc["snowh"][i] = rng.uniform(0.2, 1.0)
         if reg == 6:
             sfc["snowh"][i] = rng.uniform(0.1, 0.3)
-        if reg == 0 and i % 4 == 1:
+        if reg == 0 and (i // 10) % 3 == 1:
             sfc["snowh"][i] = 0.09  # just below the snow threshold
         # the diag_physics state the previous physics step left
         uns = reg in (0, 2, 7, 9)
         d1["hpbl"][i] = rng.uniform(800, 1800) if uns else rng.uniform(50, 300)
-        if reg == 0 and i % 2:
+        if reg == 0 and (i // 10) % 3 == 0:
             d1["hpbl"][i] = rng.uniform(2800, 3500)  # min(1.5 pblh, 4000.) at its cap
+        if reg == 7 or thin:
+            d1["hpbl"][i] = rng.uniform(30, 80)  # small wstar: br below -4 after the first step (len_disp 3 km)
         d1["mavail"][i] = 1.0 if not land else rng.uniform(0.1, 0.5)
         d1["br"][i] = -0.5 * rng.uniform(0, 1) if uns else 0.2 * rng.uniform(0, 1)
         d1["cpm"][i] = CP * (1 + 0.8 * qv[0])
-        d1["znt"][i] = {5: rng.uniform(0.5, 1.0), 6: rng.uniform(0.001, 0.005), 8: rng.uniform(0.01, 0.1)}.get(
+        d1["znt"][i] = {5: rng.uniform(0.5, 1.0), 6: rng.uniform(0.001, 0.005), 8: znt8}.get(
             reg, rng.uniform(0.05, 0.8) if land else rng.uniform(1e-4, 5e-4))
         d1["ust"][i] = {5: rng.uniform(1.2, 2.0), 6: rng.uniform(0.03, 0.08), 9: 0.0005}.get(reg, rng.uniform(0.1, 0.6))
+        if thin:
+            d1["znt"][i] = 2.0 + 0.5 * np.sin(i)
+            d1["ust"][i] = 0.01
         d1["ustm"][i] = d1["ust"][i] * rng.uniform(0.9, 1.1)
         d1["mol"][i] = -rng.uniform(0.05, 0.5) if uns else rng.uniform(0.01, 0.2)
         d1["hfx"][i] = rng.uniform(50, 350) if uns else -rng.uniform(5, 60)
