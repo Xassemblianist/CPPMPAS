@@ -38,10 +38,10 @@ struct LsmConfig {
 };
 
 // The pool arrays the Noah path reads or writes (Registry names; (iCell) or (nSoilLevels, iCell))
-struct LsmPools {
+// LsmArrays is the part a kernel captures (trivially copyable); LsmPools adds mminlu.
+struct LsmArrays {
   int nCells = 0, nCellsSolve = 0, nSoilLevels = 0;
   // sfc_input
-  std::string mminlu;
   int isice = 0;
   FView<int> isltyp, ivgtyp;
   FView<real> shdmin, shdmax, snoalb, sfc_albbck, snow, snowc, snowh, tmn, skintemp, vegfra, xice, xland;
@@ -52,6 +52,9 @@ struct LsmPools {
       udrunoff, z0, znt, sr, rainncv, raincv, q2, t2m, th2m;
   // diag
   FView<real> surface_pressure;
+};
+struct LsmPools : LsmArrays {
+  std::string mminlu;  // sfc_input
 };
 
 // The module variables of mpas_atmphys_vars the Noah path uses: the dimensions (physics_run_init), the physics

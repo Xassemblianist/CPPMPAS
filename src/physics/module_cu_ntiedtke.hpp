@@ -18,19 +18,17 @@
 
 namespace cppmpas::phys {
 
-// The arguments of cu_ntiedtke_driver (NT:20-33): (ims:ime, kms:kme) arrays of mpas_atmphys_vars (PArray, 1-based)
+// The arguments of cu_ntiedtke_driver (NT:20-33): (ims:ime, kms:kme) arrays of mpas_atmphys_vars (PArray, 1-based),
+// as kernel views (trivially copyable)
 struct NtiedtkeArgs {
   real dt = 0;
   int itimestep = 0, stepcu = 0;  // itimestep: driver_convection's initflag
-  PArray *raincv = nullptr, *pratec = nullptr;
-  const PArray *qfx = nullptr, *hfx = nullptr, *xland = nullptr, *dx = nullptr;
-  const PArray *u3d = nullptr, *v3d = nullptr, *w = nullptr, *t3d = nullptr, *qv3d = nullptr, *qc3d = nullptr,
-               *qi3d = nullptr, *pi3d = nullptr, *rho3d = nullptr, *qvften = nullptr, *thften = nullptr,
-               *dz8w = nullptr, *pcps = nullptr, *p8w = nullptr;
+  PView raincv, pratec;
+  PCView qfx, hfx, xland, dx;
+  PCView u3d, v3d, w, t3d, qv3d, qc3d, qi3d, pi3d, rho3d, qvften, thften, dz8w, pcps, p8w;
   bool f_qc = true, f_qi = true;
   real grav = 0, xlf = 0, xls = 0, xlv = 0, rd = 0, rv = 0, cp = 0;
-  PArray *rthcuten = nullptr, *rqvcuten = nullptr, *rqccuten = nullptr, *rqicuten = nullptr, *rucuten = nullptr,
-         *rvcuten = nullptr;
+  PView rthcuten, rqvcuten, rqccuten, rqicuten, rucuten, rvcuten;
   int kts = 1, kte = 0;
 };
 

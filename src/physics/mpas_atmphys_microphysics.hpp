@@ -55,8 +55,8 @@ struct MicrophysicsPools {
 // physics/mpas_atmphys_functions.F:156-186 RSLF and :188-218 RSIF (liquid / ice saturation mixing ratio); the
 // object code's MAX(-80., T-273.16) is maxsd (x > -80 ? x : -80) and MIN(ESL, P*0.15) minsd (ESL < P*0.15 ? ESL :
 // P*0.15), no FMA
-real rslf(real p, real t);
-real rsif(real p, real t);
+CPPMPAS_HD real rslf(real p, real t);
+CPPMPAS_HD real rsif(real p, real t);
 
 // DRV:317-500 for mp_wsm6 on cells its..ite. params: module_mp_wsm6::mpas_wsm6_params() (init_microphysics).
 void driver_microphysics_wsm6(const wsm6::Wsm6Params<real>& params, MicrophysicsPools& m, int its, int ite);

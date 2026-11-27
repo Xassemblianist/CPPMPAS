@@ -3,7 +3,6 @@
 // physics/physics_wrf/module_bl_gwdo.F (MPAS v8.4.2).
 #include "physics/mpas_atmphys_gwdo.hpp"
 
-#include <memory>
 
 #include "core/error.hpp"
 #include "core/libm.hpp"
@@ -12,30 +11,40 @@
 
 namespace cppmpas::phys {
 
-void driver_gwdo(int itimestep, GwdoPools& m, const PhysicsVars& v, int its, int ite) {
+// One kernel per loop of GD and one thread per column for gwdo (one thread per cell i, the k loops inside).
+void driver_gwdo(int itimestep, GwdoPools& mp, const PhysicsVars& vp, int its, int ite) {
   using namespace physics_constants;
   (void)itimestep;  // gwdo's itimestep argument is not used by bl_gwdo_run
-  if (m.gwdo_scheme != "bl_ysu_gwdo")
-    throw Error("driver_gwdo: config_gwdo_scheme = '" + m.gwdo_scheme + "' has no verified port");
-  if (m.config_ngw_scheme) throw Error("driver_gwdo: config_ngw_scheme = true has no verified port");
+  if (mp.gwdo_scheme != "bl_ysu_gwdo")
+    throw Error("driver_gwdo: config_gwdo_scheme = '" + mp.gwdo_scheme + "' has no verified port");
+  if (mp.config_ngw_scheme) throw Error("driver_gwdo: config_ngw_scheme = true has no verified port");
   if (its != 1) throw Error("driver_gwdo: its /= 1");
-  const int kts = 1, kte = m.nVertLevels;
+  const int kts = 1, kte = mp.nVertLevels;
   if (kte > bl_gwdo::kMaxLevels) throw Error("driver_gwdo: more than 128 levels");
-  if (v.ime < ite || v.kme != kte + 1) throw Error("driver_gwdo: MPAS_to_physics has not filled its..ite");
+  if (vp.ime < ite || vp.kme != kte + 1) throw Error("driver_gwdo: MPAS_to_physics has not filled its..ite");
+  const GwdoArrays m = mp;
+  const PhysicsVarsView v = vp.view();
   const int n = ite, kme = kte + 1;
 
   // allocate_gwdo (GD:75-115)
-  PArray cosa_p, sina_p, dx_p, dusfcg_p, dvsfcg_p, var2d_p, con_p, oa1_p, oa2_p, oa3_p, oa4_p, ol1_p, ol2_p, ol3_p,
-      ol4_p;
-  std::unique_ptr<int[]> kpbl_p(new int[n]);
-  for (PArray* a : {&cosa_p, &sina_p, &dx_p, &dusfcg_p, &dvsfcg_p, &var2d_p, &con_p, &oa1_p, &oa2_p, &oa3_p, &oa4_p,
-                    &ol1_p, &ol2_p, &ol3_p, &ol4_p})
+  PArray cosa_a, sina_a, dx_a, dusfcg_a, dvsfcg_a, var2d_a, con_a, oa1_a, oa2_a, oa3_a, oa4_a, ol1_a, ol2_a, ol3_a,
+      ol4_a;
+  WorkArrayInt kpbl_a(n);
+  for (PArray* a : {&cosa_a, &sina_a, &dx_a, &dusfcg_a, &dvsfcg_a, &var2d_a, &con_a, &oa1_a, &oa2_a, &oa3_a, &oa4_a,
+                    &ol1_a, &ol2_a, &ol3_a, &ol4_a})
     a->allocate(n, 1);
-  PArray dtaux3d_p, dtauy3d_p, rublten_p, rvblten_p, rthblten_p;
-  for (PArray* a : {&dtaux3d_p, &dtauy3d_p, &rublten_p, &rvblten_p, &rthblten_p}) a->allocate(n, kme);
+  PArray dtaux3d_a, dtauy3d_a, rublten_a, rvblten_a, rthblten_a;
+  for (PArray* a : {&dtaux3d_a, &dtauy3d_a, &rublten_a, &rvblten_a, &rthblten_a}) a->allocate(n, kme);
+  const PView cosa_p = cosa_a.view(), sina_p = sina_a.view(), dx_p = dx_a.view(), dusfcg_p = dusfcg_a.view(),
+              dvsfcg_p = dvsfcg_a.view(), var2d_p = var2d_a.view(), con_p = con_a.view(), oa1_p = oa1_a.view(),
+              oa2_p = oa2_a.view(), oa3_p = oa3_a.view(), oa4_p = oa4_a.view(), ol1_p = ol1_a.view(),
+              ol2_p = ol2_a.view(), ol3_p = ol3_a.view(), ol4_p = ol4_a.view();
+  const PView dtaux3d_p = dtaux3d_a.view(), dtauy3d_p = dtauy3d_a.view(), rublten_p = rublten_a.view(),
+              rvblten_p = rvblten_a.view(), rthblten_p = rthblten_a.view();
+  int* kpbl_p = kpbl_a.data();
 
   // gwdo_from_MPAS (GD:285-552)
-  for (int i = its; i <= ite; ++i) {  // GD:350-363
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // GD:350-363
     var2d_p(i) = m.var2d(i);
     con_p(i) = m.con(i);
     oa1_p(i) = m.oa1(i);
@@ -46,27 +55,28 @@ void driver_gwdo(int itimestep, GwdoPools& m, const PhysicsVars& v, int its, int
     ol2_p(i) = m.ol2(i);
     ol3_p(i) = m.ol3(i);
     ol4_p(i) = m.ol4(i);
-  }
-  for (int i = its; i <= ite; ++i) {  // GD:529-538 (scalar pow@plt, GD:533)
+  });
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // GD:529-538 (scalar pow@plt, GD:533)
     sina_p(i) = 0.;
     cosa_p(i) = 1.;
     dx_p(i) = m.config_len_disp / libm::pow(m.meshDensity(i), 0.25);
     kpbl_p[i - 1] = m.kpbl(i);
     dusfcg_p(i) = m.dusfcg(i);
     dvsfcg_p(i) = m.dvsfcg(i);
-  }
-  for (int k = kts; k <= kte; ++k)  // GD:540-550
-    for (int i = its; i <= ite; ++i) {
+  });
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // GD:540-550
+    for (int k = kts; k <= kte; ++k) {
       dtaux3d_p(i, k) = m.dtaux3d(k, i);
       dtauy3d_p(i, k) = m.dtauy3d(k, i);
       rublten_p(i, k) = m.rublten(k, i);
       rvblten_p(i, k) = m.rvblten(k, i);
       rthblten_p(i, k) = m.rthblten(k, i);
     }
+  });
 
   // GD:757-778: gwdo (BG:16-238) for j = 1: the _hv copies of its..ite (BG:158-196) and bl_gwdo_run (BG:198-214) on
   // each column (the columns of bl_gwdo_run are independent; no vectorised libm call), then BG:218-234
-  for (int i = its; i <= ite; ++i) {
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {
     bl_gwdo::GwdoColumn<real> c;
     for (int k = kts; k <= kte + 1; ++k) c.prsi[k] = v.pres2_hydd_p(i, k);  // p3di = pres2_hydd_p
     for (int k = kts; k <= kte; ++k) {
@@ -104,16 +114,16 @@ void driver_gwdo(int itimestep, GwdoPools& m, const PhysicsVars& v, int its, int
     }
     dusfcg_p(i) = c.dusfcg;
     dvsfcg_p(i) = c.dvsfcg;
-  }
+  });
   (void)kpbl_p;  // kpbl2d is not used by gwdo (BG)
 
   // gwdo_to_MPAS (GD:555-689)
-  for (int i = its; i <= ite; ++i) {  // GD:668-673
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // GD:668-673
     m.dusfcg(i) = dusfcg_p(i);
     m.dvsfcg(i) = dvsfcg_p(i);
-  }
-  for (int k = kts; k <= kte; ++k)  // GD:675-687
-    for (int i = its; i <= ite; ++i) {
+  });
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // GD:675-687
+    for (int k = kts; k <= kte; ++k) {
       m.dtaux3d(k, i) = dtaux3d_p(i, k);
       m.dtauy3d(k, i) = dtauy3d_p(i, k);
       m.rubldiff(k, i) = rublten_p(i, k) - m.rublten(k, i);
@@ -122,6 +132,7 @@ void driver_gwdo(int itimestep, GwdoPools& m, const PhysicsVars& v, int its, int
       m.rvblten(k, i) = rvblten_p(i, k);
       m.rthblten(k, i) = rthblten_p(i, k);
     }
+  });
 }
 
 }  // namespace cppmpas::phys

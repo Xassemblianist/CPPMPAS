@@ -28,10 +28,10 @@
 
 namespace cppmpas::phys {
 
-struct ConvectionPools {
+// ConvectionArrays is the part a kernel captures (trivially copyable); ConvectionPools adds the scheme's name.
+struct ConvectionArrays {
   int nVertLevels = 0;
   // configs
-  std::string convection_scheme;
   bool config_do_restart = false;
   real config_len_disp = 0, config_bucket_rainc = 0;
   // mesh
@@ -51,6 +51,9 @@ struct ConvectionPools {
   bool f_qc = true, f_qi = true; // mpas_atmphys_init.F
   bool l_acrain = false;         // config_bucket_update /= 'none' (mpas_atmphys_manager.F)
   // config_bucket_rainc above: the bucket of update_convection_step2 (CV:1092-1096)
+};
+struct ConvectionPools : ConvectionArrays {
+  std::string convection_scheme;
 };
 
 // CV:991-1058 (nothing for cu_ntiedtke; other schemes are refused)

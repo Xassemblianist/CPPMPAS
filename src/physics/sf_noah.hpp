@@ -59,14 +59,15 @@ enum FatalCode {
   kFatalNoahSlopeTypes = 6,    // REDPRM (:2444)
   kFatalNoahRootLayers = 7,    // REDPRM (:2511, NROOT > NSOIL)
 };
-inline void raise_fatal(int code) {
-  const char* m = code == kFatalSnowDensity       ? "Physical snow depth is less than snow water equiv."
-                  : code == kFatalNoahSoilTypes    ? "Warning: too many input soil types"
-                  : code == kFatalNoahLanduseTypes ? "Warning: too many input landuse types"
-                  : code == kFatalNoahSlopeTypes   ? "Warning: too many input slope types"
-                  : code == kFatalNoahRootLayers   ? "Error: too many root layers"
-                                                   : "Noah: fatal error";
-  throw ::cppmpas::Error(std::string("module_sf_noahlsm.F: ") + m);
+// CPPMPAS_HD: kernel_fail (core/backend.hpp) throws the same Error on the host and ends the thread on the device
+CPPMPAS_HD inline void raise_fatal(int code) {
+  const char* m = code == kFatalSnowDensity       ? "module_sf_noahlsm.F: Physical snow depth is less than snow water equiv."
+                  : code == kFatalNoahSoilTypes    ? "module_sf_noahlsm.F: Warning: too many input soil types"
+                  : code == kFatalNoahLanduseTypes ? "module_sf_noahlsm.F: Warning: too many input landuse types"
+                  : code == kFatalNoahSlopeTypes   ? "module_sf_noahlsm.F: Warning: too many input slope types"
+                  : code == kFatalNoahRootLayers   ? "module_sf_noahlsm.F: Error: too many root layers"
+                                                   : "module_sf_noahlsm.F: Noah: fatal error";
+  ::cppmpas::kernel_fail(m);
 }
 // CPPWRF 7fac5bf src/core/backend.hpp:183-195: x**n for a variable INTEGER n as gfortran computes it: libgcc's
 // __powidf2 (square-and-multiply, 1/y for n < 0). Used for SRT's ACRT**(CVFRZ-J) (module_sf_noahlsm.F:3807): with

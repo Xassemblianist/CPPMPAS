@@ -149,7 +149,7 @@ LsmPools lsm_pools(const Mesh& m, State& s, RegistryPools& p) {
 }
 
 FView<const real> pv(const PArray& a, int kme) { return FView<const real>{a.data(), a.ldi, kme, 1}; }
-FView<const real> sv(const std::vector<real>& a) {
+FView<const real> sv(const WorkArray& a) {
   return FView<const real>{a.data(), static_cast<int>(a.size()), 1, 1};
 }
 
@@ -477,6 +477,9 @@ void physics_driver(PhysicsRun& r, const Mesh& m, State& s, Diag& d, RegistryPoo
     MPAS_to_physics(tp, v, its, ite);
   }
   if (r.l_radtlw || r.l_radtsw) {  // DR:210-246
+    // TEMPORARY (radiation on the host until opm25/gpu-radiation is merged): in the CUDA build these calls run as
+    // host code on the managed arrays MPAS_to_physics and the earlier steps' kernels wrote (every launch has
+    // synchronised), and the kernels after them read what they write
     RadiationPools q = radiation_pools(r, m, p);
     r.rad.sw_ran = false;
     driver_cloudiness(q, v, r.rad, its, ite);
@@ -645,19 +648,25 @@ void dynamics_tendencies_for_convection(PhysicsRun& r, const Mesh& m, const Stat
   if (c.config_convection_scheme != "cu_grell_freitas" && c.config_convection_scheme != "cu_ntiedtke") return;
   using physics_constants::rgas;
   using physics_constants::rv;
-  auto& rqvdynten = p.R("rqvdynten");
-  auto& rthdynten = *a.rthdynten;
+  const auto rqvdynten = p.v("rqvdynten");
+  const auto rthdynten = a.rthdynten->view();
+  const auto scalars2_v = scalars2.cview(), scalars1_v = s.scalars.cview(), theta_m2_v = theta_m2.cview();
   const int qv = r.index_qv, nV = m.nVertLevels;
-  // TI:2769-2773: whole arrays (the garbage column included)
-  for (int i = 1; i <= m.nCells + 1; ++i)
+  // TI:2769-2773: whole arrays (the garbage column included); one thread per cell, the k loop inside
+  parallel_for(1, m.nCells + 1, [=] CPPMPAS_LAMBDA(int i) {
+    const auto& scalars2 = scalars2_v;
     for (int k = 1; k <= nV; ++k)
-      rqvdynten(k, i) = config_monotonic ? (scalars2(qv, k, i) - s.scalars(qv, k, i)) / dt : 0.;
-  for (int k = 1; k <= nV; ++k)  // TI:2777-2783
-    for (int iCell = 1; iCell <= m.nCellsSolve(); ++iCell) {
+      rqvdynten(k, i) = config_monotonic ? (scalars2(qv, k, i) - scalars1_v(qv, k, i)) / dt : 0.;
+  });
+  parallel_for(1, m.nCellsSolve(), [=] CPPMPAS_LAMBDA(int iCell) {  // TI:2777-2783
+    const auto& scalars2 = scalars2_v;
+    const auto& theta_m2 = theta_m2_v;
+    for (int k = 1; k <= nV; ++k) {
       const real fac_m = 1. / (1. + rv / rgas * scalars2(qv, k, iCell));
       const real theta_local = theta_m2(k, iCell) * fac_m;
       rthdynten(k, iCell) = fac_m * (rthdynten(k, iCell) - theta_local * rv / rgas * rqvdynten(k, iCell));
     }
+  });
 }
 
 // ---------------------------------------------------------------------------------------------------------------

@@ -24,10 +24,10 @@
 
 namespace cppmpas::phys {
 
-struct PblPools {
+// PblArrays is the part a kernel captures (trivially copyable); PblPools adds the scheme's name.
+struct PblArrays {
   int nVertLevels = 0;
   // configs
-  std::string pbl_scheme;
   bool config_ysu_pblmix = false;
   // sfc_input
   FView<const real> xland;
@@ -42,6 +42,9 @@ struct PblPools {
   // mpas_atmphys_vars
   real dt_pbl = 0;                  // mpas_atmphys_manager.F:542 (config_pbl_interval = 'none': dt)
   bool f_qc = true, f_qi = true;    // mpas_atmphys_init.F:501-515
+};
+struct PblPools : PblArrays {
+  std::string pbl_scheme;
 };
 
 // PB:757-973 on cells its..ite (its = 1). v: MPAS_to_physics' arrays.

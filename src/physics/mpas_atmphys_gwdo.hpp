@@ -25,10 +25,10 @@
 
 namespace cppmpas::phys {
 
-struct GwdoPools {
+// GwdoArrays is the part a kernel captures (trivially copyable); GwdoPools adds the scheme's name.
+struct GwdoArrays {
   int nVertLevels = 0;
   // configs
-  std::string gwdo_scheme;
   bool config_ngw_scheme = false;
   real config_len_disp = 0;
   // mesh
@@ -42,6 +42,9 @@ struct GwdoPools {
   FView<real> rublten, rvblten, rthblten;
   // mpas_atmphys_vars
   real dt_pbl = 0;  // mpas_atmphys_manager.F:542 (config_pbl_interval = 'none': dt)
+};
+struct GwdoPools : GwdoArrays {
+  std::string gwdo_scheme;
 };
 
 // GD:692-834 on cells its..ite (its = 1). v: MPAS_to_physics' arrays.

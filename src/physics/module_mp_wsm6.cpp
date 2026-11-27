@@ -2,7 +2,7 @@
 // See module_mp_wsm6.hpp. MW = physics/physics_wrf/module_mp_wsm6.F, DRV = physics/mpas_atmphys_driver_microphysics.F.
 #include "physics/module_mp_wsm6.hpp"
 
-#include <vector>
+#include "core/backend.hpp"
 
 #include "core/error.hpp"
 #include "physics/mpas_atmphys_constants.hpp"
@@ -41,9 +41,15 @@ void wsm6(const phys::wsm6::Wsm6Params<real>& params, real delt, int has_reqc, i
   if (has_reqc == 1 && has_reqi == 1 && has_reqs == 1)  // MW:209-210: do_microp_re
     throw Error("wsm6: the effective radii of mp_wsm6_effectRad_run (config_microp_re) have no verified port");
   const int nz = kte;
-  std::vector<real> th(nz), q(nz), qc(nz), qr(nz), qi(nz), qs(nz), qg(nz), den(nz), pii(nz), p(nz), delz(nz);
-  auto at = [&](int i, int k) { return static_cast<std::size_t>(k - 1) * a.ldi + (i - 1); };
-  for (int i = its; i <= ite; ++i) {
+  const phys::wsm6::Wsm6Params<real> pk = params;  // the kernel's copy (trivially copyable)
+  // one thread per column i: the columns of mp_wsm6_run are independent; the column arrays are the thread's own
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {
+    const phys::wsm6::Wsm6Params<real>& params = pk;
+    real th[phys::wsm6::kMaxLevels], q[phys::wsm6::kMaxLevels], qc[phys::wsm6::kMaxLevels],
+        qr[phys::wsm6::kMaxLevels], qi[phys::wsm6::kMaxLevels], qs[phys::wsm6::kMaxLevels],
+        qg[phys::wsm6::kMaxLevels], den[phys::wsm6::kMaxLevels], pii[phys::wsm6::kMaxLevels],
+        p[phys::wsm6::kMaxLevels], delz[phys::wsm6::kMaxLevels];
+    auto at = [&](int ii, int k) { return static_cast<std::size_t>(k - 1) * a.ldi + (ii - 1); };
     // MW:114-145: the inputs of column i (t_hv = th*pii is formed inside the kernel, operator() of mp_wsm6.hpp)
     for (int k = 1; k <= nz; ++k) {
       th[k - 1] = a.th[at(i, k)];
@@ -61,9 +67,8 @@ void wsm6(const phys::wsm6::Wsm6Params<real>& params, real delt, int has_reqc, i
     real rain = a.rain[i - 1], snow = a.snow[i - 1], graupel = a.graupel[i - 1];
     real rainncv = 0, snowncv = 0, graupelncv = 0, sr = 0;
     // MW:148-158: mp_wsm6_run over its..ite; column i is iteration i - its of the vectorised i loops
-    params(nz, delt, th.data(), q.data(), qc.data(), qr.data(), qi.data(), qs.data(), qg.data(), den.data(),
-           pii.data(), p.data(), delz.data(), rain, rainncv, snow, snowncv, graupel, graupelncv, sr, i - its,
-           ite - its + 1);
+    params(nz, delt, th, q, qc, qr, qi, qs, qg, den, pii, p, delz, rain, rainncv, snow, snowncv, graupel, graupelncv,
+           sr, i - its, ite - its + 1);
     // MW:160-188 (th = t_hv/pii in the kernel)
     a.rain[i - 1] = rain;
     a.rainncv[i - 1] = rainncv;
@@ -81,7 +86,7 @@ void wsm6(const phys::wsm6::Wsm6Params<real>& params, real delt, int has_reqc, i
     a.snowncv[i - 1] = snowncv;
     a.graupel[i - 1] = graupel;
     a.graupelncv[i - 1] = graupelncv;
-  }
+  });
   // MW:208-231: mp_wsm6_effectRad_run with do_microp_re = .false. returns at once (refused above otherwise)
 }
 

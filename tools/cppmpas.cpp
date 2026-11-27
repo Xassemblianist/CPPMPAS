@@ -297,9 +297,6 @@ int run(int argc, char** argv) {
     phys::PhysicsRun pr;
     pr.cfg = phys::read_physics_config(a.namelist, cfg, log);
     const bool physics = pr.cfg.config_physics_suite != "none";
-#if defined(CPPMPAS_USE_CUDA)
-    if (physics) throw Error("run: the physics suite runs on the host only; the GPU build (cppmpas_gpu) refuses it");
-#endif
     if (physics) {
       if (cfg.config_do_restart) throw Error("run: a restart with the physics suite has no verified port");
       if (a.tables.empty() || a.rrtmg.empty()) throw Error("run: the physics suite needs --tables and --rrtmg");

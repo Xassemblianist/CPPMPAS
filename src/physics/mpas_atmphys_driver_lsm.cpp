@@ -9,6 +9,7 @@
 #include "core/error.hpp"
 #include "core/libm.hpp"
 #include "physics/module_sf_noahdrv.hpp"
+#include "physics/mpas_atmphys_interface.hpp"
 #include "physics/mpas_atmphys_constants.hpp"
 #include "physics/mpas_atmphys_lsm_noahinit.hpp"
 
@@ -28,47 +29,81 @@ void check_lsm_config(const LsmConfig& cfg, const LsmPools& p) {
 
 // The local arrays of mpas_atmphys_vars that allocate_lsm / allocate_seaice allocate (ims:ime, jms:jme) and
 // (ims:ime, 1:num_soils, jms:jme), jms = jme = 1. MPAS's allocate leaves them undefined until *_from_MPAS fills its..ite.
+// Work arrays a kernel can write (WorkArray); LocalView is their kernel view with the same names and at().
+#define CPPMPAS_LSM_SOIL(X) X(smcrel_p) X(sh2o_p) X(smois_p) X(tslb_p)
+#define CPPMPAS_LSM_REAL(X) \
+  X(acsnom_p) X(acsnow_p) X(canwat_p) X(chs_p) X(chs2_p) X(chklowq_p) X(cpm_p) X(cqs2_p) X(glw_p) X(grdflx_p) \
+  X(gsw_p) X(hfx_p) X(lai_p) X(lh_p) X(noahres_p) X(potevp_p) X(qfx_p) X(qgh_p) X(qsfc_p) X(qz0_p) X(rainbl_p) \
+  X(br_p) X(sfc_albbck_p) X(sfc_albedo_p) X(sfc_emibck_p) X(sfc_emiss_p) X(sfcrunoff_p) X(shdmin_p) X(shdmax_p) \
+  X(smstav_p) X(smstot_p) X(snoalb_p) X(snotime_p) X(snopcx_p) X(snow_p) X(snowc_p) X(snowh_p) X(sr_p) \
+  X(swddir_p) X(swddif_p) X(swdown_p) X(tmn_p) X(tsk_p) X(udrunoff_p) X(vegfra_p) X(xice_p) X(xland_p) X(z0_p) \
+  X(znt_p) X(flxsnow_p) X(fvbsnow_p) X(fbursnow_p) X(fgsnsnow_p) X(frc_urb_p) X(ust_urb_p) X(albsi_p) \
+  X(icedepth_p) X(snowsi_p) X(tsk_sea) X(tsk_ice) 
+#define CPPMPAS_LSM_INT(X) X(isltyp_p) X(ivgtyp_p) X(utype_urb_p)
+struct LocalView {
+  int ims, ni, ns;
+  real* dzs_p;
+#define CPPMPAS_X(a) real* a;
+  CPPMPAS_LSM_SOIL(CPPMPAS_X) CPPMPAS_LSM_REAL(CPPMPAS_X)
+#undef CPPMPAS_X
+#define CPPMPAS_X(a) int* a;
+  CPPMPAS_LSM_INT(CPPMPAS_X)
+#undef CPPMPAS_X
+  // (i, j = 1) and (i, n, j = 1), 1-based i in ims..ime
+  CPPMPAS_HD real& at(real* a, int i) const { return a[std::size_t(i - ims)]; }
+  CPPMPAS_HD int& at(int* a, int i) const { return a[std::size_t(i - ims)]; }
+  CPPMPAS_HD real& at(real* a, int i, int n) const { return a[std::size_t(i - ims) + std::size_t(ni) * (n - 1)]; }
+};
 struct Local {
   int ims, ni, ns;
-  std::vector<real> dzs_p, smcrel_p, sh2o_p, smois_p, tslb_p;
-  std::vector<real> acsnom_p, acsnow_p, canwat_p, chs_p, chs2_p, chklowq_p, cpm_p, cqs2_p, glw_p, grdflx_p, gsw_p,
-      hfx_p, lai_p, lh_p, noahres_p, potevp_p, qfx_p, qgh_p, qsfc_p, qz0_p, rainbl_p, br_p, sfc_albbck_p,
-      sfc_albedo_p, sfc_emibck_p, sfc_emiss_p, sfcrunoff_p, shdmin_p, shdmax_p, smstav_p, smstot_p, snoalb_p,
-      snotime_p, snopcx_p, snow_p, snowc_p, snowh_p, sr_p, swddir_p, swddif_p, swdown_p, tmn_p, tsk_p, udrunoff_p,
-      vegfra_p, xice_p, xland_p, z0_p, znt_p, flxsnow_p, fvbsnow_p, fbursnow_p, fgsnsnow_p, frc_urb_p, ust_urb_p;
-  std::vector<real> albsi_p, icedepth_p, snowsi_p, tsk_sea, tsk_ice;
-  std::vector<int> isltyp_p, ivgtyp_p, utype_urb_p;
+  WorkArray dzs_p;
+#define CPPMPAS_X(a) WorkArray a;
+  CPPMPAS_LSM_SOIL(CPPMPAS_X) CPPMPAS_LSM_REAL(CPPMPAS_X)
+#undef CPPMPAS_X
+#define CPPMPAS_X(a) WorkArrayInt a;
+  CPPMPAS_LSM_INT(CPPMPAS_X)
+#undef CPPMPAS_X
   Local(const LsmVars& v) : ims(v.ims), ni(v.ime - v.ims + 1), ns(v.num_soils) {
     dzs_p.assign(ns, 0);
-    for (auto* f : {&smcrel_p, &sh2o_p, &smois_p, &tslb_p}) f->assign(std::size_t(ni) * ns, 0);
-    for (auto* f : {&acsnom_p, &acsnow_p, &canwat_p, &chs_p, &chs2_p, &chklowq_p, &cpm_p, &cqs2_p, &glw_p, &grdflx_p,
-                    &gsw_p, &hfx_p, &lai_p, &lh_p, &noahres_p, &potevp_p, &qfx_p, &qgh_p, &qsfc_p, &qz0_p, &rainbl_p,
-                    &br_p, &sfc_albbck_p, &sfc_albedo_p, &sfc_emibck_p, &sfc_emiss_p, &sfcrunoff_p, &shdmin_p,
-                    &shdmax_p, &smstav_p, &smstot_p, &snoalb_p, &snotime_p, &snopcx_p, &snow_p, &snowc_p, &snowh_p,
-                    &sr_p, &swddir_p, &swddif_p, &swdown_p, &tmn_p, &tsk_p, &udrunoff_p, &vegfra_p, &xice_p, &xland_p,
-                    &z0_p, &znt_p, &flxsnow_p, &fvbsnow_p, &fbursnow_p, &fgsnsnow_p, &frc_urb_p, &ust_urb_p,
-                    &albsi_p, &icedepth_p, &snowsi_p, &tsk_sea, &tsk_ice})
-      f->assign(ni, 0);
-    for (auto* f : {&isltyp_p, &ivgtyp_p, &utype_urb_p}) f->assign(ni, 0);
+#define CPPMPAS_X(a) a.assign(std::size_t(ni) * ns, 0);
+    CPPMPAS_LSM_SOIL(CPPMPAS_X)
+#undef CPPMPAS_X
+#define CPPMPAS_X(a) a.assign(ni, 0);
+    CPPMPAS_LSM_REAL(CPPMPAS_X) CPPMPAS_LSM_INT(CPPMPAS_X)
+#undef CPPMPAS_X
   }
-  // (i, j = 1) and (i, n, j = 1), 1-based i in ims..ime
-  real& at(std::vector<real>& a, int i) { return a[std::size_t(i - ims)]; }
-  int& at(std::vector<int>& a, int i) { return a[std::size_t(i - ims)]; }
-  real& at(std::vector<real>& a, int i, int n) { return a[std::size_t(i - ims) + std::size_t(ni) * (n - 1)]; }
+  LocalView view() {
+    LocalView w;
+    w.ims = ims;
+    w.ni = ni;
+    w.ns = ns;
+    w.dzs_p = dzs_p.data();
+#define CPPMPAS_X(a) w.a = a.data();
+    CPPMPAS_LSM_SOIL(CPPMPAS_X) CPPMPAS_LSM_REAL(CPPMPAS_X) CPPMPAS_LSM_INT(CPPMPAS_X)
+#undef CPPMPAS_X
+    return w;
+  }
 };
 
 // mpas_atmphys_driver_lsm.F:268-476
-void lsm_from_MPAS(const LsmConfig& cfg, const LsmPools& p, Local& L, int its, int ite) {
+// One kernel per loop (one thread per cell i; the n loops inside the thread).
+void lsm_from_MPAS(const LsmConfig& cfg, const LsmPools& pools, Local& loc, int its, int ite) {
+  const LsmArrays p = pools;
+  const LocalView L = loc.view();
   const int num_soils = L.ns;
-  for (int n = 1; n <= num_soils; ++n) L.dzs_p[n - 1] = p.dzs(n, its);  // :360-362
-  for (int n = 1; n <= num_soils; ++n)                                    // :364-373
-    for (int i = its; i <= ite; ++i) {
+  const bool microp = cfg.config_microp_scheme != "off", convection = cfg.config_convection_scheme != "off";
+  serial([=] CPPMPAS_LAMBDA() {
+    for (int n = 1; n <= num_soils; ++n) L.dzs_p[n - 1] = p.dzs(n, its);  // :360-362
+  });
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // :364-373
+    for (int n = 1; n <= num_soils; ++n) {
       L.at(L.sh2o_p, i, n) = p.sh2o(n, i);
       L.at(L.smcrel_p, i, n) = p.smcrel(n, i);
       L.at(L.smois_p, i, n) = p.smois(n, i);
       L.at(L.tslb_p, i, n) = p.tslb(n, i);
     }
-  for (int i = its; i <= ite; ++i) {  // :375-440
+  });
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // :375-440
     L.at(L.acsnom_p, i) = p.acsnom(i);
     L.at(L.acsnow_p, i) = p.acsnow(i);
     L.at(L.canwat_p, i) = p.canwat(i);
@@ -124,32 +159,37 @@ void lsm_from_MPAS(const LsmConfig& cfg, const LsmPools& p, Local& L, int its, i
     L.at(L.frc_urb_p, i) = 0.;
     L.at(L.ust_urb_p, i) = 0.;
     L.at(L.utype_urb_p, i) = 0;
-  }
-  for (int i = its; i <= ite; ++i) {  // :442-447
+  });
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // :442-447
     L.at(L.sr_p, i) = 0.;
     L.at(L.rainbl_p, i) = 0.;
-  }
-  if (cfg.config_microp_scheme != "off")  // :449-459
-    for (int i = its; i <= ite; ++i) {
+  });
+  if (microp)  // :449-459
+    parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {
       L.at(L.sr_p, i) = p.sr(i);
       L.at(L.rainbl_p, i) = L.at(L.rainbl_p, i) + p.rainncv(i);
-    }
-  if (cfg.config_convection_scheme != "off")  // :460-468
-    for (int i = its; i <= ite; ++i) L.at(L.rainbl_p, i) = L.at(L.rainbl_p, i) + p.raincv(i);
-  for (int i = its; i <= ite; ++i) L.at(L.swdown_p, i) = p.gsw(i) / (1. - p.sfc_albedo(i));  // :470-474
+    });
+  if (convection)  // :460-468
+    parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) { L.at(L.rainbl_p, i) = L.at(L.rainbl_p, i) + p.raincv(i); });
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // :470-474
+    L.at(L.swdown_p, i) = p.gsw(i) / (1. - p.sfc_albedo(i));
+  });
 }
 
 // mpas_atmphys_driver_lsm.F:479-633
-void lsm_to_MPAS(const LsmConfig& cfg, LsmPools& p, Local& L, int its, int ite) {
+void lsm_to_MPAS(const LsmConfig& cfg, LsmPools& pools, Local& loc, int its, int ite) {
+  const LsmArrays p = pools;
+  const LocalView L = loc.view();
   const int num_soils = L.ns;
-  for (int n = 1; n <= num_soils; ++n)  // :565-574
-    for (int i = its; i <= ite; ++i) {
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // :565-574
+    for (int n = 1; n <= num_soils; ++n) {
       p.sh2o(n, i) = L.at(L.sh2o_p, i, n);
       p.smcrel(n, i) = L.at(L.smcrel_p, i, n);
       p.smois(n, i) = L.at(L.smois_p, i, n);
       p.tslb(n, i) = L.at(L.tslb_p, i, n);
     }
-  for (int i = its; i <= ite; ++i) {  // :576-621
+  });
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // :576-621
     p.acsnom(i) = L.at(L.acsnom_p, i);
     p.acsnow(i) = L.at(L.acsnow_p, i);
     p.canwat(i) = L.at(L.canwat_p, i);
@@ -191,15 +231,15 @@ void lsm_to_MPAS(const LsmConfig& cfg, LsmPools& p, Local& L, int its, int ite) 
     p.vegfra(i) = L.at(L.vegfra_p, i);
     p.xice(i) = L.at(L.xice_p, i);
     p.xland(i) = L.at(L.xland_p, i);
-  }
+  });
   if (cfg.config_microp_scheme != "off")  // :623-631
-    for (int i = its; i <= ite; ++i) p.sr(i) = L.at(L.sr_p, i);
+    parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) { p.sr(i) = L.at(L.sr_p, i); });
 }
 
 // mpas_atmphys_lsm_shared.F:22-57
-void correct_tsk_over_seaice(int ims, int its, int ite, real xice_thresh, const std::vector<real>& xice,
-                             const std::vector<real>& tsk, std::vector<real>& tsk_sea, std::vector<real>& tsk_ice) {
-  for (int i = its; i <= ite; ++i) {
+void correct_tsk_over_seaice(int ims, int its, int ite, real xice_thresh, const real* xice, const real* tsk,
+                             real* tsk_sea, real* tsk_ice) {
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {
     const std::size_t ii = std::size_t(i - ims);
     tsk_sea[ii] = tsk[ii];  // :39-40
     tsk_ice[ii] = tsk[ii];
@@ -208,13 +248,16 @@ void correct_tsk_over_seaice(int ims, int its, int ite, real xice_thresh, const 
       if (xice[ii] < 0.2 && tsk_ice[ii] < 253.15) tsk_ice[ii] = 253.15;  // :48
       if (xice[ii] < 0.1 && tsk_ice[ii] < 263.15) tsk_ice[ii] = 263.15;  // :49
     }
-  }
+  });
 }
 
 // mpas_atmphys_driver_seaice.F:178-333
-void seaice_from_MPAS(const LsmConfig& cfg, const LsmPools& p, const LsmVars& v, Local& L, int its, int ite) {
+void seaice_from_MPAS(const LsmConfig& cfg, const LsmPools& pools, const LsmVars& v, Local& loc, int its, int ite) {
+  const LsmArrays p = pools;
+  const LocalView L = loc.view();
   const int num_soils = L.ns;
-  for (int i = its; i <= ite; ++i) {  // :238-282
+  const bool microp = cfg.config_microp_scheme != "off", convection = cfg.config_convection_scheme != "off";
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // :238-282
     L.at(L.xice_p, i) = p.xice(i);
     L.at(L.glw_p, i) = p.glw(i);
     L.at(L.qgh_p, i) = p.qgh(i);
@@ -249,32 +292,34 @@ void seaice_from_MPAS(const LsmConfig& cfg, const LsmPools& p, const LsmVars& v,
       L.at(L.sfc_emiss_p, i) = p.sfc_emiss(i);
       L.at(L.sfc_albedo_p, i) = p.sfc_albedo(i);
     }
-  }
+  });
   correct_tsk_over_seaice(L.ims, its, ite, v.xice_threshold, L.xice_p, L.tsk_p, L.tsk_sea, L.tsk_ice);  // :285-286
-  for (int i = its; i <= ite; ++i) L.at(L.tsk_p, i) = L.at(L.tsk_ice, i);  // :287-289
-  for (int i = its; i <= ite; ++i) {  // :293-296
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) { L.at(L.tsk_p, i) = L.at(L.tsk_ice, i); });  // :287-289
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // :293-296
     L.at(L.sr_p, i) = 0.;
     L.at(L.rainbl_p, i) = 0.;
-  }
-  if (cfg.config_microp_scheme != "off")  // :297-304
-    for (int i = its; i <= ite; ++i) {
+  });
+  if (microp)  // :297-304
+    parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {
       L.at(L.sr_p, i) = p.sr(i);
       L.at(L.rainbl_p, i) = L.at(L.rainbl_p, i) + p.rainncv(i);
-    }
-  if (cfg.config_convection_scheme != "off")  // :305-310
-    for (int i = its; i <= ite; ++i) L.at(L.rainbl_p, i) = L.at(L.rainbl_p, i) + p.raincv(i);
-  for (int i = its; i <= ite; ++i) {  // :313-329 (sf_noah)
+    });
+  if (convection)  // :305-310
+    parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) { L.at(L.rainbl_p, i) = L.at(L.rainbl_p, i) + p.raincv(i); });
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // :313-329 (sf_noah)
     L.at(L.noahres_p, i) = p.noahres(i);
     L.at(L.potevp_p, i) = p.potevp(i);
     L.at(L.snopcx_p, i) = p.snopcx(i);
-  }
+  });
 }
 
 // mpas_atmphys_driver_seaice.F:336-460
-void seaice_to_MPAS(LsmPools& p, const LsmVars& v, Local& L, int its, int ite) {
+void seaice_to_MPAS(LsmPools& pools, const LsmVars& v, Local& loc, int its, int ite) {
+  const LsmArrays p = pools;
+  const LocalView L = loc.view();
   const int num_soils = L.ns;
-  auto sea = [&](const FView<const real>& f, int i) { return f(i - v.ims + 1); };  // (ims:ime, jms:jme) of the sfclayer
-  for (int i = its; i <= ite; ++i) {  // :387-405
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // :387-405
+    auto sea = [&](const FView<const real>& f, int ii) { return f(ii - v.ims + 1); };  // (ims:ime) of the sfclayer
     const real x = L.at(L.xice_p, i);
     if (x >= v.xice_threshold && x <= 1.) {
       p.cpm(i) = x * p.cpm(i) + (1. - x) * sea(v.cpm_sea, i);
@@ -290,8 +335,8 @@ void seaice_to_MPAS(LsmPools& p, const LsmVars& v, Local& L, int its, int ite) {
       L.at(L.sfc_albedo_p, i) = x * L.at(L.sfc_albedo_p, i) + (1. - x) * 0.08;
       L.at(L.sfc_emiss_p, i) = x * L.at(L.sfc_emiss_p, i) + (1. - x) * 0.98;
     }
-  }
-  for (int i = its; i <= ite; ++i) {  // :408-438
+  });
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // :408-438
     for (int n = 1; n <= num_soils; ++n) p.tslb(n, i) = L.at(L.tslb_p, i, n);
     p.z0(i) = L.at(L.z0_p, i);
     p.snow(i) = L.at(L.snow_p, i);
@@ -313,12 +358,12 @@ void seaice_to_MPAS(LsmPools& p, const LsmVars& v, Local& L, int its, int ite) {
     p.lh(i) = L.at(L.lh_p, i);
     p.sfc_albedo(i) = L.at(L.sfc_albedo_p, i);
     p.sfc_emiss(i) = L.at(L.sfc_emiss_p, i);
-  }
-  for (int i = its; i <= ite; ++i) {  // :440-456 (sf_noah)
+  });
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // :440-456 (sf_noah)
     p.noahres(i) = L.at(L.noahres_p, i);
     p.potevp(i) = L.at(L.potevp_p, i);
     p.snopcx(i) = L.at(L.snopcx_p, i);
-  }
+  });
 }
 
 }  // namespace
@@ -432,12 +477,13 @@ void driver_seaice(const LsmConfig& cfg, LsmPools& p, const LsmVars& v, int its,
 }
 
 // mpas_atmphys_sfc_diagnostics.F:27-121, config_lsm_scheme = 'sf_noah' (:63-79)
-void atmphys_sfc_diagnostics(const LsmConfig& cfg, LsmPools& p, int its, int ite) {
+void atmphys_sfc_diagnostics(const LsmConfig& cfg, LsmPools& pools, int its, int ite) {
   (void)its;
   (void)ite;
   if (cfg.config_lsm_scheme != "sf_noah")
     throw Error("atmphys_sfc_diagnostics: config_lsm_scheme = '" + cfg.config_lsm_scheme + "' is not ported");
-  for (int i = 1; i <= p.nCellsSolve; ++i) {
+  const LsmArrays p = pools;
+  parallel_for(1, p.nCellsSolve, [=] CPPMPAS_LAMBDA(int i) {
     const real rho = p.surface_pressure(i) / (pc::R_d * p.skintemp(i));
     if (p.cqs2(i) < 1.e-5) {
       p.q2(i) = p.qsfc(i);
@@ -450,7 +496,7 @@ void atmphys_sfc_diagnostics(const LsmConfig& cfg, LsmPools& p, int its, int ite
       p.t2m(i) = p.skintemp(i) - p.hfx(i) / (rho * pc::cp * p.chs2(i));
     }
     p.th2m(i) = p.t2m(i) * libm::pow(pc::P0 / p.surface_pressure(i), pc::rcp);
-  }
+  });
 }
 
 }  // namespace cppmpas::phys

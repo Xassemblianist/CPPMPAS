@@ -21,10 +21,9 @@
 
 namespace cppmpas::phys {
 
-struct GetTendPools {
+// GetTendArrays is the part a kernel captures (trivially copyable); GetTendPools adds the configs.
+struct GetTendArrays {
   int nCells = 0, nEdges = 0, nCellsSolve = 0, nEdgesSolve = 0, nVertLevels = 0;
-  // configs
-  std::string pbl_scheme, convection_scheme, microp_scheme, radt_lw_scheme, radt_sw_scheme;
   // mesh (tend_toEdges)
   FView<const int> cellsOnEdge;
   FView<const real> edgeNormalVectors, east, north;
@@ -40,6 +39,9 @@ struct GetTendPools {
   FView<real> rublten_Edge, rucuten_Edge;
   // tend
   FView<real> tend_scalars;
+};
+struct GetTendPools : GetTendArrays {
+  std::string pbl_scheme, convection_scheme, microp_scheme, radt_lw_scheme, radt_sw_scheme;
 };
 
 // TD:98-279. tend_ru_physics (nVertLevels, nEdges+1), tend_rtheta_physics and tend_rho_physics (nVertLevels, nCells+1)

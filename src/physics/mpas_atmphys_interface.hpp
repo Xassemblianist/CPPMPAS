@@ -18,23 +18,26 @@
 #include <string>
 #include <vector>
 
+#include "core/backend.hpp"
+#include "core/error.hpp"
 #include "core/field.hpp"
 #include "core/precision.hpp"
 
 namespace cppmpas::phys {
 
 // Kernel view of a PArray: trivially copyable, CPPMPAS_HD access with the PArray's 1-based (i, k) indexing.
-struct PView {
-  real* p = nullptr;
-  int ldi = 0;
-  CPPMPAS_HD real& operator()(int i, int k = 1) const { return p[static_cast<std::size_t>(k - 1) * ldi + (i - 1)]; }
-};
 struct PCView {
   const real* p = nullptr;
   int ldi = 0;
   CPPMPAS_HD const real& operator()(int i, int k = 1) const {
     return p[static_cast<std::size_t>(k - 1) * ldi + (i - 1)];
   }
+};
+struct PView {
+  real* p = nullptr;
+  int ldi = 0;
+  CPPMPAS_HD real& operator()(int i, int k = 1) const { return p[static_cast<std::size_t>(k - 1) * ldi + (i - 1)]; }
+  CPPMPAS_HD PCView cview() const { return PCView{p, ldi}; }
 };
 
 // A (ims:ime, kms:kme, jms:jme) or (ims:ime, jms:jme) array of mpas_atmphys_vars, 1-based, jms = jme = 1.
@@ -56,6 +59,20 @@ struct PArray {
   PCView cview() const { return PCView{a.data(), ldi}; }
 };
 
+// the arrays of PhysicsVars (one list: the struct, its kernel view and allocate_forall_physics)
+#define CPPMPAS_PHYSICS_VARS(X)                                                                                  \
+  X(psfc_p) X(ptop_p) X(u_p) X(v_p) X(fzm_p) X(fzp_p) X(zz_p) X(pres_p) X(pi_p) X(z_p) X(zmid_p) X(dz_p) X(t_p)   \
+  X(th_p) X(al_p) X(rho_p) X(rh_p) X(znu_p) X(w_p) X(pres2_p) X(t2_p) X(qv_p) X(qc_p) X(qr_p) X(qi_p) X(qs_p)     \
+  X(qg_p) X(psfc_hyd_p) X(psfc_hydd_p) X(pres_hyd_p) X(pres_hydd_p) X(pres2_hyd_p) X(pres2_hydd_p) X(znu_hyd_p)
+
+// Kernel view of PhysicsVars: the same member names, as PViews
+struct PhysicsVarsView {
+  int ime = 0, kme = 0;
+#define CPPMPAS_X(a) PView a;
+  CPPMPAS_PHYSICS_VARS(CPPMPAS_X)
+#undef CPPMPAS_X
+};
+
 // mpas_atmphys_vars' arrays shared by all physics drivers (allocate_forall_physics, PI:100-156)
 struct PhysicsVars {
   int ime = 0, kme = 0;  // ims = 1, kms = 1
@@ -66,12 +83,48 @@ struct PhysicsVars {
   PArray psfc_hyd_p, psfc_hydd_p, pres_hyd_p, pres_hydd_p, pres2_hyd_p, pres2_hydd_p, znu_hyd_p;
   // PI:86-158 for config_microp_scheme / config_pbl_scheme (mp_thompson_aerosols and bl_mynn are refused)
   void allocate_forall_physics(const std::string& microp_scheme, const std::string& pbl_scheme, int ime_, int kme_);
+  // the kernel view (the arrays stay where they are; a const PhysicsVars is read through it by convention)
+  PhysicsVarsView view() const {
+    PhysicsVarsView w;
+    w.ime = ime;
+    w.kme = kme;
+#define CPPMPAS_X(a) w.a = PView{const_cast<real*>(a.data()), a.ldi};
+    CPPMPAS_PHYSICS_VARS(CPPMPAS_X)
+#undef CPPMPAS_X
+    return w;
+  }
 };
 
+// A trivially copyable object (a scheme's tables) where kernels can read it: in managed memory in the CUDA build, in
+// host memory in the CPU build. get() is the address a kernel reads.
+template <class T> struct KernelCopy {
+  FStorage<T> s;
+  void set(const T& x) { s.assign(1, x); }
+  const T* get() const {
+    if (s.empty()) throw Error("KernelCopy: the object was not set");
+    return s.data();
+  }
+};
+
+// The address of x where kernels can read it: a managed copy in keep (CUDA build), x itself (CPU build)
+template <class T> const T* kernel_ptr(const T& x, KernelCopy<T>& keep) {
+#if defined(CPPMPAS_USE_CUDA)
+  keep.set(x);
+  return keep.get();
+#else
+  (void)keep;
+  return &x;
+#endif
+}
+
+// A 0-based work array of a driver (a (ims:ime) std::vector of MPAS's allocate_* before) where kernels can write it
+using WorkArray = FStorage<real>;
+using WorkArrayInt = FStorage<int>;
+
 // The pool arrays MPAS_to_physics reads or writes (Registry names; Fortran layout (k, iCell), 1-based).
-struct ToPhysicsPools {
+// ToPhysicsArrays is the part a kernel captures (trivially copyable); ToPhysicsPools adds the configs.
+struct ToPhysicsArrays {
   int nVertLevels = 0;
-  std::string microp_scheme, pbl_scheme;
   // mesh
   FView<const real> zgrid, zz;
   // state (time_lev)
@@ -82,6 +135,9 @@ struct ToPhysicsPools {
   FView<const real> exner, pressure_base, pressure_p, uReconstructZonal, uReconstructMeridional;
   // diag_physics
   FView<real> plrad;
+};
+struct ToPhysicsPools : ToPhysicsArrays {
+  std::string microp_scheme, pbl_scheme;
 };
 
 // PI:235-559 on cells its..ite (its = 1)

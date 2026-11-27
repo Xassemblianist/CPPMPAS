@@ -13,32 +13,51 @@ namespace cppmpas::phys {
 
 namespace {
 
-// The (ims:ime, jms:jme) arrays of one sfclayrev call (SL:953-981 passes the *_p set, SL:983-1012 the *_sea set)
+// The (ims:ime, jms:jme) arrays of one sfclayrev call (SL:953-981 passes the *_p set, SL:983-1012 the *_sea set),
+// work arrays a kernel can write (WorkArray), and their kernel view (the same names, as pointers)
+#define CPPMPAS_SFCSET(X)                                                                                           \
+  X(br) X(cpm) X(chs) X(chs2) X(cqs2) X(flhc) X(flqc) X(gz1oz0) X(hfx) X(qfx) X(qgh) X(qsfc) X(lh) X(mol) X(psim)    \
+  X(psih) X(regime) X(rmol) X(ust) X(ustm) X(wspd) X(znt) X(zol) X(q2) X(t2m) X(th2m) X(u10) X(v10) X(cd) X(cda)    \
+  X(ck) X(cka) X(fh) X(fm) X(mavail) X(tsk) X(xland)
+struct SfcSetView {
+#define CPPMPAS_X(a) real* a;
+  CPPMPAS_SFCSET(CPPMPAS_X)
+#undef CPPMPAS_X
+};
 struct SfcSet {
-  std::vector<real> br, cpm, chs, chs2, cqs2, flhc, flqc, gz1oz0, hfx, qfx, qgh, qsfc, lh, mol, psim, psih, regime,
-      rmol, ust, ustm, wspd, znt, zol, q2, t2m, th2m, u10, v10, cd, cda, ck, cka, fh, fm, mavail, tsk, xland;
+#define CPPMPAS_X(a) WorkArray a;
+  CPPMPAS_SFCSET(CPPMPAS_X)
+#undef CPPMPAS_X
   void allocate(int n) {
-    for (auto* a : {&br, &cpm, &chs, &chs2, &cqs2, &flhc, &flqc, &gz1oz0, &hfx, &qfx, &qgh, &qsfc, &lh, &mol, &psim,
-                    &psih, &regime, &rmol, &ust, &ustm, &wspd, &znt, &zol, &q2, &t2m, &th2m, &u10, &v10, &cd, &cda,
-                    &ck, &cka, &fh, &fm, &mavail, &tsk, &xland})
-      a->assign(n, real(0));
+#define CPPMPAS_X(a) a.assign(n, real(0));
+    CPPMPAS_SFCSET(CPPMPAS_X)
+#undef CPPMPAS_X
+  }
+  SfcSetView view() {
+    SfcSetView w{};
+#define CPPMPAS_X(a) w.a = a.data();
+    CPPMPAS_SFCSET(CPPMPAS_X)
+#undef CPPMPAS_X
+    return w;
   }
 };
 
 template <class T>
-sfclayrev::View2<T> v2(std::vector<real>& a) { return sfclayrev::View2<T>{a.data(), 0}; }
+sfclayrev::View2<T> v2(WorkArray& a) { return sfclayrev::View2<T>{a.data(), 0}; }
 template <class T>
-sfclayrev::View2<const T> c2(const std::vector<real>& a) { return sfclayrev::View2<const T>{a.data(), 0}; }
+sfclayrev::View2<const T> c2(const WorkArray& a) { return sfclayrev::View2<const T>{a.data(), 0}; }
+
+CPPMPAS_HD inline std::size_t I(int i) { return static_cast<std::size_t>(i - 1); }
 
 // SR:12-279 (sfclayrev) with sf_sfclayrev_pre_run (SP:66-100) and sf_sfclayrev_run (sf_sfclayrev.hpp) for the row
 // its..ite: the wrapper copies the arrays to its..ite columns (_hv) and level kts, calls the scheme and copies back;
 // isfflx = 1, shalwater_z0 = shalwater_flag = 0, isftcflx = 0, iz0tlnd = 0, scm_force_flux = 0 (SL:30-33,
 // mpas_atmphys_vars.F:604); ustm, ck, cka, cd and cda are present.
-void sfclayrev_call(const sfclayrev::SFClayRevTables<real>& tables, SfcSet& s, const std::vector<real>& u1d,
-                    const std::vector<real>& v1d, const std::vector<real>& t1d, const std::vector<real>& qv1d,
-                    const std::vector<real>& p1d, const std::vector<real>& dz1d, const std::vector<real>& psfc,
-                    const std::vector<real>& dx, const std::vector<real>& pblh, const std::vector<real>& lakemask,
-                    const std::vector<real>& water_depth, int its, int ite) {
+// tables: the tables where the kernel reads them (KernelCopy)
+void sfclayrev_call(const sfclayrev::SFClayRevTables<real>* tables, SfcSet& s, const WorkArray& u1d,
+                    const WorkArray& v1d, const WorkArray& t1d, const WorkArray& qv1d, const WorkArray& p1d,
+                    const WorkArray& dz1d, const WorkArray& psfc, const WorkArray& dx, const WorkArray& pblh,
+                    const WorkArray& lakemask, const WorkArray& water_depth, int its, int ite) {
   using namespace physics_constants;
   sfclayrev::SFClayRevKernel k{};
   k.u1d = c2<real>(u1d);
@@ -90,7 +109,7 @@ void sfclayrev_call(const sfclayrev::SFClayRevTables<real>& tables, SfcSet& s, c
   k.cka = v2<real>(s.cka);
   k.cd = v2<real>(s.cd);
   k.cda = v2<real>(s.cda);
-  k.tables = &tables;
+  k.tables = tables;
   k.isfflx = true;          // SL:30 isfflx = 1
   k.shalwater_z0 = false;   // shalwater_flag = 0 (mpas_atmphys_vars.F:604)
   k.isftcflx = 0;           // SL:31
@@ -113,7 +132,7 @@ void sfclayrev_call(const sfclayrev::SFClayRevTables<real>& tables, SfcSet& s, c
   k.p1000mb = P0;
   k.nx = ite - its + 1;   // sf_sfclayrev_run's i loops run over its..ite
   k.thcon_lanes = true;   // MPAS -O3: loop 30 vectorised (sf_sfclayrev.hpp)
-  for (int i = its; i <= ite; ++i) k(i - its, 0);  // the views start at column its = 1
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) { k(i - its, 0); });  // the views start at column its = 1
 }
 
 }  // namespace
@@ -127,30 +146,36 @@ void init_sfclayer(const std::string& sfclayer_scheme, sfclayrev::SFClayRevTable
   throw Error("init_sfclayer: config_sfclayer_scheme = '" + sfclayer_scheme + "' has no verified port");
 }
 
-void driver_sfclayer(int itimestep, const sfclayrev::SFClayRevTables<real>& tables, SfclayerPools& m,
-                     const PhysicsVars& v, int its, int ite, SfclayerSeaArrays* sea_out) {
+// One kernel per loop of SL (one thread per cell i).
+void driver_sfclayer(int itimestep, const sfclayrev::SFClayRevTables<real>& tables, SfclayerPools& mp,
+                     const PhysicsVars& vp, int its, int ite, SfclayerSeaArrays* sea_out) {
   using namespace physics_constants;
   (void)itimestep;  // initflag (SL:885-886) is used by sf_mynn only
-  if (m.sfclayer_scheme != "sf_monin_obukhov_rev")
-    throw Error("driver_sfclayer: config_sfclayer_scheme = '" + m.sfclayer_scheme + "' has no verified port");
+  if (mp.sfclayer_scheme != "sf_monin_obukhov_rev")
+    throw Error("driver_sfclayer: config_sfclayer_scheme = '" + mp.sfclayer_scheme + "' has no verified port");
   if (its != 1) throw Error("driver_sfclayer: its /= 1");
-  if (v.ime < ite) throw Error("driver_sfclayer: MPAS_to_physics has not filled its..ite");
+  if (vp.ime < ite) throw Error("driver_sfclayer: MPAS_to_physics has not filled its..ite");
+  const SfclayerArrays m = mp;
+  const PhysicsVarsView v = vp.view();
   const bool seaice = m.config_frac_seaice;
   const int n = ite;  // allocate_sfclayer: (ims:ime, jms:jme), ims = 1
   // allocate_sfclayer (SL:97-227)
-  SfcSet p, sea;
-  p.allocate(n);
-  if (seaice) sea.allocate(n);
-  std::vector<real> dx_p(n), hpbl_p(n), sst_p, xice_p, regime_hold, waterdepth_p(n), lakedepth_p(n), lakemask_p(n);
+  SfcSet ps, seas;
+  ps.allocate(n);
+  if (seaice) seas.allocate(n);
+  WorkArray dx_a(n), hpbl_a(n), sst_a, xice_a, regime_hold_a, waterdepth_a(n), lakedepth_a(n), lakemask_a(n);
   if (seaice) {
-    sst_p.assign(n, 0);
-    xice_p.assign(n, 0);
-    regime_hold.assign(n, 0);
+    sst_a.assign(n, 0);
+    xice_a.assign(n, 0);
+    regime_hold_a.assign(n, 0);
   }
-  auto I = [](int i) { return static_cast<std::size_t>(i - 1); };
+  const SfcSetView p = ps.view(), sea = seas.view();
+  real *dx_p = dx_a.data(), *hpbl_p = hpbl_a.data(), *sst_p = sst_a.data(), *xice_p = xice_a.data(),
+       *regime_hold = regime_hold_a.data(), *waterdepth_p = waterdepth_a.data(), *lakedepth_p = lakedepth_a.data(),
+       *lakemask_p = lakemask_a.data();
 
   // sfclayer_from_MPAS (SL:352-592)
-  for (int i = its; i <= ite; ++i) {  // SL:422-470
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // SL:422-470
     dx_p[I(i)] = m.config_len_disp / libm::pow(m.meshDensity(i), 0.25);
     hpbl_p[I(i)] = m.hpbl(i);
     p.mavail[I(i)] = m.mavail(i);
@@ -188,9 +213,9 @@ void driver_sfclayer(int itimestep, const sfclayrev::SFClayRevTables<real>& tabl
     p.ck[I(i)] = 0.;
     p.cka[I(i)] = 0.;
     p.ustm[I(i)] = m.ustm(i);
-  }
+  });
   if (seaice)  // SL:471-534
-    for (int i = its; i <= ite; ++i) {
+    parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {
       sst_p[I(i)] = m.sst(i);
       xice_p[I(i)] = m.xice(i);
       sea.mavail[I(i)] = m.mavail(i);
@@ -240,40 +265,48 @@ void driver_sfclayer(int itimestep, const sfclayrev::SFClayRevTables<real>& tabl
         sea.znt[I(i)] = p.znt[I(i)];
         sea.tsk[I(i)] = p.tsk[I(i)];
       }
-    }
-  for (int i = its; i <= ite; ++i) {  // SL:541-550 (sf_monin_obukhov_rev)
+    });
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // SL:541-550 (sf_monin_obukhov_rev)
     p.fh[I(i)] = m.fh(i);
     p.fm[I(i)] = m.fm(i);
     if (seaice) {
       sea.fh[I(i)] = m.fh(i);
       sea.fm[I(i)] = m.fm(i);
     }
-  }
-  for (int i = its; i <= ite; ++i) {  // SL:556-562
+  });
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // SL:556-562
     waterdepth_p[I(i)] = 0.;
     lakedepth_p[I(i)] = 0.;
     lakemask_p[I(i)] = 0.;
-  }
+  });
 
   // SL:883: dx = sqrt(maxval(areaCell)) is not an argument of sfclayrev; SL:885-886 initflag is sf_mynn's
 
   // SL:951-1013: sfclayrev; the inputs of level kts (SR:156-165, SP:89-96)
-  std::vector<real> u1d(n), v1d(n), t1d(n), qv1d(n), p1d(n), dz1d(n), psfc(n);
-  for (int i = its; i <= ite; ++i) {
-    u1d[I(i)] = v.u_p(i, 1);
-    v1d[I(i)] = v.v_p(i, 1);
-    t1d[I(i)] = v.t_p(i, 1);
-    qv1d[I(i)] = v.qv_p(i, 1);
-    p1d[I(i)] = v.pres_hyd_p(i, 1);
-    dz1d[I(i)] = v.dz_p(i, 1);
-    psfc[I(i)] = v.psfc_p(i);
+  WorkArray u1d_a(n), v1d_a(n), t1d_a(n), qv1d_a(n), p1d_a(n), dz1d_a(n), psfc_a(n);
+  {
+    real *u1d = u1d_a.data(), *v1d = v1d_a.data(), *t1d = t1d_a.data(), *qv1d = qv1d_a.data(), *p1d = p1d_a.data(),
+         *dz1d = dz1d_a.data(), *psfc = psfc_a.data();
+    parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {
+      u1d[I(i)] = v.u_p(i, 1);
+      v1d[I(i)] = v.v_p(i, 1);
+      t1d[I(i)] = v.t_p(i, 1);
+      qv1d[I(i)] = v.qv_p(i, 1);
+      p1d[I(i)] = v.pres_hyd_p(i, 1);
+      dz1d[I(i)] = v.dz_p(i, 1);
+      psfc[I(i)] = v.psfc_p(i);
+    });
   }
-  sfclayrev_call(tables, p, u1d, v1d, t1d, qv1d, p1d, dz1d, psfc, dx_p, hpbl_p, lakemask_p, waterdepth_p, its, ite);
+  KernelCopy<sfclayrev::SFClayRevTables<real>> tables_k;
+  const sfclayrev::SFClayRevTables<real>* tk = kernel_ptr(tables, tables_k);
+  sfclayrev_call(tk, ps, u1d_a, v1d_a, t1d_a, qv1d_a, p1d_a, dz1d_a, psfc_a, dx_a, hpbl_a, lakemask_a, waterdepth_a,
+                 its, ite);
   if (seaice)
-    sfclayrev_call(tables, sea, u1d, v1d, t1d, qv1d, p1d, dz1d, psfc, dx_p, hpbl_p, lakemask_p, waterdepth_p, its, ite);
+    sfclayrev_call(tk, seas, u1d_a, v1d_a, t1d_a, qv1d_a, p1d_a, dz1d_a, psfc_a, dx_a, hpbl_a, lakemask_a,
+                   waterdepth_a, its, ite);
 
   // sfclayer_to_MPAS (SL:595-796)
-  for (int i = its; i <= ite; ++i) {  // SL:675-714
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // SL:675-714
     m.br(i) = p.br[I(i)];
     m.cpm(i) = p.cpm[I(i)];
     m.chs(i) = p.chs[I(i)];
@@ -306,12 +339,12 @@ void driver_sfclayer(int itimestep, const sfclayrev::SFClayRevTables<real>& tabl
     m.ck(i) = p.ck[I(i)];
     m.cka(i) = p.cka[I(i)];
     m.ustm(i) = p.ustm[I(i)];
-  }
+  });
   if (seaice)  // SL:715-748
-    for (int i = its; i <= ite; ++i) {
+    parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {
       const real x = m.xice(i);
       if (x >= m.xice_threshold && x <= 1.) {
-        auto mix = [&](const std::vector<real>& a, const std::vector<real>& b) { return a[I(i)] * x + (1. - x) * b[I(i)]; };
+        auto mix = [&](const real* a, const real* b) { return a[I(i)] * x + (1. - x) * b[I(i)]; };
         m.br(i) = mix(p.br, sea.br);
         m.flhc(i) = mix(p.flhc, sea.flhc);
         m.flqc(i) = mix(p.flqc, sea.flqc);
@@ -335,29 +368,29 @@ void driver_sfclayer(int itimestep, const sfclayrev::SFClayRevTables<real>& tabl
         m.cka(i) = mix(p.cka, sea.cka);
         m.ustm(i) = mix(p.ustm, sea.ustm);
       }
-    }
-  for (int i = its; i <= ite; ++i) {  // SL:755-760
+    });
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // SL:755-760
     m.fh(i) = p.fh[I(i)];
     m.fm(i) = p.fm[I(i)];
-  }
+  });
   if (seaice)  // SL:761-772
-    for (int i = its; i <= ite; ++i) {
+    parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {
       const real x = m.xice(i);
       if (x >= m.xice_threshold && x <= 1.) {
         m.fh(i) = p.fh[I(i)] * x + (1. - x) * sea.fh[I(i)];
         m.fm(i) = p.fm[I(i)] * x + (1. - x) * sea.fm[I(i)];
       }
-    }
+    });
   if (seaice && sea_out) {  // the module arrays the sea-ice driver reads next
-    sea_out->chs = sea.chs;
-    sea_out->chs2 = sea.chs2;
-    sea_out->cqs2 = sea.cqs2;
-    sea_out->cpm = sea.cpm;
-    sea_out->hfx = sea.hfx;
-    sea_out->qfx = sea.qfx;
-    sea_out->qgh = sea.qgh;
-    sea_out->qsfc = sea.qsfc;
-    sea_out->lh = sea.lh;
+    sea_out->chs = seas.chs;
+    sea_out->chs2 = seas.chs2;
+    sea_out->cqs2 = seas.cqs2;
+    sea_out->cpm = seas.cpm;
+    sea_out->hfx = seas.hfx;
+    sea_out->qfx = seas.qfx;
+    sea_out->qgh = seas.qgh;
+    sea_out->qsfc = seas.qsfc;
+    sea_out->lh = seas.lh;
   }
 }
 

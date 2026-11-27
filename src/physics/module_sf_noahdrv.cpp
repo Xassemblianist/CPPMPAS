@@ -8,6 +8,7 @@
 
 #include "core/error.hpp"
 #include "physics/module_sf_noahdrv_kernels.hpp"
+#include "physics/mpas_atmphys_interface.hpp"
 
 namespace cppmpas::phys::noahdrv {
 
@@ -21,12 +22,12 @@ template <class T> noah::View3<T> v3(T* p, int ni) { return noah::View3<T>{p, 0,
 // ims..ime: CPPWRF's kernels pass them between KLsmPre, the SFLX kernel, KLsmGlacial and KLsmPost by point.
 struct LsmLocals {
   int ni, ns;
-  std::vector<real> lwdn, soldn, solnet, sfcprs, prcp, sfctmp, th2, q2k, q2sat, dqsdt2, ffrozp, shdfac, shmin, shmax,
+  WorkArray lwdn, soldn, solnet, sfcprs, prcp, sfctmp, th2, q2k, q2sat, dqsdt2, ffrozp, shdfac, shmin, shmax,
       albbrd, snoalb1, tbot, z0brd, emissi, embrd, cmc, t1, snowhk, sneqv, chk, snotime1, ribb, xlai, soilw, sncovr,
       albedok, cm, z0k, eta, sheat, eta_kin, fdown, ec, edir, ett, esnow, drip, dew, beta, etp, ssoil, flx1, flx2,
       flx3, snomlt, runoff1, runoff2, runoff3, rc, pc, rsmin, soilm, q1;
-  std::vector<real> stc, smc, swc, et, smav;
-  std::vector<int> vegtyp, soiltyp, slopetyp, ice, active;
+  WorkArray stc, smc, swc, et, smav;
+  WorkArrayInt vegtyp, soiltyp, slopetyp, ice, active;
   LsmLocals(int ni_, int ns_) : ni(ni_), ns(ns_) {
     for (auto* f : {&lwdn, &soldn, &solnet, &sfcprs, &prcp, &sfctmp, &th2, &q2k, &q2sat, &dqsdt2, &ffrozp, &shdfac,
                     &shmin, &shmax, &albbrd, &snoalb1, &tbot, &z0brd, &emissi, &embrd, &cmc, &t1, &snowhk, &sneqv,
@@ -37,12 +38,12 @@ struct LsmLocals {
     for (auto* f : {&stc, &smc, &swc, &et, &smav}) f->assign(std::size_t(ni) * ns, real(0));
     for (auto* f : {&vegtyp, &soiltyp, &slopetyp, &ice, &active}) f->assign(ni, 0);
   }
-  noah::View2<real> w(std::vector<real>& a) { return v2(a.data()); }
-  noah::View2<const real> r(std::vector<real>& a) { return v2<const real>(a.data()); }
-  noah::View3<real> w3(std::vector<real>& a) { return v3(a.data(), ni); }
-  noah::View3<const real> r3(std::vector<real>& a) { return v3<const real>(a.data(), ni); }
-  noah::View2<int> wi(std::vector<int>& a) { return v2(a.data()); }
-  noah::View2<const int> ri(std::vector<int>& a) { return v2<const int>(a.data()); }
+  noah::View2<real> w(WorkArray& a) { return v2(a.data()); }
+  noah::View2<const real> r(WorkArray& a) { return v2<const real>(a.data()); }
+  noah::View3<real> w3(WorkArray& a) { return v3(a.data(), ni); }
+  noah::View3<const real> r3(WorkArray& a) { return v3<const real>(a.data(), ni); }
+  noah::View2<int> wi(WorkArrayInt& a) { return v2(a.data()); }
+  noah::View2<const int> ri(WorkArrayInt& a) { return v2<const int>(a.data()); }
 };
 
 void refuse(bool bad, const char* what) {
@@ -127,7 +128,8 @@ void lsm(const noah::NoahTables& tables, const LsmArgs& a) {
   nk.nsoil = nsoil;
   for (int k = 0; k < nsoil; ++k) nk.sldpth[k] = a.dzs[k];  // SLDPTH(NS) = DZS(NS) (:740-742)
   nk.isurban = a.isurban;
-  nk.tables = &tables;
+  KernelCopy<noah::NoahTables> tables_k;
+  nk.tables = kernel_ptr(tables, tables_k);
   nk.rdlai2d = a.rdlai2d; nk.usemonalb = a.usemonalb; nk.opt_thcnd = a.opt_thcnd;
   nk.active = L.ri(L.active); nk.alb_out = L.w(L.albbrd);
 
@@ -173,14 +175,15 @@ void lsm(const noah::NoahTables& tables, const LsmArgs& a) {
   post.smcrel = v3(a.smcrel, ni);
   post.dt = a.dt; post.nsoil = nsoil;
 
-  // JLOOP / ILOOP (:744-1593): one point after the other
-  for (int i = a.its; i <= a.ite; ++i) {
-    const int ii = i - a.ims;
+  // JLOOP / ILOOP (:744-1593): one thread per point (the points are independent)
+  const int ims = a.ims;
+  parallel_for(a.its, a.ite, [=] CPPMPAS_LAMBDA(int i) {
+    const int ii = i - ims;
     pre(ii, 0);
     nk(ii, 0);   // returns at once unless ICE = 0 on land (active)
     gl(ii, 0);   // returns at once unless ICE = -1
     post(ii, 0); // returns at once on open water and sea ice (CYCLE ILOOP, :1073)
-  }
+  });
 }
 
 // module_sf_noah_seaice_drv.F:18-517 for the points its..ite
@@ -213,7 +216,8 @@ void seaice_noah(const SeaiceArgs& a) {
   si.thickness_opt = a.seaice_thickness_opt; si.thickness_default = a.seaice_thickness_default;
   si.dt = a.dt; si.xice_threshold = a.xice_threshold; si.nsoil = a.num_soil_layers; si.frpcpn = a.frpcpn;
   // SEAICE_JLOOP / SEAICE_ILOOP (:211-514)
-  for (int i = a.its; i <= a.ite; ++i) si(i - a.ims, 0);
+  const int ims = a.ims;
+  parallel_for(a.its, a.ite, [=] CPPMPAS_LAMBDA(int i) { si(i - ims, 0); });
 }
 
 }  // namespace cppmpas::phys::noahdrv

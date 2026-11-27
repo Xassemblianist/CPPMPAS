@@ -25,9 +25,9 @@
 
 namespace cppmpas::phys {
 
-struct SfclayerPools {
+// SfclayerArrays is the part a kernel captures (trivially copyable); SfclayerPools adds the scheme's name.
+struct SfclayerArrays {
   // configs
-  std::string sfclayer_scheme;
   bool config_frac_seaice = true, config_do_restart = false;
   real config_len_disp = 0;
   // mesh
@@ -42,6 +42,9 @@ struct SfclayerPools {
   // mpas_atmphys_vars
   real xice_threshold = 0;  // mpas_atmphys_manager.F:740-744
 };
+struct SfclayerPools : SfclayerArrays {
+  std::string sfclayer_scheme;
+};
 
 // init_sfclayer (SL:799-836) for 'sf_monin_obukhov_rev': sf_sfclayrev_init as the MPAS executable computes it
 void init_sfclayer(const std::string& sfclayer_scheme, sfclayrev::SFClayRevTables<real>& tables);
@@ -50,7 +53,7 @@ void init_sfclayer(const std::string& sfclayer_scheme, sfclayrev::SFClayRevTable
 // allocates them, deallocate_sfclayer leaves them, driver_seaice reads them and deallocate_seaice frees them
 // (mpas_atmphys_driver_seaice.F:152-160, 336-460). Filled only with config_frac_seaice (1-based: element i - 1).
 struct SfclayerSeaArrays {
-  std::vector<real> chs, chs2, cqs2, cpm, hfx, qfx, qgh, qsfc, lh;
+  WorkArray chs, chs2, cqs2, cpm, hfx, qfx, qgh, qsfc, lh;
 };
 
 // SL:839-1088 on cells its..ite (its = 1). v: MPAS_to_physics' arrays (pres_hyd_p, psfc_p, t_p, u_p, v_p, qv_p, dz_p).

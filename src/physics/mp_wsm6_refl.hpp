@@ -38,11 +38,11 @@ inline Wsm6Radar wsm6_radar_init(double pi, double denr, double dens, double den
 inline constexpr int kReflMaxLevels = 128;
 
 // MW6:2275-2444 on the column qv1d ... p1d (1..kte), dBZ out (1..kte)
-inline void refl10cm_wsm6(const Wsm6Radar& w, const double* qv1d, const double* qr1d, const double* qs1d,
+CPPMPAS_HD inline void refl10cm_wsm6(const Wsm6Radar& w, const double* qv1d, const double* qr1d, const double* qs1d,
                           const double* qg1d, const double* t1d, const double* p1d, double* dBZ, int kte) {
   using radar::detail::c_max;
   using radar::detail::c_min;
-  if (kte < 1 || kte > kReflMaxLevels) throw Error("refl10cm_wsm6: nVertLevels outside 1..128");
+  if (kte < 1 || kte > kReflMaxLevels) ::cppmpas::kernel_fail("refl10cm_wsm6: nVertLevels outside 1..128");
   const radar::RadarTables& t = w.t;
   const int nz = kte;
   constexpr double R = 287.;
