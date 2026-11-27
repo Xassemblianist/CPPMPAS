@@ -18,7 +18,7 @@ on:
       labels: {description: "short (tests without the label long), long, or all", type: choice,
                options: [all, short, long], default: all}
   push:
-    branches: [main]
+    branches: [main, vsc/ci]
 permissions:
   contents: read
 concurrency:
@@ -33,6 +33,8 @@ env:
   GH_TOKEN: ${{ github.token }}
 jobs:
   build:
+    # a push runs the suite only on main
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     outputs:
@@ -192,7 +194,7 @@ jobs:
 
   summary:
     needs: [build, test]
-    if: always()
+    if: always() && needs.build.result != 'skipped'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
