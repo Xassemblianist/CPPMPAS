@@ -18,7 +18,7 @@ on:
       labels: {description: "short (tests without the label long), long, or all", type: choice,
                options: [all, short, long], default: all}
   push:
-    branches: [main, vsc/ci]
+    branches: [main]
 permissions:
   contents: read
 concurrency:

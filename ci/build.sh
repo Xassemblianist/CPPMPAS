@@ -21,7 +21,7 @@ cmake -S /w/src -B /w/build -DCMAKE_BUILD_TYPE=Release \
 case $mode in
 configure) ;;
 build)
-  cmake --build /w/build -j "$(nproc)" > /w/out/build.log 2>&1 || { grep -m40 -E 'error|Error' /w/out/build.log; exit 4; }
+  cmake --build /w/build -j "$(getconf _NPROCESSORS_ONLN)" > /w/out/build.log 2>&1 || { grep -m40 -E 'error|Error' /w/out/build.log; exit 4; }
   (cd /w/build && ctest --show-only=json-v1 > /w/out/tests.json)  # now with the test executables' paths
   (cd /w/mvec && sha256sum --quiet -c SHA256SUMS)
   mkdir -p /w/build/ci

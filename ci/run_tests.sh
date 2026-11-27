@@ -15,12 +15,12 @@ for f in fma avx2; do
   [[ " $flags " == *" $f "* ]] || { echo "this runner's CPU has no $f" >&2; exit 5; }
 done
 grep -m1 'model name' /proc/cpuinfo | tee /w/out/cpu.txt
-nproc | tee -a /w/out/cpu.txt
+getconf _NPROCESSORS_ONLN | tee -a /w/out/cpu.txt
 extra=()
 [ "$kind" = gpu ] && extra=(-FA '.*')
 cd /w/build
 start=$(date +%s)
-LD_PRELOAD=/w/build/ci/libmvec_intel.so ctest -j "$(nproc)" --tests-from-file "$list" "${extra[@]}" \
+LD_PRELOAD=/w/build/ci/libmvec_intel.so ctest -j "$(getconf _NPROCESSORS_ONLN)" --tests-from-file "$list" "${extra[@]}" \
   --output-on-failure --output-junit /w/out/junit.xml > /w/out/ctest.log 2>&1
 rc=$?
 echo "ctest exit status $rc, $(( $(date +%s) - start )) s" | tee -a /w/out/ctest.log
