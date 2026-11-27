@@ -3,7 +3,9 @@
 ! variables physics_run_init sets (one rank: its..ite = 1..nCells, kts..kte = 1..nVertLevels), calls
 ! driver_microphysics nsteps times and writes the pool arrays it changed after every step to out.bin.
 ! Both files are native-endian streams (this file is compiled without -fconvert=big-endian). Layout:
-! tests/wsm6_column/columns.py.
+! tests/wsm6_column/columns.py. A third argument 'l_diags' sets l_diags = .true. (the step before a diagnostics
+! alarm: compute_radar_reflectivity and compute_relhum run) and appends refl10cm, refl10cm_max, refl10cm_1km,
+! refl10cm_1km_max and relhum to every step's output.
 program wsm6_column_ref
   use mpas_kind_types
   use mpas_pool_routines
@@ -19,13 +21,17 @@ program wsm6_column_ref
     surface_pressure(:), rainprod(:,:), evapprod(:,:), re_cloud(:,:), re_ice(:,:), re_snow(:,:), rainnc(:), snownc(:), &
     graupelnc(:), rainncv(:), snowncv(:), graupelncv(:), sr(:), precipw(:), tend_sfc_pressure(:), rt_diabatic_tend(:,:), &
     dtheta_dt_mp(:,:), refl10cm(:,:), rthmpten(:,:), rqvmpten(:,:), rqcmpten(:,:), rqrmpten(:,:), rqimpten(:,:), &
-    rqsmpten(:,:), rqgmpten(:,:)
+    rqsmpten(:,:), rqgmpten(:,:), refl10cm_max(:), refl10cm_1km(:), refl10cm_1km_max(:), relhum(:,:)
+  logical :: diags
+  character(len=16) :: a3
   integer, allocatable, target :: i_rainnc(:)
   type(mpas_pool_type) :: configs, mesh, state, diag, diag_physics, tend_physics, tend
   character(len=512) :: fin, fout
 
   call get_command_argument(1, fin)
   call get_command_argument(2, fout)
+  call get_command_argument(3, a3)
+  diags = trim(a3) == 'l_diags'
   open(10, file=trim(fin), access='stream', form='unformatted', status='old')
   read(10) hdr
   nC = hdr(1); nV = hdr(2); nsteps = hdr(3); mp_top = hdr(4); nscal = hdr(5)
@@ -35,7 +41,8 @@ program wsm6_column_ref
     surface_pressure(nC), rainprod(nV,nC), evapprod(nV,nC), re_cloud(nV,nC), re_ice(nV,nC), re_snow(nV,nC), &
     rainnc(nC), snownc(nC), graupelnc(nC), rainncv(nC), snowncv(nC), graupelncv(nC), sr(nC), precipw(nC), &
     tend_sfc_pressure(nC), rt_diabatic_tend(nV,nC), dtheta_dt_mp(nV,nC), refl10cm(nV,nC), rthmpten(nV,nC), &
-    rqvmpten(nV,nC), rqcmpten(nV,nC), rqrmpten(nV,nC), rqimpten(nV,nC), rqsmpten(nV,nC), rqgmpten(nV,nC), i_rainnc(nC))
+    rqvmpten(nV,nC), rqcmpten(nV,nC), rqrmpten(nV,nC), rqimpten(nV,nC), rqsmpten(nV,nC), rqgmpten(nV,nC), i_rainnc(nC), &
+    refl10cm_max(nC), refl10cm_1km(nC), refl10cm_1km_max(nC), relhum(nV,nC))
   read(10) zgrid, zz, rho_zz, theta_m, w, scalars, exner, pressure_base, pressure_p, exner_base, rtheta_base, &
     rtheta_p, surface_pressure, rainprod, evapprod, re_cloud, re_ice, re_snow, rainnc, snownc, graupelnc
   close(10)
@@ -44,6 +51,8 @@ program wsm6_column_ref
   rt_diabatic_tend = -999.; dtheta_dt_mp = -999.; refl10cm = 0.; i_rainnc = 0
   rthmpten = -999.; rqvmpten = -999.; rqcmpten = -999.; rqrmpten = -999.; rqimpten = -999.; rqsmpten = -999.
   rqgmpten = -999.
+  ! diagnostics: overwritten by l_diags except the running maximum refl10cm_1km_max (its value since the last reset)
+  refl10cm = -999.; refl10cm_max = -999.; refl10cm_1km = -999.; refl10cm_1km_max = 3.; relhum = -999.
 
   call reg_r2('zgrid', zgrid); call reg_r2('zz', zz); call reg_r2('rho_zz', rho_zz); call reg_r2('theta_m', theta_m)
   call reg_r2('w', w); call reg_r3('scalars', scalars); call reg_r2('exner', exner)
@@ -59,6 +68,8 @@ program wsm6_column_ref
   call reg_r2('rthmpten', rthmpten); call reg_r2('rqvmpten', rqvmpten); call reg_r2('rqcmpten', rqcmpten)
   call reg_r2('rqrmpten', rqrmpten); call reg_r2('rqimpten', rqimpten); call reg_r2('rqsmpten', rqsmpten)
   call reg_r2('rqgmpten', rqgmpten); call reg_i0('mp_top_level', mp_top)
+  call reg_r1('refl10cm_max', refl10cm_max); call reg_r1('refl10cm_1km', refl10cm_1km)
+  call reg_r1('refl10cm_1km_max', refl10cm_1km_max); call reg_r2('relhum', relhum)
   call reg_i0('index_qv', iqv); call reg_i0('index_qc', iqc); call reg_i0('index_qr', iqr)
   call reg_i0('index_qi', iqi); call reg_i0('index_qs', iqs); call reg_i0('index_qg', iqg)
 
@@ -67,7 +78,7 @@ program wsm6_column_ref
   ids = ims; ide = ime + 1; jds = jms; jde = jme + 1; kds = kms; kde = kme
   its = ims; ite = ime; jts = jms; jte = jme; kts = kms; kte = kme - 1
   dt_dyn = dt; dt_microp = dt_dyn; n_microp = 1
-  l_diags = .false.; l_acrain = .false.
+  l_diags = diags; l_acrain = .false.
   has_reqc = 0; has_reqi = 0; has_reqs = 0
   ! init_microphysics (DRV:305-307)
   call init_wsm6()
@@ -78,6 +89,7 @@ program wsm6_column_ref
     write(11) scalars, theta_m, rtheta_p, exner, pressure_p, surface_pressure, tend_sfc_pressure, rt_diabatic_tend, &
       dtheta_dt_mp, precipw, rainnc, rainncv, snownc, snowncv, graupelnc, graupelncv, sr, rainprod, evapprod, &
       re_cloud, re_ice, re_snow, rthmpten, rqvmpten, rqcmpten, rqrmpten, rqimpten, rqsmpten, rqgmpten
+    if (diags) write(11) refl10cm, refl10cm_max, refl10cm_1km, refl10cm_1km_max, relhum
   end do
   close(11)
 contains

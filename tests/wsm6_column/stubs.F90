@@ -175,3 +175,17 @@ contains
     p => cfg_do_restart
   end subroutine
 end module mpas_pool_routines
+
+! for mpas_atmphys_functions.F (RSLF / RSIF of compute_relhum) and compute_radar_reflectivity's Kessler branch
+module mpas_derived_types
+  integer, parameter :: MPAS_LOG_ERR = 3
+end module mpas_derived_types
+
+module mpas_atmphys_utilities
+contains
+  subroutine physics_error_fatal(msg)
+    character(len=*), intent(in) :: msg
+    print *, trim(msg)
+    stop 1
+  end subroutine
+end module mpas_atmphys_utilities

@@ -21,10 +21,33 @@ namespace {
 inline real fmax0(real x) { return x > 0.0 ? x : 0.0; }  // max(0._RKIND, x)
 }  // namespace
 
+real rslf(real p, real t) {  // mpas_atmphys_functions.F:156-186
+  constexpr real C0 = .611583699E03, C1 = .444606896E02, C2 = .143177157E01, C3 = .264224321E-1,
+                 C4 = .299291081E-3, C5 = .203154182E-5, C6 = .702620698E-8, C7 = .379534310E-11,
+                 C8 = -.321582393E-13;
+  const real xt = t - 273.16;
+  const real X = xt > -80. ? xt : -80.;
+  real ESL = C0 + X * (C1 + X * (C2 + X * (C3 + X * (C4 + X * (C5 + X * (C6 + X * (C7 + X * C8)))))));
+  const real pc = p * 0.15;
+  ESL = ESL < pc ? ESL : pc;
+  return .622 * ESL / (p - ESL);
+}
+
+real rsif(real p, real t) {  // mpas_atmphys_functions.F:191-217
+  constexpr real C0 = .609868993E03, C1 = .499320233E02, C2 = .184672631E01, C3 = .402737184E-1,
+                 C4 = .565392987E-3, C5 = .521693933E-5, C6 = .307839583E-7, C7 = .105785160E-9,
+                 C8 = .161444444E-12;
+  const real xt = t - 273.16;
+  const real X = xt > -80. ? xt : -80.;
+  real ESI = C0 + X * (C1 + X * (C2 + X * (C3 + X * (C4 + X * (C5 + X * (C6 + X * (C7 + X * C8)))))));
+  const real pc = p * 0.15;
+  ESI = ESI < pc ? ESI : pc;
+  return .622 * ESI / (p - ESI);
+}
+
 void driver_microphysics_wsm6(const wsm6::Wsm6Params<real>& params, MicrophysicsPools& m, int its, int ite) {
   using namespace physics_constants;
-  if (m.l_diags)  // DRV:466-482
-    throw Error("driver_microphysics: l_diags (compute_radar_reflectivity, compute_relhum) has no verified port");
+  if (m.l_diags && !m.radar) throw Error("driver_microphysics: l_diags without the WSM6 radar tables");
   if (m.l_acrain) throw Error("driver_microphysics: l_acrain (config_bucket_update) has no verified port");
   if (its != 1) throw Error("driver_microphysics: its /= 1");
   if (!m.index_qv || !m.index_qc || !m.index_qr || !m.index_qi || !m.index_qs || !m.index_qg)
@@ -127,6 +150,53 @@ void driver_microphysics_wsm6(const wsm6::Wsm6Params<real>& params, Microphysics
     a.graupelncv = graupelncv_p.data();
     a.sr = sr_p.data();
     module_mp_wsm6::wsm6(params, m.dt_microp, m.has_reqc, m.has_reqi, m.has_reqs, its, ite, kts, kte, a);
+  }
+
+  if (m.l_diags) {  // DRV:467-482: mp_wsm6 computes the radar reflectivity, then the relative humidity
+    // compute_radar_reflectivity, mp_wsm6 (DRV:690-730)
+    std::vector<double> p1d(kte), t1d(kte), qv1d(kte), qr1d(kte), qs1d(kte), qg1d(kte), dBZ1d(kte), zp(kte);
+    for (int i = its; i <= ite; ++i) {
+      for (int k = kts; k <= kte; ++k) {
+        p1d[k - 1] = P(pres_p, i, k);
+        t1d[k - 1] = P(th_p, i, k) * P(pi_p, i, k);
+        qv1d[k - 1] = P(qv_p, i, k);
+        qr1d[k - 1] = P(qr_p, i, k);
+        qs1d[k - 1] = P(qs_p, i, k);
+        qg1d[k - 1] = P(qg_p, i, k);
+        dBZ1d[k - 1] = -35.;
+        zp[k - 1] = P(z_p, i, k) - P(z_p, i, 1) + 0.5 * P(dz_p, i, k);  // height AGL
+      }
+      wsm6::refl10cm_wsm6(*m.radar, qv1d.data(), qr1d.data(), qs1d.data(), qg1d.data(), t1d.data(), p1d.data(),
+                          dBZ1d.data(), kte);
+      int kp = 1;
+      for (int k = kts; k <= kte; ++k) {
+        dBZ1d[k - 1] = -35. > dBZ1d[k - 1] ? -35. : dBZ1d[k - 1];  // max(-35._RKIND, dBZ1d(k))
+        m.refl10cm(k, i) = dBZ1d[k - 1];
+        if (zp[k - 1] < 1000.) kp = k;
+      }
+      real mx = dBZ1d[0];  // maxval(dBZ1d(:))
+      for (int k = kts + 1; k <= kte; ++k)
+        if (dBZ1d[k - 1] > mx) mx = dBZ1d[k - 1];
+      m.refl10cm_max(i) = mx;
+      const real w1 = (zp[kp] - 1000.) / (zp[kp] - zp[kp - 1]);
+      const real w2 = 1.0 - w1;
+      m.refl10cm_1km(i) = w1 * dBZ1d[kp - 1] + w2 * dBZ1d[kp];
+      m.refl10cm_1km_max(i) = m.refl10cm_1km_max(i) > m.refl10cm_1km(i) ? m.refl10cm_1km_max(i) : m.refl10cm_1km(i);
+    }
+    // compute_relhum (DRV:798-850)
+    for (int k = kts; k <= kte; ++k)
+      for (int i = its; i <= ite; ++i) m.relhum(k, i) = 0.;
+    for (int i = its; i <= ite; ++i)
+      for (int k = kts; k <= kte; ++k) {
+        const real p1 = P(pres_p, i, k);
+        const real t1 = P(th_p, i, k) * P(pi_p, i, k);
+        const real tempc = t1 - 273.16;
+        real qvs1 = rslf(p1, t1);
+        if (tempc <= 0.) qvs1 = rsif(p1, t1);
+        const real qv1 = P(qv_p, i, k);
+        m.relhum(k, i) = qv1 / qvs1;
+        m.relhum(k, i) = m.relhum(k, i) * 100.;
+      }
   }
 
   // precip_to_MPAS (DRV:567-653), l_acrain = .false.

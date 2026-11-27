@@ -9,11 +9,15 @@
 // driver_microphysics_wsm6 = DRV:317-500 with config_microp_scheme = 'mp_wsm6': allocate_microphysics
 // (DRV:98-176), precip_from_MPAS (DRV:503-564), microphysics_from_MPAS (PI:598-823), wsm6 (DRV:437-461, then
 // physics/module_mp_wsm6.hpp), precip_to_MPAS (DRV:567-653), microphysics_to_MPAS (PI:826-1138).
-// Refused: l_diags (compute_radar_reflectivity and compute_relhum, DRV:467-482, at diagnostic output times),
-// l_acrain (config_bucket_update), has_reqc / has_reqi / has_reqs = 1 (config_microp_re).
+// With l_diags (the step before a diagnostics alarm, physics_timetracker MG:365-372), after wsm6: 
+// compute_radar_reflectivity (DRV:656-795, mp_wsm6: refl10cm_wsm6 of physics/mp_wsm6_refl.hpp) and compute_relhum
+// (DRV:798-850, with RSLF / RSIF of physics/mpas_atmphys_functions.F:156-217, the functions the reference
+// executable calls: __mpas_atmphys_functions_MOD_rslf / _rsif from driver_microphysics), DRV:467-482.
+// Refused: l_acrain (config_bucket_update), has_reqc / has_reqi / has_reqs = 1 (config_microp_re).
 #include "core/field.hpp"
 #include "core/precision.hpp"
 #include "physics/mp_wsm6.hpp"
+#include "physics/mp_wsm6_refl.hpp"
 
 namespace cppmpas::phys {
 
@@ -42,7 +46,17 @@ struct MicrophysicsPools {
   real dt_dyn = 0, dt_microp = 0;
   int has_reqc = 0, has_reqi = 0, has_reqs = 0;
   bool l_diags = false, l_acrain = false;
+  // with l_diags: diag relhum (nVertLevels, nCells+1), diag_physics refl10cm (nVertLevels, nCells+1),
+  // refl10cm_max, refl10cm_1km, refl10cm_1km_max (nCells+1), and mp_wsm6_init's radar tables
+  FView<real> relhum, refl10cm, refl10cm_max, refl10cm_1km, refl10cm_1km_max;
+  const wsm6::Wsm6Radar* radar = nullptr;
 };
+
+// physics/mpas_atmphys_functions.F:156-186 RSLF and :188-218 RSIF (liquid / ice saturation mixing ratio); the
+// object code's MAX(-80., T-273.16) is maxsd (x > -80 ? x : -80) and MIN(ESL, P*0.15) minsd (ESL < P*0.15 ? ESL :
+// P*0.15), no FMA
+real rslf(real p, real t);
+real rsif(real p, real t);
 
 // DRV:317-500 for mp_wsm6 on cells its..ite. params: module_mp_wsm6::mpas_wsm6_params() (init_microphysics).
 void driver_microphysics_wsm6(const wsm6::Wsm6Params<real>& params, MicrophysicsPools& m, int its, int ite);
