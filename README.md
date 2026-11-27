@@ -10,7 +10,13 @@ checks against WRF, all at tolerance 0). CPPMPAS applies the same method to MPAS
 
 ## Status
 
-On `main` (`3ca63da`), the CPU and CUDA FP64 builds match MPAS-Atmosphere 8.4.2 at tolerance 0.
+On `main` (`3ca63da`), the CPU and CUDA FP64 builds are bit-identical (tolerance 0) to MPAS-Atmosphere 8.4.2 built
+with gfortran 14.2, `-O3 -fdefault-real-8`, on glibc 2.41, run on one rank with the Intel `libmvec` preload.
+
+The preload is part of the reference. Unmodified MPAS itself gives different results on Intel and AMD CPUs, because
+glibc's vector `log` uses `rcpps`, whose result differs between the two vendors. The RG references
+`mpas842-dbl-rg-001` and `-002` (AMD) differ from `-003` (Intel). With the preload, Intel and AMD runs are identical
+(`rg-004` and `rg-006`). See [docs/REFERENCES.md](docs/REFERENCES.md).
 
 - **RG24.** The 24 h real-data forecast on the x1.10242 mesh uses the full `mesoscale_reference` suite. Both
   builds match `mpas842-dbl-rg24-001` bit for bit across all 19 history, diagnostics and restart files and
