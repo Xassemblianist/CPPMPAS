@@ -19,6 +19,19 @@
 // config_microp_re = true (has_reqc / has_reqi / has_reqs), 'mp_thompson_aerosols' (aer_opt = 3),
 // config_radt_cld_overlap = 'exponential' (a libmvec lane, module_ra_rrtmg.hpp).
 //
+// One source for the CPU and the GPU (core/backend.hpp): each loop of the drivers over the columns its..ite is a
+// parallel_for with one thread per column, MPAS's statements for that column in MPAS's order inside (the loops of
+// MPAS's k, i nests are independent per column); the CUDA build runs them as kernels on managed memory
+// (FArrays of the pools, PArrays of mpas_atmphys_vars and RadiationVars, RrtmgTables), the CPU build as loops.
+// Scalars (radconst, the ozone months and factors, the alarms) stay on the host.
+// vinterp_ozn's multi-column call of the LW o3vmr diagnostic (RL:494-500) runs column by column (vinterp_ozn_column):
+// the same values when OZONE_PLEV's pressures are non-decreasing and every column's pres_hyd_p is non-increasing
+// upwards (driver_radiation_lw; otherwise a hard error).
+//
+// The radiation-replay dump (tests/radiation_replay): with CPPMPAS_RADIATION_DUMP=<dir> in the environment, every
+// driver_radiation_lw writes the radiation step's inputs and outputs to <dir>/radiation.<xtime in s>.bin
+// (write_radiation_dump; nothing is written without the variable).
+//
 // Reference object code (bin/atmosphere_model, sha256 524a1cf4...): no FMA, no ymm register. radconst calls asin,
 // sin and sincos (cos(rjul) / sin(rjul) and cos(2rjul) / sin(2rjul) as two sincos); driver_cloudiness (with
 // calc_cldfraction and cloudiness_from_MPAS inlined) calls exp three times and pow, scalar, and one _ZGVbN2vv_pow:
@@ -29,6 +42,7 @@
 #include <vector>
 
 #include "core/field.hpp"
+#include "core/backend.hpp"
 #include "core/precision.hpp"
 #include "physics/module_ra_rrtmg.hpp"
 #include "physics/mpas_atmphys_interface.hpp"
@@ -58,7 +72,8 @@ struct RadiationPools {
 
 // The radiation variables of mpas_atmphys_vars and mpas_atmphys_manager, and the module arrays the cloudiness and
 // radiation drivers share within a physics step (allocated by allocate_cloudiness / allocate_radiation_sw / _lw,
-// freed after the step: mpas_atmphys_driver.F:202-246)
+// freed after the step: mpas_atmphys_driver.F:202-246). The arrays are PArrays, (i) arrays as (n, 1): FStorage, CUDA
+// managed memory in the CUDA build, where the drivers' loops are kernels.
 struct RadiationVars {
   int year = 0, julday = 0;
   real gmt = 0, curr_julday = 0;       // MG:457-461 (gmt from the start time only), MG:203-206
@@ -69,22 +84,27 @@ struct RadiationVars {
   bool sw_ran = false;                 // xlat_p set by this step's radiation_sw_from_MPAS
   // cloudiness (CL:64-75)
   PArray cldfrac_p, qvrad_p, qcrad_p, qirad_p, qsrad_p;
-  std::vector<real> xland_cl;  // CL's xland_p (the same module array as the radiation drivers')
+  PArray xland_cl;  // CL's xland_p (the same module array as the radiation drivers')
   // radiation (RS:106-235, RL:106-187)
   PArray f_ice, f_rain, rthratenlw_p, rthratensw_p, recloud_p, reice_p, resnow_p, rrecloud_p, rreice_p, rresnow_p,
       o3clim_p;
-  std::vector<real> pin_p, xlat_p, xlon_p, sfc_albedo_p, sfc_emiss_p, snow_p, tsk_p, xice_p, xland_p;
-  std::vector<real> glw_p, lwcf_p, lwdnb_p, lwdnbc_p, lwdnt_p, lwdntc_p, lwupb_p, lwupbc_p, lwupt_p, lwuptc_p,
-      olrtoa_p;
-  std::vector<real> coszr_p, gsw_p, swcf_p, swdnb_p, swdnbc_p, swdnt_p, swdntc_p, swupb_p, swupbc_p, swupt_p,
-      swuptc_p, swddir_p, swddni_p, swddif_p;
+  PArray pin_p, xlat_p, xlon_p, sfc_albedo_p, sfc_emiss_p, snow_p, tsk_p, xice_p, xland_p;
+  PArray glw_p, lwcf_p, lwdnb_p, lwdnbc_p, lwdnt_p, lwdntc_p, lwupb_p, lwupbc_p, lwupt_p, lwuptc_p, olrtoa_p;
+  PArray coszr_p, gsw_p, swcf_p, swdnb_p, swdnbc_p, swdnt_p, swdntc_p, swupb_p, swupbc_p, swupt_p, swuptc_p,
+      swddir_p, swddni_p, swddif_p;
 };
 
 // RRTMG tables after rrtmg_initlw_forMPAS / rrtmg_initsw_forMPAS (mpas_atmphys_rrtmg_lwinit.F:43-58,
-// _swinit.F): memory images of the tables in CPPWRF's layout (physics/rrtmg/rrtmg_*_tables.hpp)
+// _swinit.F): memory images of the tables in CPPWRF's layout (physics/rrtmg/rrtmg_*_tables.hpp), with the wrappers'
+// DATA statements (module_ra_rrtmg.hpp RrtmgMpasConsts). FStorage: managed memory in the CUDA build, read by the
+// kernels in place.
 struct RrtmgTables {
-  rrtmg::RrtmgLwTables lw;
-  rrtmg::RrtmgSwTables sw;
+  FStorage<rrtmg::RrtmgLwTables> lw_store;
+  FStorage<rrtmg::RrtmgSwTables> sw_store;
+  FStorage<RrtmgMpasConsts> k_store;
+  const rrtmg::RrtmgLwTables* lw() const { return lw_store.data(); }
+  const rrtmg::RrtmgSwTables* sw() const { return sw_store.data(); }
+  const RrtmgMpasConsts* consts() const { return k_store.data(); }
 };
 void init_radiation_rrtmg(const std::string& lw_tables_bin, const std::string& sw_tables_bin, RrtmgTables& t);
 
@@ -99,6 +119,8 @@ void radconst(real& declin, real& solcon, real julian, real degrad, real dpd);
 void init_o3climatology(const std::string& dir, RadiationPools& m, int nCells);
 // OZ:228-325 on cells 1..nCellsSolve
 void o3climatology_from_MPAS(real julian, RadiationPools& m, int nCellsSolve);
+// OZ:279-312 with getfactors (CS:2528-2611): the months nm, np and the factors fact1, fact2 of julian
+void o3climatology_months(real julian, int nMonths, int& nm, int& np, real& fact1, real& fact2);
 
 // CL:175-234 (with allocate_cloudiness, CL:64-75)
 void driver_cloudiness(RadiationPools& m, const PhysicsVars& v, RadiationVars& r, int its, int ite);
@@ -108,5 +130,12 @@ void driver_radiation_sw(int itimestep, RadiationPools& m, const PhysicsVars& v,
 // RL:804-960 (with allocate_radiation_lw, RL:103-206)
 void driver_radiation_lw(real xtime_s, RadiationPools& m, const PhysicsVars& v, RadiationVars& r,
                          const RrtmgTables& t, int its, int ite);
+
+// The radiation-replay dump of one radiation step (tests/radiation_replay/test_radiation_replay.cpp reads it): records
+// {char name[32]; int32 kind (0: double, 1: int32, 2: char); int64 count; data}. Inputs: the configuration, the
+// times, the cells' pool inputs, OZONE_PLEV's pin and the two months of ozmixm the step reads, the mpas_atmphys_vars
+// arrays radiation reads; outputs: every pool array radiation writes (o3clim included), cells 1..ite.
+void write_radiation_dump(const std::string& path, real xtime_s, const RadiationPools& m, const PhysicsVars& v,
+                          const RadiationVars& r, int ite);
 
 }  // namespace cppmpas::phys
