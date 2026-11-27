@@ -104,6 +104,7 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix: ${{ fromJSON(needs.build.outputs.data) }}
     name: data ${{ matrix.item }}
     steps:
@@ -125,6 +126,8 @@ jobs:
     timeout-minutes: ${{ matrix.timeout_min }}
     strategy:
       fail-fast: false
+      # the account's runners are shared: one run takes at most 10 at once, so two runs fit the project's 20
+      max-parallel: 10
       matrix: ${{ fromJSON(needs.build.outputs.matrix) }}
     name: test ${{ matrix.name }}
     steps:
