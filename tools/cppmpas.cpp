@@ -49,6 +49,7 @@
 #include "io/mpas_writer.hpp"
 #include "io/registry.hpp"
 #include "physics/mpas_atmphys_driver.hpp"
+#include "core_atmosphere/diagnostics/mpas_atm_diagnostics.hpp"
 
 using namespace cppmpas;
 
@@ -300,7 +301,9 @@ int run(int argc, char** argv) {
                                                {"nAerLevels", pr.cfg.naerlev},
                                                {"cam_dim1", pr.cfg.camdim1},
                                                {"nMonths", pr.cfg.months},
-                                               {"nSoilLevels", pr.cfg.num_soil_layers}};
+                                               {"nSoilLevels", pr.cfg.num_soil_layers},
+                                               {"nIsoLevelsT", 5},    // Registry_isobaric.xml:6-10
+                                               {"nIsoLevelsZ", 13}};
       read_input_pools(a.pos[0], in, phys::physics_packages(pr.cfg), dims);
       for (const auto& w : in.warnings) std::cerr << "MPAS warning: " << w << "\n";
       pr.table_dir = a.tables;
@@ -355,12 +358,36 @@ int run(int argc, char** argv) {
     in.held = {{"ru_p", &f.ru_p}, {"rw_p", &f.rw_p}, {"rt_diabatic_tend", &f.rt_diabatic_tend},
                {"rthdynten", &f.rthdynten}, {"rtheta_pp", &f.rtheta_pp}, {"rho_pp", &f.rho_pp}};
     for (const auto& w : a.write_fields) (void)field_ref(in, w);  // a field without a port: refused before the run
+    // the diagnostics manager (core_atmosphere/diagnostics/mpas_atm_diagnostics.hpp); a --write-at file stands for an
+    // output stream whose alarm rings, its --write-fields for the stream's fields
+    diag::DiagnosticsContext dc;
+    bool writing_state = false;
+    dc.mesh = &in.mesh;
+    dc.state = &in.state;
+    dc.diag = &in.diag;
+    dc.pools = &in.pools;
+    dc.field_will_be_written = [&](const std::string& n) {
+      return writing_state && std::find(a.write_fields.begin(), a.write_fields.end(), n) != a.write_fields.end();
+    };
+    dc.output_stream_inclusion_count = [&](const std::string& n) {
+      return static_cast<int>(std::find(a.write_fields.begin(), a.write_fields.end(), n) != a.write_fields.end());
+    };
+    if (physics) diag::mpas_atm_diag_setup(dc, "none");
     auto write_step = [&](long n) {
       const bool step_file = a.every > 0 && n % a.every == 0;
       const bool state_file = std::find(a.write_at.begin(), a.write_at.end(), n) != a.write_at.end();
-      if (!step_file && !state_file) return;
+      writing_state = state_file;
       // mpas_atm_core.F:686 (t = 0) and :848: only when an output stream writes
-      atm_compute_output_diagnostics(in.mesh, in.state, in.diag);
+      if (step_file || state_file) atm_compute_output_diagnostics(in.mesh, in.state, in.diag);
+      if (physics) {  // mpas_atm_core.F:692-694 (t = 0: reset first) and :855-856
+        if (n == 0) diag::mpas_atm_diag_reset(dc);
+        diag::mpas_atm_diag_update(dc);
+        diag::mpas_atm_diag_compute(dc);
+      }
+      if (!step_file && !state_file) {
+        if (physics) diag::mpas_atm_diag_reset(dc);  // mpas_atm_core.F:717, 914
+        return;
+      }
       std::string ts = in.state.xtime.substr(0, 19);
       for (auto& c : ts)
         if (c == ':') c = '.';
@@ -369,6 +396,7 @@ int run(int argc, char** argv) {
       if (step_file) write_history(in, a.pos[1] + "/step." + ts + ".nc", fields, opt);
       if (state_file)
         write_history(in, a.pos[1] + "/state." + ts + ".nc", a.write_fields, opt);
+      if (physics) diag::mpas_atm_diag_reset(dc);  // mpas_atm_core.F:717, 914
     };
     write_step(0);
     const long long dt_s = static_cast<long long>(dcfg.config_dt);

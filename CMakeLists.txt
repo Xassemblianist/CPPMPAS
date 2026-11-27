@@ -118,6 +118,9 @@ set(CPPMPAS_SOURCES
   src/physics/mpas_atmphys_lsm_noahinit.cpp
   src/physics/mpas_atmphys_control.cpp
   src/physics/mpas_atmphys_landuse.cpp
+  src/core_atmosphere/diagnostics/mpas_atm_diagnostics_manager.cpp
+  src/core_atmosphere/diagnostics/mpas_isobaric_diagnostics.cpp
+  src/core_atmosphere/diagnostics/mpas_convective_diagnostics.cpp
   src/physics/mpas_atmphys_driver.cpp
   src/operators/vector_operations.cpp
   src/operators/vector_reconstruct.cpp
