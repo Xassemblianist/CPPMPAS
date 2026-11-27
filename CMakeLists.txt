@@ -101,6 +101,7 @@ set(CPPMPAS_SOURCES
   src/core_atmosphere/atm_solve_diagnostics.cpp
   src/operators/geometry_utils.cpp
   src/physics/module_cu_ntiedtke.cpp
+  src/physics/module_cu_gf.cpp
   src/physics/module_mp_wsm6.cpp
   src/physics/mpas_atmphys_microphysics.cpp
   src/physics/mpas_atmphys_convection.cpp
