@@ -888,8 +888,9 @@ endforeach()
 add_test(NAME gpu_dycore_RG_mpas_compare COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
   "rm -rf '${W}/gpu_dycore_RG_steps' && mkdir -p '${W}/gpu_dycore_RG_steps' && for s in ${DYCORE_RG_STAMP_WORDS}; do ln -s '${W}/gpu_dycore_RG/step.2026-10-12_'$s.nc '${W}/gpu_dycore_RG_steps/'; done && ${Python3_EXECUTABLE} -I '${T}/dycore_compare.py' '${CPPMPAS_MPAS_COMPARE}' '${REF_RG}/steps' '${W}/gpu_dycore_RG_steps' '${W}/gpu_dycore_RG_compare.json' 165")
 cppmpas_gpu_props(gpu_dycore_RG_mpas_compare FIXTURES_REQUIRED gpu_dycore_RG)
-add_test(NAME gpu_dycore_RG_vs_cpu COMMAND ${GPU} -- ${PY} ${T}/dycore_compare.py ${CPPMPAS_MPAS_COMPARE}
-  ${W}/dycore_RG ${W}/gpu_dycore_RG ${W}/gpu_dycore_RG_vs_cpu.json 165)
+# the step files only (both directories also hold the --write-at state files, compared with the reference above)
+add_test(NAME gpu_dycore_RG_vs_cpu COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/gpu_dycore_RG_vs_cpu_steps' && mkdir -p '${W}/gpu_dycore_RG_vs_cpu_steps' && for s in ${DYCORE_RG_STAMP_WORDS}; do ln -s '${W}/gpu_dycore_RG/step.2026-10-12_'$s.nc '${W}/gpu_dycore_RG_vs_cpu_steps/'; done && ${Python3_EXECUTABLE} -I '${T}/dycore_compare.py' '${CPPMPAS_MPAS_COMPARE}' '${W}/dycore_RG' '${W}/gpu_dycore_RG_vs_cpu_steps' '${W}/gpu_dycore_RG_vs_cpu.json' 165")
 cppmpas_gpu_props(gpu_dycore_RG_vs_cpu FIXTURES_REQUIRED "gpu_dycore_RG;dycore_RG")
 foreach(f IN LISTS DYCORE_RG_RESTART_FIELDS)
   add_test(NAME gpu_dycore_RG_restart_${f} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py
