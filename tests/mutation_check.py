@@ -1583,12 +1583,16 @@ MUTATIONS += [
     ("src/physics/mpas_atmphys_microphysics_thompson.cpp", "m.index_ni <= 0", "!m.index_ni", ["unit_microphysics"]),
     ("src/physics/mpas_atmphys_microphysics.cpp", "mp.index_qg <= 0", "!mp.index_qg", ["unit_microphysics"]),
     # thompson_column's added columns: riming with dt_microp > 120 s (MT:2555), cloud sedimentation below 500 m
-    # (MT:3280-3285), the mu_c cap (IM:87), mp_gt_driver's negative-qv repair (MT:1325-1333), nt_c above Nt_c_max (MT:2728)
+    # (MT:3280-3285), the mu_c cap (IM:87), mp_gt_driver's negative-qv repair (MT:1325-1333), the homogeneous
+    # freezing of tiny cloud water below HGFR (MT:2363-2366)
     ("src/physics/mp_thompson.hpp", "      if (dt > 120.) {  // MT:2555-2559", "      if (dt > 130.) {  // MT:2555-2559", ["thompson_column"]),
     ("src/physics/mp_thompson.hpp", "      if (hgt_agl > 500.0) break;", "      if (hgt_agl > 400.0) break;", ["thompson_column"]),
     ("src/physics/mpas_atmphys_microphysics_thompson.cpp", "    mu_c(iCell) = 15. < a ? 15. : a;", "    mu_c(iCell) = 16. < a ? 16. : a;", ["thompson_column"]),
     ("src/physics/mpas_atmphys_microphysics_thompson.cpp", "            P(qv_p, i, k) = 1.E-7;", "            P(qv_p, i, k) = 1.E-8;", ["thompson_column"]),
-    ("src/physics/mp_thompson.hpp", "    if (xnc > Nt_c_max) ncten[k]", "    if (xnc > 2. * Nt_c_max) ncten[k]", ["thompson_column"]),
+    # (shown once and replaced: the Nt_c_max cap of MT:1666 on nt_c = 2e9 SURVIVED, an equivalent mutant: without
+    # aerosols nc(k) is set to Nt_c right after it and nu_c is 3 either way)
+    ("src/physics/mp_thompson.hpp", "        pri_wfz[k] = rc[k] * odts;\n        pni_wfz[k] = nc[k] * odts;",
+     "        pri_wfz[k] = 0.5 * rc[k] * odts;\n        pni_wfz[k] = nc[k] * odts;", ["thompson_column"]),
     # gf_column's added columns: the land xff0 < 0 closures (GF:2756-2764), neg_check's heating limit (GF:3502-3505),
     # the second ierr = 1200 test (GF:997-1004)
     ("src/physics/cu_gf.hpp", "      if (xff0 < 0.) {", "      if (xff0 < -1.e30) {", ["gf_column"]),
@@ -1597,9 +1601,12 @@ MUTATIONS += [
      "      if (omeg[k] < -1.e-6 && frh >= 0.999 && sig < 0.091) ierr = 1200;\n    }\n\n  // GF:1021-1100", ["gf_column"]),
     # the cu_grell_freitas hard errors (test_gf_column guards)
     ("src/physics/module_cu_gf.cpp", "  if (kte < 3) throw", "  if (kte < 2) throw", ["gf_column"]),
-    ("src/physics/mpas_atmphys_convection.cpp", "    if (!mp.areaCell.p ||", "    if (false && !mp.areaCell.p ||", ["gf_column"]),
+    ("src/physics/mpas_atmphys_convection.cpp",
+     "      throw Error(\"driver_convection: the cu_grell_freitas_in package arrays are not set\");", "      ;", ["gf_column"]),
     ("src/physics/cu_gf.hpp", "    if (kbcon > kte || k22 > kte)", "    if (kbcon > kte + 2 || k22 > kte + 2)", ["gf_column"]),
-    ("src/physics/cu_gf.hpp", "    if (kstop > kte) kernel_fail", "    if (kstop > kte + 2) kernel_fail", ["gf_column"]),
+    # (shown once and replaced: cup_minimi's kte guard, `kstop > kte + 2`, SURVIVED: on the guards column cup_kbcon's
+    # guard stops first, and no column has kbcon = kte; the guard stays, unshown)
+    ("src/physics/module_cu_gf.cpp", "  if (a.ichoice_deep > 16)", "  if (a.ichoice_deep > 17)", ["gf_column"]),
 ]
 
 # MYNN surface layer (sf_mynn) and its MPAS driver, column check (tests/sfmynn_column): the -O3 lanes of sf_mynn_run's

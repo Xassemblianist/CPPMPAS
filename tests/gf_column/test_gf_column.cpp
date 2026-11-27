@@ -110,6 +110,15 @@ int guards() {
     a.ishallow_g3 = 1;
     ph::cu_grell_freitas(a, 1, 1);
   });
+  // config_gfconv_closure_deep 17: MPAS would index past xf_ens(16)
+  expect_error("cu_grell_freitas with closure_deep 17", "closure_deep > 16", [] {
+    ph::GfArgs a;
+    a.kts = 1;
+    a.kte = 55;
+    a.ishallow_g3 = 1;
+    a.ichoice_deep = 17;
+    ph::cu_grell_freitas(a, 1, 1);
+  });
   // the cu_grell_freitas_in package arrays not set
   expect_error("driver_convection without the GF package arrays", "package arrays", [] {
     ph::ConvectionPools q;
@@ -122,7 +131,7 @@ int guards() {
   });
   // a model top near zkbmax = 4 km: cup_kbcon's search for the level of free convection passes kte, where MPAS reads
   // past hes_cup(:, kts:kte) (25 levels of 170.2 m, a warm, moist top layer)
-  expect_error("CUP_gf's cup_kbcon past kte", "past kte", [] {
+  expect_error("CUP_gf's cup_kbcon past kte", "cup_kbcon", [] {
     using namespace cppmpas::phys::cu_gf;
     static GfDriverIn c;
     static GfDriverOut o;
