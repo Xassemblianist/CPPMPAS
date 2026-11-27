@@ -26,7 +26,7 @@ nCells = nCellsSolve + 2 (two halo cells: their tendencies are read by tend_toEd
   0 land, deep daytime convection: hot ground (superadiabatic surface layer: DMP_mf's plumes), a moist mixed layer
     up to 1.5-2.8 km (plume condensation, the mass-flux cloud fraction)
   1 land, stable night, shallow (calm, a surface inversion)
-  2 sea, unstable, moist, 9-14 m/s (ac_wsp < 1 above 10 m/s)
+  2 sea, unstable, moist, 8-14 m/s, or 17-31 m/s in cells 9-16, 25-32, ... (DMP_mf's ac_wsp < 1 above 10 m/s)
   3 sea, stable, strong wind
   4 sea ice (xland = 1, cold skin under warmer air)
   5 land, a shallow convective layer under cloud water and ice above the PBL (mym_condensation's rh hacks), negative
@@ -166,7 +166,8 @@ def make(path, nC, nV, nsteps, seed, restart, dacyc, cu, radt, scaleaware, dheat
         f["exner"][i] = (p / P0) ** (RGAS / CP)
         f["pressure_base"][i] = pb
         f["pressure_p"][i] = p - pb
-        spd = {0: 3.0, 1: 1.0, 2: 11.0, 3: 14.0, 4: 6.0, 5: 4.0, 6: 7.0, 7: 1.5}[reg] * rng.uniform(0.7, 1.3)
+        spd = {0: 3.0, 1: 1.0, 2: 11.0 if i % 16 < 8 else 24.0, 3: 14.0, 4: 6.0, 5: 4.0, 6: 7.0, 7: 1.5}[reg]
+        spd = spd * rng.uniform(0.7, 1.3)
         prof = np.log(1.0 + z / 0.1) / np.log(1.0 + 1000.0 / 0.1)
         dirn = rng.uniform(0, 2 * np.pi) + 0.3 * z / 5000.0
         f["uReconstructZonal"][i] = spd * np.minimum(prof, 1.5 + z / 10000.0) * np.cos(dirn)
