@@ -805,3 +805,32 @@ foreach(f IN LISTS DYCORE_SC_OUTPUT_FIELDS)
     ${W}/gpu_dycore_long_SC/state.0000-01-01_00.30.00.nc ${f} --record 1)
   cppmpas_gpu_props(gpu_dycore_SC_output30_${f} FIXTURES_REQUIRED gpu_dycore_long_SC LABELS long)
 endforeach()
+
+# ---------------------------------------------------------------------------------------------------------------
+# Convective diagnostics (core_atmosphere/diagnostics, mpas_convective_diagnostics.F) against the reference's
+# diagnostics stream: at t = 0 (mpas842-dbl-rg-004, diag.2026-10-12_00.00.00.nc; reset, update and compute before the
+# first write, mpas_atm_core.F:692-694) and at 3 h and 6 h of RG24 (mpas842-dbl-rg24-001; the maxima since the
+# previous diagnostics output, the 00:00 write resetting them). A --write-at file stands for the ringing diagnostics
+# stream, so 0 is in the RG24 list: its write resets the t = 0 update as MPAS's does.
+set(DIAG_CONV_FIELDS cape cin lcl lfc srh_0_1km srh_0_3km uzonal_surface uzonal_1km uzonal_6km umeridional_surface
+    umeridional_1km umeridional_6km temperature_surface dewpoint_surface updraft_helicity_max w_velocity_max
+    wind_speed_level1_max)
+string(REPLACE ";" "," DIAG_CONV_LIST "${DIAG_CONV_FIELDS}")
+add_test(NAME diag_run_RG_convective COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/diag_RG_conv' && mkdir -p '${W}/diag_RG_conv' && '${EXE}' run '${REF_RG}/init/x1.10242.init.nc' '${W}/diag_RG_conv' --namelist '${REF_RG}/steps/namelist.atmosphere' --scalars qv,qc,qr,qi,qs,qg --steps 0 --every 0 --write-at 0 --write-fields ${DIAG_CONV_LIST} --tables '${CPPMPAS_MPAS_TABLES}' --rrtmg '${CPPMPAS_CPPWRF_RRTMG}'")
+set_tests_properties(diag_run_RG_convective PROPERTIES FIXTURES_SETUP diag_RG_conv TIMEOUT 600)
+foreach(f IN LISTS DIAG_CONV_FIELDS)
+  add_test(NAME diag_RG_conv0_${f} COMMAND ${PY} ${T}/compare_arrays.py
+    ${REF_RG}/forecast/diag.2026-10-12_00.00.00.nc ${W}/diag_RG_conv/state.2026-10-12_00.00.00.nc ${f})
+  set_tests_properties(diag_RG_conv0_${f} PROPERTIES FIXTURES_REQUIRED diag_RG_conv)
+endforeach()
+add_test(NAME diag_run_long_RG24_convective COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/diag_RG24_conv' && mkdir -p '${W}/diag_RG24_conv' && '${EXE}' run '${REF_RG24}/init/x1.10242.init.nc' '${W}/diag_RG24_conv' --namelist '${REF_RG24}/steps/namelist.atmosphere' --scalars qv,qc,qr,qi,qs,qg --steps 36 --every 0 --write-at 0,18,36 --write-fields ${DIAG_CONV_LIST} --tables '${CPPMPAS_MPAS_TABLES}' --rrtmg '${CPPMPAS_CPPWRF_RRTMG}'")
+set_tests_properties(diag_run_long_RG24_convective PROPERTIES FIXTURES_SETUP diag_RG24_conv LABELS long TIMEOUT 3600)
+foreach(stamp IN ITEMS 2026-10-12_03.00.00 2026-10-12_06.00.00)
+  foreach(f IN LISTS DIAG_CONV_FIELDS)
+    add_test(NAME diag_RG24_conv_${stamp}_${f} COMMAND ${PY} ${T}/compare_arrays.py
+      ${REF_RG24}/forecast/diag.${stamp}.nc ${W}/diag_RG24_conv/state.${stamp}.nc ${f})
+    set_tests_properties(diag_RG24_conv_${stamp}_${f} PROPERTIES FIXTURES_REQUIRED diag_RG24_conv LABELS long)
+  endforeach()
+endforeach()

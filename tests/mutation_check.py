@@ -30,6 +30,17 @@ def D(fields, cases="MW SC JW"):
 
 ALL3 = "MW SC JW"
 RS = "src/io/mpas_restart.cpp"
+CV = "src/core_atmosphere/diagnostics/mpas_convective_diagnostics.cpp"
+
+
+def CV0(fields):
+    """t = 0 convective diagnostics tests of RG (tests/CMakeLists.txt)"""
+    return [f"diag_RG_conv0_{f}" for f in fields.split()]
+
+
+def CV24(fields, hours="03 06"):
+    """3 h / 6 h convective diagnostics tests of RG24 (label long)"""
+    return [f"diag_RG24_conv_2026-10-12_{h}.00.00_{f}" for h in hours.split() for f in fields.split()]
 RAD, RDRV = "src/physics/module_ra_rrtmg.cpp", "src/physics/mpas_atmphys_radiation.cpp"
 
 
@@ -1305,6 +1316,62 @@ MUTATIONS += [
     (LU, "      field_min(n) = minner;", "      field_min(n) = maxxer;", RG1("theta_m")),
     # the writer keeps the input file's attributes of the physics fields (the reference restart's isltyp)
     (W, "      if (std::find(rd.begin(), rd.end(), n) != rd.end()) {", "      if (false) {", ["dycore_RG_restart_isltyp"]),
+    # convective diagnostics (mpas_convective_diagnostics.F): t = 0 of RG (diag_RG_conv0_*) and 3 h / 6 h of RG24
+    # (diag_RG24_conv_*, label long)
+    (CV, "      dewpoint(k, iCell) = dewpoint(k, iCell) + 273.15;", "      dewpoint(k, iCell) = dewpoint(k, iCell) + 273.16;",
+     CV0("dewpoint_surface")),
+    (CV, "          (theta_m(k, iCell) / (1. + rvord * scalars(index_qv, k, iCell))) * exner(k, iCell);",
+     "          (theta_m(k, iCell) / (1. + rvord * scalars(index_qv, k, iCell)));", CV0("temperature_surface")),
+    (CV, "      const real lg = k <= nvec ? libm::mvec_log(evp / 6.112) : libm::log(evp / 6.112);",
+     "      const real lg = false ? libm::mvec_log(evp / 6.112) : libm::log(evp / 6.112);", CV0("dewpoint_surface")),
+    (CV, "    uzonal_surface(iCell) = uzonal(1, iCell);", "    uzonal_surface(iCell) = uzonal(2, iCell);", CV0("uzonal_surface")),
+    (CV, "    umeridional_surface(iCell) = umeridional(1, iCell);", "    umeridional_surface(iCell) = umeridional(2, iCell);",
+     CV0("umeridional_surface")),
+    (CV, "    if (need_uzonal_1km) uzonal_1km(iCell) = column_height_value(ucol.data(), zp.data(), 1000.0, nVertLevels);",
+     "    if (need_uzonal_1km) uzonal_1km(iCell) = column_height_value(ucol.data(), zp.data(), 1001.0, nVertLevels);",
+     CV0("uzonal_1km")),
+    (CV, "    if (need_umerid_1km) umeridional_1km(iCell) = column_height_value(vcol.data(), zp.data(), 1000.0, nVertLevels);",
+     "    if (need_umerid_1km) umeridional_1km(iCell) = column_height_value(vcol.data(), zp.data(), 1001.0, nVertLevels);",
+     CV0("umeridional_1km")),
+    (CV, "    if (need_uzonal_6km) uzonal_6km(iCell) = column_height_value(ucol.data(), zp.data(), 6000.0, nVertLevels);",
+     "    if (need_uzonal_6km) uzonal_6km(iCell) = column_height_value(ucol.data(), zp.data(), 6001.0, nVertLevels);",
+     CV0("uzonal_6km")),
+    (CV, "    if (need_umerid_6km) umeridional_6km(iCell) = column_height_value(vcol.data(), zp.data(), 6000.0, nVertLevels);",
+     "    if (need_umerid_6km) umeridional_6km(iCell) = column_height_value(vcol.data(), zp.data(), 6001.0, nVertLevels);",
+     CV0("umeridional_6km")),
+    (CV, "  const real wzp1 = 1. - wz;", "  const real wzp1 = 1. + wz;", CV0("uzonal_1km umeridional_6km")),
+    (CV, "      const real u_storm = u_mean + dev_motion * v_shear / shear_magnitude;",
+     "      const real u_storm = u_mean - dev_motion * v_shear / shear_magnitude;", CV0("srh_0_1km srh_0_3km")),
+    (CV, "      if (need_srh_01km) srh_0_1km(iCell) = integral_zpoint(srh.data(), zrel.data(), 0.0, 1000.0, nVertLevelsP1);",
+     "      if (need_srh_01km) srh_0_1km(iCell) = integral_zpoint(srh.data(), zrel.data(), 0.0, 900.0, nVertLevelsP1);",
+     CV0("srh_0_1km")),
+    (CV, "      if (need_srh_03km) srh_0_3km(iCell) = integral_zpoint(srh.data(), zrel.data(), 0.0, 3000.0, nVertLevelsP1);",
+     "      if (need_srh_03km) srh_0_3km(iCell) = integral_zpoint(srh.data(), zrel.data(), 0.0, 2900.0, nVertLevelsP1);",
+     CV0("srh_0_3km")),
+    (CV, "    const real midpoint_value = column_values[k - 1] + (column_values[k] - column_values[k - 1]) * zr_midpoint;",
+     "    const real midpoint_value = column_values[k - 1];", CV0("srh_0_1km")),
+    (CV, "    cape = cape + maxsd(parea, 0.0);", "    cape = cape + parea;", CV0("cape")),
+    (CV, "      cin = cin + narea;", "      cin = cin - narea;", CV0("cin")),
+    (CV, "    const bool lane = k <= nvec;", "    const bool lane = false;", CV0("cape")),
+    (CV, "    tlcl = 56.0 + 1. / (1. / (td - 56.0) + 0.00125 * libm::log(t / td));",
+     "    tlcl = 56.0 + 1. / (1. / (td - 56.0) + 0.00126 * libm::log(t / td));", CV0("cape")),
+    (CV, "        qv2 = minsd(qt, fliq * getqvs(p2, t2) + fice * getqvi(p2, t2));", "        qv2 = minsd(qt, 1.01 * getqvs(p2, t2));",
+     CV0("cape")),
+    (CV, "  (void)p.R(\"lcl\");", "  p.R(\"lcl\")(1) = 1.;", CV0("lcl")),
+    (CV, "  (void)p.R(\"lfc\");", "  p.R(\"lfc\")(1) = 1.;", CV0("lfc")),
+    (CV, "      const real uph = integral_zstaggered(&updraft_helicity(1, iCell), z_agl.data(), 2000.0, 5000.0, nVertLevels);",
+     "      const real uph = integral_zstaggered(&updraft_helicity(1, iCell), z_agl.data(), 1000.0, 5000.0, nVertLevels);",
+     CV24("updraft_helicity_max")),
+    (CV, "          updraft_helicity(k, iCell) = updraft_helicity(k, iCell) + m.kiteAreasOnVertex(j, i) * vorticity(k, i);",
+     "          updraft_helicity(k, iCell) = updraft_helicity(k, iCell) + m.kiteAreasOnVertex(j, i) * vorticity(k, i) * 1.5;",
+     CV24("updraft_helicity_max")),
+    (CV, "      w_velocity_max(iCell) = maxsd(mx, w_velocity_max(iCell));",
+     "      w_velocity_max(iCell) = maxsd(0.5 * mx, w_velocity_max(iCell));", CV24("w_velocity_max")),
+    (CV, "          maxsd(std::sqrt(uzonal(1, iCell) * uzonal(1, iCell) + umeridional(1, iCell) * umeridional(1, iCell)),",
+     "          maxsd(std::sqrt(uzonal(1, iCell) * uzonal(2, iCell) + umeridional(1, iCell) * umeridional(1, iCell)),",
+     CV0("wind_speed_level1_max")),
+    (CV, "    if (c.field_will_be_written(f)) {\n      auto& a = c.pools->R(f);", "    if (false) {\n      auto& a = c.pools->R(f);",
+     CV24("w_velocity_max", "06")),
 ]
 
 MUTATIONS = [(p, o, n, [t for t in ts if t not in EQUIVALENT_ON_SC.get((p, n), [])]) for p, o, n, ts in MUTATIONS]
