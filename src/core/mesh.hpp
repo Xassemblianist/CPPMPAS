@@ -9,6 +9,7 @@
 //  * connectivity as local 1-based indices, unmatched IDs -> n+1 (mpas_stream_manager.F:5619-5636);
 //  * one garbage element on every nCells / nEdges / nVertices dimension, holding the Registry default value
 //    (0 for indexTo*ID, mpas_block_creator.F:1069, 1095, 1122).
+#include <map>
 #include <string>
 #include <vector>
 
@@ -72,6 +73,10 @@ struct Mesh {
   FArray<real> etp, etm, ewp, ewm;
   FArray<real> specZoneMaskCell, specZoneMaskEdge, specZoneMaskVertex;
   FArray<int> nearestRelaxationCell;
+
+  // the other dimensions of the Registry fields CPPMPAS holds (nSoilLevels, nMonths, nOznLevels, nLags, ...: the
+  // physics pools, io/registry_pools.hpp), by name
+  std::map<std::string, int> extra_dims;
 
   ElementOrder cell_order, edge_order, vertex_order;
   const ElementOrder& order(Element e) const;

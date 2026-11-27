@@ -35,6 +35,10 @@ std::size_t file_dim(const Mesh& m, const std::string& d) {
   if (d == "nVertLevels" && m.nVertLevels > 0) return m.nVertLevels;
   if (d == "nVertLevelsP1" && m.nVertLevels > 0) return m.nVertLevels + 1;
   if (d == "StrLen") return kStrLen;
+  if (d == "nVertLevelsP2" && m.nVertLevels > 0) return m.nVertLevels + 2;
+  if (d == "THREE") return 3;
+  if (d == "TWENTYONE") return 21;
+  if (const auto it = m.extra_dims.find(d); it != m.extra_dims.end()) return it->second;
   throw Error("dimension '" + d + "' is not handled by CPPMPAS");
 }
 
@@ -248,6 +252,13 @@ void write_history(MpasInput& in, const std::string& path, const std::vector<std
       define_dims(f, dims, defined,
                   [&](const std::string& d) { return d == "Time" ? NC_UNLIMITED : file_dim(m, d); });
       f.def_var(n, nc_type_of(rv), dims);
+      // a field MPAS read from the input stream keeps the input file's attributes (the restart of mpas842-dbl-rg-004
+      // holds init_atmosphere's 'dominate soil category' for isltyp): the physics fields read into the pools
+      const auto& rd = in.pools.read_from_input;
+      if (std::find(rd.begin(), rd.end(), n) != rd.end()) {
+        for (const auto& a : in.source.var_atts.at(n)) f.put_att(n, a);
+        continue;
+      }
       // MPAS trims these too (mpas_io_streams.F:4341); no attribute of a field CPPMPAS writes ends in a blank
       for (const auto& [k, v] : rv.attrs) {
         // mpas_atm_core.F:271-274: Time's units are 'seconds since ' // initial_time with '_' -> ' ' (written trimmed)

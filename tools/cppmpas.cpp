@@ -338,6 +338,9 @@ int run(int argc, char** argv) {
     if (a.write_at.empty() != a.write_fields.empty()) throw Error("--write-at and --write-fields go together");
     for (long n : a.write_at)
       if (n > a.steps) throw Error("--write-at " + std::to_string(n) + " is after the last step");
+    // the dycore's arrays of the diag / tend / tend_physics pools (Registry names)
+    in.held = {{"ru_p", &f.ru_p}, {"rw_p", &f.rw_p}, {"rt_diabatic_tend", &f.rt_diabatic_tend},
+               {"rthdynten", &f.rthdynten}, {"rtheta_pp", &f.rtheta_pp}, {"rho_pp", &f.rho_pp}};
     for (const auto& w : a.write_fields) (void)field_ref(in, w);  // a field without a port: refused before the run
     auto write_step = [&](long n) {
       const bool step_file = a.every > 0 && n % a.every == 0;

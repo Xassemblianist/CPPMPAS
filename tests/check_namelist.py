@@ -56,8 +56,8 @@ CASES = [
      "namelist option config_xnutr = 0.15 has no verified port"),
     ("default_refused", sub(r"    config_dt = 6.0\n", ""),
      "namelist option config_dt = 720.0 (Registry default) has no verified port"),
-    ("physics_suite", sub(r"config_physics_suite = 'none'", "config_physics_suite = 'mesoscale_reference'"),
-     "namelist option config_physics_suite = 'mesoscale_reference' has no verified port"),
+    ("physics_suite", sub(r"config_physics_suite = 'none'", "config_physics_suite = 'convection_permitting'"),
+     "namelist option config_physics_suite = 'convection_permitting' has no verified port"),
     # refused forms
     ("unknown_key", add("damping", "config_not_an_option = 1"),
      "config_not_an_option is not an option of the namelist record &damping"),

@@ -504,10 +504,24 @@ FieldRef field_ref(MpasInput& in, const std::string& name) {
       return r;
     }
   }
+  if (auto it = in.held.find(name); it != in.held.end()) { r.r = it->second; return r; }
   // the other var_structs (io/registry_pools.hpp): only the fields a port has allocated
   if (auto it = in.pools.r.find(name); it != in.pools.r.end()) { r.r = &it->second; return r; }
   if (auto it = in.pools.i.find(name); it != in.pools.i.end()) { r.i = &it->second; return r; }
   if (auto it = in.pools.c.find(name); it != in.pools.c.end()) { r.c = &it->second; return r; }
+  // in a run with the physics pools (read_input_pools), any other field of an active package of the var_structs the
+  // pools hold is MPAS's allocated field with its Registry default
+  if (!in.pools.dims.empty()) {
+    const RegistryVar* rv = find_registry_var(name);
+    static const std::set<std::string> kPoolStructs = {"sfc_input", "diag_physics", "tend_physics", "atm_input",
+                                                       "diag", "tend"};
+    if (rv && kPoolStructs.count(rv->var_struct) && in.pools.packages.active(*rv) && rv->array.empty()) {
+      if (rv->type == "real") r.r = &in.pools.R(name);
+      else if (rv->type == "integer") r.i = &in.pools.I(name);
+      else r.c = &in.pools.C(name);
+      return r;
+    }
+  }
   if (!find_registry_var(name)) throw Error("variable '" + name + "' is not defined in MPAS-Atmosphere's Registry");
   throw Error("variable '" + name + "' has no CPPMPAS port (not read or written)");
 }
@@ -586,6 +600,15 @@ MpasInput read_mpas_init(const std::string& path, const std::vector<std::string>
   return in;
 }
 
+namespace {
+bool find_mesh_dim(const std::string& d) {
+  for (const char* x : {"nCells", "nEdges", "nVertices", "maxEdges", "maxEdges2", "vertexDegree", "TWO", "THREE", "R3",
+                        "FIFTEEN", "TWENTYONE", "nVertLevels", "nVertLevelsP1", "nVertLevelsP2"})
+    if (d == x) return true;
+  return false;
+}
+}  // namespace
+
 void read_input_pools(const std::string& path, MpasInput& in, const ActivePackages& packages,
                       const std::map<std::string, int>& dims) {
   const NcFile f = NcFile::open_read(path);
@@ -596,6 +619,8 @@ void read_input_pools(const std::string& path, MpasInput& in, const ActivePackag
   for (const auto& [d, n] : dims) p.dims[d] = n;
   for (const char* d : {"nSoilLevels", "nMonths"})  // mpas_bootstrapping: dimensions the input stream defines
     if (f.has_dim(d)) p.dims[d] = static_cast<int>(f.dim_len(d));
+  for (const auto& [d, n] : p.dims)
+    if (!find_mesh_dim(d)) in.mesh.extra_dims[d] = n;
   const std::vector<std::string> handled = handled_init_fields();
   for (const auto& n : input_stream_vars()) {
     if (n == "scalars") continue;
@@ -603,24 +628,24 @@ void read_input_pools(const std::string& path, MpasInput& in, const ActivePackag
     const RegistryVar& rv = registry_var(n);
     if (rv.var_struct == "mesh" || rv.var_struct == "state") continue;  // the reader's own (handled above)
     if (!packages.active(rv)) continue;  // "deactivated due to packages"
-    if (!f.has_var(n)) {
-      in.warnings.push_back("Variable " + n + " not in input file.");
+    if (!f.has_var(n)) {  // as for a scalar above
+      in.warnings.push_back(std::string("Variable ") + n + " not in input file.");
       continue;
     }
     const VarInfo vi = f.var(n);
     const nc_type want = rv.type == "real" ? NC_DOUBLE : rv.type == "integer" ? NC_INT : NC_CHAR;
     if (vi.type != want) throw Error(f.path() + ": variable " + n + " has a NetCDF type other than MPAS's");
     const std::vector<std::string> want_dims = file_dims(rv);
-    if (vi.dims != want_dims)
+    if (want_dims != vi.dims)
       throw Error(f.path() + ": variable " + n + " has dimensions (" + join(vi.dims) + "), MPAS expects (" +
                   join(want_dims) + ")");
     long record = -1;
     for (std::size_t k = 0; k < vi.dims.size(); ++k) {
       if (vi.dims[k] == "Time") {
-        if (vi.shape[k] != 1) throw Error(f.path() + ": variable " + n + " has more than one time record");
+        if (1 != vi.shape[k]) throw Error(f.path() + ": variable " + n + " has more than one time record");
         record = 0;
       } else if (vi.dims[k] == "StrLen") {
-        if (vi.shape[k] != kStrLen) throw Error(f.path() + ": StrLen != 64");
+        if (kStrLen != vi.shape[k]) throw Error(f.path() + ": StrLen != 64");
       } else if (static_cast<int>(vi.shape[k]) != p.dim(vi.dims[k], false)) {
         throw Error(f.path() + ": variable " + n + ": dimension " + vi.dims[k] + " = " +
                     std::to_string(vi.shape[k]) + ", expected " + std::to_string(p.dim(vi.dims[k], false)));

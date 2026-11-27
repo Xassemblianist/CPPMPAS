@@ -28,6 +28,8 @@ struct MpasInput {
   Diag diag;
   bool has_state = false;
   RegistryPools pools;  // the fields of the other var_structs (read_input_pools), by name
+  // fields a caller holds elsewhere (the dycore's diag / tend / tend_physics arrays of a run), by Registry name
+  std::map<std::string, FArray<real>*> held;
   SourceInfo source;
   std::vector<std::string> warnings;  // MPAS's own warnings (mpas_bootstrapping.F), e.g. a missing attribute
 };

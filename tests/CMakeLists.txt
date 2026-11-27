@@ -143,7 +143,7 @@ add_test(NAME unit_libm COMMAND test_libm 2000000)
 # and of the namelist of the MW restart run (tests/namelists/MW_restart: the MW forecast namelist restarted from the
 # reference's restart file at 00:30:06, verified by the dycore_restart_MW_* tests)
 add_test(NAME namelist_table_current COMMAND ${CMAKE_COMMAND} -E env sh -c
-  "${Python3_EXECUTABLE} -I '${CMAKE_SOURCE_DIR}/tools/gen_namelist_table.py' '${CPPMPAS_MPAS_REGISTRY}' ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/forecast/namelist.atmosphere '${CMAKE_SOURCE_DIR}/tests/namelists/MW_restart/namelist.atmosphere' > '${W}/namelist_table.inc' && ${CMAKE_COMMAND} -E compare_files '${W}/namelist_table.inc' '${CMAKE_SOURCE_DIR}/src/core/namelist_table.inc'")
+  "${Python3_EXECUTABLE} -I '${CMAKE_SOURCE_DIR}/tools/gen_namelist_table.py' '${CPPMPAS_MPAS_REGISTRY}' ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/forecast/namelist.atmosphere '${CMAKE_SOURCE_DIR}/tests/namelists/MW_restart/namelist.atmosphere' ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg-004/RG/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg-004/RG/forecast/namelist.atmosphere > '${W}/namelist_table.inc' && ${CMAKE_COMMAND} -E compare_files '${W}/namelist_table.inc' '${CMAKE_SOURCE_DIR}/src/core/namelist_table.inc'")
 set_tests_properties(namelist_table_current PROPERTIES FIXTURES_REQUIRED work_dir)
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -329,7 +329,7 @@ add_test(NAME unit_microphysics COMMAND test_microphysics ${INIT_SC} ${REF_SC}/s
 add_test(NAME dycore_SC_mpas_compare COMMAND ${PY} ${T}/dycore_compare.py ${CPPMPAS_MPAS_COMPARE} ${REF_SC}/steps
   ${W}/dycore_SC ${W}/dycore_SC_compare.json 132)
 set_tests_properties(dycore_SC_mpas_compare PROPERTIES FIXTURES_REQUIRED dycore_SC)
-cppmpas_error_test(dycore_odd_levels "nVertLevels = 3 (only an even nVertLevels >= 4 is verified)" run ${W}/sc_init.nc
+cppmpas_error_test(dycore_odd_levels "nVertLevels = 3 (< 4)" run ${W}/sc_init.nc
   ${W}/x_dir --namelist ${REF_MW}/steps/namelist.atmosphere --steps 1)
 cppmpas_error_test(dycore_steps "--steps needs a whole number 0..1000000, not '1x'" run ${INIT_MW} ${W}/x_dir
   --namelist ${REF_MW}/steps/namelist.atmosphere --steps 1x)
@@ -504,3 +504,50 @@ target_link_libraries(test_cu_gwdo_column PRIVATE cppmpas)
 add_test(NAME cu_gwdo_column COMMAND ${T}/cu_gwdo_column/run_check.sh ${CPPMPAS_MPAS_SRC} ${CPPMPAS_MMM_PHYSICS}
   ${W}/cu_gwdo_column $<TARGET_FILE:test_cu_gwdo_column>)
 set_tests_properties(cu_gwdo_column PROPERTIES FIXTURES_REQUIRED work_dir)
+
+# ---------------------------------------------------------------------------------------------------------------
+# The real-data case RG (mpas842-dbl-rg-004: the x1.10242 mesh, 55 levels, dt = 600 s, the mesoscale_reference physics
+# suite with RRTMG every 30 min, split dynamics-transport with three dynamics substeps, WSM6 scalars). One run of 12
+# steps writes the reference's every-step stream (steps 0-10 at tolerance 0, one test per step and field, and the
+# directory through tools/mpas_compare.py) and, after steps 6, 7 and 12, the fields of the forecast run's history
+# (1 h, 2 h) and restart (01:10) streams. The steps run and the forecast run of the reference hold the same state (the
+# forecast run's output alarms only add diagnostics); relhum is left out: MPAS recomputes it in the WSM6 driver when
+# the diagnostics alarm rings (compute_relhum, l_diags), which CPPMPAS refuses. Needs CPPMPAS_MPAS_TABLES (the
+# reference build's tables) and CPPMPAS_CPPWRF_RRTMG (the RRTMG table images).
+set(REF_RG ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg-004/RG)
+set(DYCORE_RG_FIELDS xtime Time u w rho_zz theta_m rho theta pressure_p qv qc qr qi qs qg)
+set(DYCORE_RG_RESTART_FIELDS ru_p rw_p rt_diabatic_tend rthdynten isltyp ivgtyp mminlu isice_lu iswater_lu landmask shdmin shdmax snoalb albedo12m greenfrac var2d con oa1 oa2 oa3 oa4 ol1 ol2 ol3 ol4 qv qc qr qi qs qg u_init v_init t_init xtime Time u w rho_zz theta_m pressure_p rho theta exner exner_base rtheta_base pressure_base rho_base theta_base ru rw rtheta_p rho_p surface_pressure rainprod evapprod re_cloud re_ice re_snow tend_sfc_pressure nsteps_accum ndays_accum tlag tday_accum tyear_mean tyear_accum i_rainnc rainncv rainnc snowncv snownc graupelncv graupelnc sr i_rainc cuprec rainc raincv qcg wstar delta ch kpbl hpbl hfx mavail mol qfx qsfc ust ustm zol znt br cd cda chs chs2 cqs2 ck cka cpm flhc flqc gz1oz0 lh psim psih qgh regime rmol wspd fh fm u10 v10 q2 t2m th2m dusfcg dvsfcg dtaux3d dtauy3d rubldiff rvbldiff i_acswdnb i_acswdnbc i_acswdnt i_acswdntc i_acswupb i_acswupbc i_acswupt i_acswuptc acswdnb acswdnbc acswdnt acswdntc acswupb acswupbc acswupt acswuptc gsw i_aclwdnb i_aclwdnbc i_aclwdnt i_aclwdntc i_aclwupb i_aclwupbc i_aclwupt i_aclwuptc aclwdnb aclwdnbc aclwdnt aclwdntc aclwupb aclwupbc aclwupt aclwuptc glw o3clim o3vmr acsnom acsnow canwat chklowq grdflx lai noahres potevp sfc_albedo sfc_emiss sfc_emibck sfcrunoff smstav smstot snopcx snotime sstsk sstsk_dtc sstsk_dtw thc udrunoff xicem z0 zs rthmpten rqvmpten rqcmpten rqrmpten rqimpten rqsmpten rqgmpten rthcuten rqvcuten rqccuten rqicuten rqvdynten rucuten rvcuten rublten rvblten rthblten rqvblten rqcblten rqiblten rthratensw rthratenlw sfc_albbck skintemp snow snowc snowh sst tmn vegfra seaice xice xland dzs smcrel sh2o smois tslb t_oml t_oml_initial t_oml_200m_initial h_oml h_oml_initial hu_oml hv_oml)
+set(DYCORE_RG_HISTORY_FIELDS qv qc qr qi qs qg xtime Time u w pressure surface_pressure rho theta divergence vorticity ke uReconstructZonal uReconstructMeridional i_rainnc rainnc precipw cuprec i_rainc rainc kpbl hpbl hfx qfx cd cda ck cka lh u10 v10 q2 t2m th2m gsw glw acsnow pin ozmixm mminlu isice_lu iswater_lu xland skintemp snow snowh sst vegfra xice sh2o smois tslb)
+set(DYCORE_RG_LONG_FIELDS ${DYCORE_RG_RESTART_FIELDS} ${DYCORE_RG_HISTORY_FIELDS})
+list(REMOVE_DUPLICATES DYCORE_RG_LONG_FIELDS)
+string(REPLACE ";" "," DYCORE_RG_LONG_LIST "${DYCORE_RG_LONG_FIELDS}")
+add_test(NAME dycore_run_RG COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/dycore_RG' && mkdir -p '${W}/dycore_RG' && '${EXE}' run '${REF_RG}/init/x1.10242.init.nc' '${W}/dycore_RG' --namelist '${REF_RG}/steps/namelist.atmosphere' --scalars qv,qc,qr,qi,qs,qg --steps 12 --write-at 6,7,12 --write-fields ${DYCORE_RG_LONG_LIST} --tables '${CPPMPAS_MPAS_TABLES}' --rrtmg '${CPPMPAS_CPPWRF_RRTMG}'")
+set_tests_properties(dycore_run_RG PROPERTIES FIXTURES_SETUP dycore_RG TIMEOUT 1800)
+set(DYCORE_RG_STAMPS 00.00.00 00.10.00 00.20.00 00.30.00 00.40.00 00.50.00 01.00.00 01.10.00 01.20.00 01.30.00 01.40.00)
+set(step 0)
+foreach(stamp IN LISTS DYCORE_RG_STAMPS)
+  foreach(f IN LISTS DYCORE_RG_FIELDS)
+    add_test(NAME dycore_RG_step${step}_${f} COMMAND ${PY} ${T}/compare_arrays.py
+      ${REF_RG}/steps/step.2026-10-12_${stamp}.nc ${W}/dycore_RG/step.2026-10-12_${stamp}.nc ${f})
+    set_tests_properties(dycore_RG_step${step}_${f} PROPERTIES FIXTURES_REQUIRED dycore_RG)
+  endforeach()
+  math(EXPR step "${step} + 1")
+endforeach()
+# the reference's 11 step files only (the run also writes steps 11, 12 and the state files)
+add_test(NAME dycore_RG_mpas_compare COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/dycore_RG_steps' && mkdir -p '${W}/dycore_RG_steps' && for s in ${DYCORE_RG_STAMPS}; do ln -s '${W}/dycore_RG/step.2026-10-12_'$s.nc '${W}/dycore_RG_steps/'; done && ${PY} '${T}/dycore_compare.py' '${CPPMPAS_MPAS_COMPARE}' '${REF_RG}/steps' '${W}/dycore_RG_steps' '${W}/dycore_RG_compare.json' 165")
+set_tests_properties(dycore_RG_mpas_compare PROPERTIES FIXTURES_REQUIRED dycore_RG)
+foreach(f IN LISTS DYCORE_RG_RESTART_FIELDS)
+  add_test(NAME dycore_RG_restart_${f} COMMAND ${PY} ${T}/compare_arrays.py
+    ${REF_RG}/forecast/restart.2026-10-12_01.10.00.nc ${W}/dycore_RG/state.2026-10-12_01.10.00.nc ${f})
+  set_tests_properties(dycore_RG_restart_${f} PROPERTIES FIXTURES_REQUIRED dycore_RG)
+endforeach()
+foreach(f IN LISTS DYCORE_RG_HISTORY_FIELDS)
+  add_test(NAME dycore_RG_history1h_${f} COMMAND ${PY} ${T}/compare_arrays.py
+    ${REF_RG}/forecast/history.2026-10-12_01.00.00.nc ${W}/dycore_RG/state.2026-10-12_01.00.00.nc ${f})
+  set_tests_properties(dycore_RG_history1h_${f} PROPERTIES FIXTURES_REQUIRED dycore_RG)
+  add_test(NAME dycore_RG_history2h_${f} COMMAND ${PY} ${T}/compare_arrays.py
+    ${REF_RG}/forecast/history.2026-10-12_02.00.00.nc ${W}/dycore_RG/state.2026-10-12_02.00.00.nc ${f})
+  set_tests_properties(dycore_RG_history2h_${f} PROPERTIES FIXTURES_REQUIRED dycore_RG)
+endforeach()

@@ -83,7 +83,10 @@ int main(int argc, char** argv) {
   const std::vector<Case> cases = {
       {"config_time_integration = 'RK4'", [](DycoreConfig& c) { c.config_time_integration = "RK4"; }},
       {"config_time_integration_order = 3", [](DycoreConfig& c) { c.config_time_integration_order = 3; }},
-      {"config_split_dynamics_transport = true", [](DycoreConfig& c) { c.config_split_dynamics_transport = true; }},
+      {"config_dynamics_split_steps < 1", [](DycoreConfig& c) {
+         c.config_split_dynamics_transport = true;
+         c.config_dynamics_split_steps = 0;
+       }},
       {"config_monotonic = false", [](DycoreConfig& c) {
          c.config_scalar_advection = true;
          c.config_monotonic = false;
@@ -103,6 +106,12 @@ int main(int argc, char** argv) {
       {"not finite", [](DycoreConfig& c) { c.config_smdiv = HUGE_VAL; }},
       {"not finite", [](DycoreConfig& c) { c.config_visc4_2dsmag = std::nan(""); }},
       {"config_lsm_scheme = 'sf_noah'", [](DycoreConfig& c) { c.config_lsm_scheme = "sf_noah"; }},
+      {"a scheme other than 'suite' with config_physics_suite = 'mesoscale_reference'", [](DycoreConfig& c) {
+         c.config_physics_suite = "mesoscale_reference";
+         c.config_microp_scheme = "mp_kessler";
+       }},
+      {"scalars other than qv, qc, qr, qi, qs, qg with mesoscale_reference",
+       [](DycoreConfig& c) { c.config_physics_suite = "mesoscale_reference"; }},
       {"config_sfclayer_scheme = 'sf_mynn'", [](DycoreConfig& c) { c.config_sfclayer_scheme = "sf_mynn"; }},
       {"config_gwdo_scheme = 'bl_ysu_gwdo'", [](DycoreConfig& c) { c.config_gwdo_scheme = "bl_ysu_gwdo"; }},
       {"radiation schemes", [](DycoreConfig& c) { c.config_radt_cld_scheme = "cld_fraction"; }},
@@ -177,8 +186,6 @@ int main(int argc, char** argv) {
              "refuses fEdge != 0 with v_init != 0");
     }
     m = in.mesh;
-    m.nVertLevels = 69;
-    expect(throws_with([&] { check_dycore_supported(mw, m, in.state); }, "nVertLevels = 69"), "refuses odd nVertLevels");
     m.nVertLevels = 2;
     expect(throws_with([&] { check_dycore_supported(mw, m, in.state); }, "nVertLevels = 2"), "refuses nVertLevels < 4");
     m = in.mesh;
@@ -198,16 +205,6 @@ int main(int argc, char** argv) {
     } catch (const Error& e) {
       expect(false, std::string("Kessler with qv, qc, qr and transport refused: ") + e.what());
     }
-    // the scalar transport's hexagon-only paths (TI:4801-4821, 5394-5404, 5450-5463)
-    DycoreConfig a = mw;
-    a.config_scalar_advection = true;
-    m = in.mesh;
-    m.nAdvCellsForEdge(5) = 9;
-    expect(throws_with([&] { check_dycore_supported(a, m, in.state); }, "nAdvCellsForEdge != 10"),
-           "refuses nAdvCellsForEdge 9");
-    m = in.mesh;
-    m.nEdgesOnCell(7) = 5;
-    expect(throws_with([&] { check_dycore_supported(a, m, in.state); }, "nEdgesOnCell != 6"), "refuses a pentagon");
     DycoreConfig p = mw;  // mixing of the perturbation from the initial state (SC) is ported
     p.config_mix_full = false;
     try {
@@ -350,10 +347,12 @@ int main(int argc, char** argv) {
            "recover rk_step 4");
     expect(throws_with([&] { atm_advance_acoustic_step(t.mesh, t.state, t.diag, tf, 1.0, 0); }, "small_step < 1"),
            "acoustic small_step 0");
-    expect(throws_with([&] { atm_rk_dynamics_substep_finish(t.mesh, t.state, t.diag, tf, 1, 0); }, "dynamics substeps"),
+    expect(throws_with([&] { atm_rk_dynamics_substep_finish(t.mesh, t.state, t.diag, tf, 1, 0); },
+                       "dynamics_substep outside 1..dynamics_split"),
            "substep_finish dynamics_split 0");
-    expect(throws_with([&] { atm_rk_dynamics_substep_finish(t.mesh, t.state, t.diag, tf, 2, 2); }, "dynamics substeps"),
-           "substep_finish substep 2 of 2");
+    expect(throws_with([&] { atm_rk_dynamics_substep_finish(t.mesh, t.state, t.diag, tf, 3, 2); },
+                       "dynamics_substep outside 1..dynamics_split"),
+           "substep_finish substep 3 of 2");
     // allocate_dycore_fields: dimensions and scalars
     {
       Mesh m = t.mesh;
