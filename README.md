@@ -45,6 +45,17 @@ checks against WRF, all at tolerance 0). CPPMPAS applies the same method to MPAS
   references and against the CPU build: every initdump field of MW, SC and JW and the init block's restart-stream
   fields; MW steps 1-10, the 30:06 restart, the 30 and 60 min output and the restart run to 01:00:00; JW steps 1-10,
   the 24 h output and the 24:07:30 restart; SC steps 1-10, the 30-min output and the 30:03 restart. Without a CUDA build or device the GPU tests are reported as skipped.
+- The mesoscale_reference physics on the GPU (`cppmpas_gpu run` with RG's namelists): the physics driver,
+  MPAS_to_physics, the revised MM5 surface layer, Noah with the sea-ice driver and the surface diagnostics, YSU, GWDO,
+  New Tiedtke, WSM6 with the radar reflectivity and relhum, the RRTMG LW / SW radiation with the cloudiness and the
+  ozone climatology, physics_get_tend and the isobaric and convective diagnostics, every loop a kernel with one
+  thread per column (MPAS's level order inside the thread, the reference's libmvec lanes). **Verified at tolerance
+  0** on an NVIDIA RTX PRO 6000 Blackwell (sm_120, nvcc 13.0.88 with g++ 14 as the host compiler, driver
+  580.82.07): RG steps 1-10, the 01:10 restart and the 1 h / 2 h histories against `mpas842-dbl-rg-004`, the
+  rg-004 forecast's five stream files, and the 24 h forecast of `mpas842-dbl-rg24-001` (all 19 history, diag and
+  restart files, 2168 variables); MW, JW and SC still pass on the GPU. The physics init (table reading, landuse,
+  lsminit), the greenness update (physics_update_surface) and the clock and alarms run on the host, on the same
+  managed arrays.
 - Every other configuration (LES, LBCs, other physics, a Kessler restart, ...) is
   a hard error until it is ported and verified.
 - The namelist: every option of MPAS-Atmosphere's Registry is known; a value that no verified reference runs with is a
