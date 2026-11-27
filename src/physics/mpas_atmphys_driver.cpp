@@ -251,9 +251,8 @@ void physics_core_init(PhysicsRun& r, const Mesh& m, State& s, Diag& d, Registry
   log.push_back("DT_RADTSW = " + std::to_string(r.rad.dt_radtsw));
   log.push_back("DT_CU     = " + std::to_string(r.dt_cu));
   log.push_back("DT_PBL    = " + std::to_string(r.dt_pbl));
-  r.dt_dyn = dt;  // MG:680-691
-  r.dt_microp = r.dt_dyn;
-  r.n_microp = 1;
+  r.dt_dyn = dt;  // MG:680-694
+  microp_timestep(c.config_microp_scheme, r.dt_dyn, r.dt_microp, r.n_microp);
   r.n_cu = std::max(static_cast<int>(std::lround(r.dt_cu / r.dt_dyn)), 1);  // MG:701-702 (nint)
   r.l_conv = r.l_radtlw = r.l_radtsw = r.l_diags = r.l_acrain = r.l_acradt = false;
   r.xice_threshold = c.config_frac_seaice ? 0.02 : 0.5;  // MG:740-744

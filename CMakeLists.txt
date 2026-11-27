@@ -103,6 +103,8 @@ set(CPPMPAS_SOURCES
   src/physics/module_cu_ntiedtke.cpp
   src/physics/module_mp_wsm6.cpp
   src/physics/mpas_atmphys_microphysics.cpp
+  src/physics/mpas_atmphys_microphysics_thompson.cpp
+  src/physics/mp_thompson_init.cpp
   src/physics/mpas_atmphys_convection.cpp
   src/physics/mpas_atmphys_gwdo.cpp
   src/physics/mpas_atmphys_interface.cpp

@@ -14,9 +14,12 @@
 // (DRV:798-850, with RSLF / RSIF of physics/mpas_atmphys_functions.F:156-217, the functions the reference
 // executable calls: __mpas_atmphys_functions_MOD_rslf / _rsif from driver_microphysics), DRV:467-482.
 // Refused: l_acrain (config_bucket_update), has_reqc / has_reqi / has_reqs = 1 (config_microp_re).
+#include <string>
+
 #include "core/field.hpp"
 #include "core/precision.hpp"
 #include "physics/mp_wsm6.hpp"
+#include "physics/mp_thompson.hpp"
 #include "physics/mp_wsm6_refl.hpp"
 
 namespace cppmpas::phys {
@@ -50,6 +53,17 @@ struct MicrophysicsPools {
   // refl10cm_max, refl10cm_1km, refl10cm_1km_max (nCells+1), and mp_wsm6_init's radar tables
   FView<real> relhum, refl10cm, refl10cm_max, refl10cm_1km, refl10cm_1km_max;
   const wsm6::Wsm6Radar* radar = nullptr;
+  // mp_thompson: the number concentrations ni, nr (state scalars), diag_physics nt_c / mu_c (nCells+1, set by
+  // physics_run_init's cloud microphysics time step (mpas_atmphys_manager.F:685-694): dt_microp = dt_dyn and
+// n_microp = 1, but 90 s sub-steps for mp_thompson / mp_thompson_aerosols: n_microp = max(nint(dt_dyn/90), 1),
+// dt_microp = dt_dyn / n_microp, dt_dyn itself when dt_dyn <= dt_microp
+void microp_timestep(const std::string& microp_scheme, real dt_dyn, real& dt_microp, int& n_microp);
+
+// init_thompson_clouddroplets_forMPAS), tend_physics rnimpten / rnrmpten, n_microp (mpas_atmphys_manager.F:689-694)
+  int index_ni = 0, index_nr = 0;
+  FView<const real> nt_c, mu_c;
+  FView<real> rnimpten, rnrmpten;
+  int n_microp = 1;
 };
 
 // physics/mpas_atmphys_functions.F:156-186 RSLF and :188-218 RSIF (liquid / ice saturation mixing ratio); the
@@ -57,6 +71,23 @@ struct MicrophysicsPools {
 // P*0.15), no FMA
 real rslf(real p, real t);
 real rsif(real p, real t);
+
+// DRV:317-500 for mp_thompson on cells its..ite (physics/mpas_atmphys_microphysics_thompson.cpp): allocate_microphysics
+// (DRV:98-176), precip_from_MPAS (DRV:503-564), microphysics_from_MPAS (PI:598-823 with ni, nr, nt_c, mu_c and
+// rnimpten / rnrmpten), n_microp calls of mp_gt_driver (DRV:378-398; module_mp_thompson.F:1001-1387), with l_diags
+// compute_radar_reflectivity (DRV:738-791, calc_refl10cm) and compute_relhum (DRV:798-850), precip_to_MPAS
+// (DRV:567-653), microphysics_to_MPAS (PI:826-1138 with ni, nr and their tendencies). tv: thompson_init's tables
+// (physics/mp_thompson_init.hpp). Refused: l_acrain, has_reqc / has_reqi / has_reqs = 1 (calc_effectRad).
+void driver_microphysics_thompson(const thompson::ThompsonView& tv, MicrophysicsPools& m, int its, int ite);
+
+// physics_run_init's cloud microphysics time step (mpas_atmphys_manager.F:685-694): dt_microp = dt_dyn and
+// n_microp = 1, but 90 s sub-steps for mp_thompson / mp_thompson_aerosols: n_microp = max(nint(dt_dyn/90), 1),
+// dt_microp = dt_dyn / n_microp, dt_dyn itself when dt_dyn <= dt_microp
+void microp_timestep(const std::string& microp_scheme, real dt_dyn, real& dt_microp, int& n_microp);
+
+// init_thompson_clouddroplets_forMPAS (mpas_atmphys_init_microphysics.F:48-89): nt_c and mu_c of cells
+// 1..nCellsSolve from the land mask (nt_c keeps its value where landmask is neither 0 nor 1)
+void init_thompson_clouddroplets_forMPAS(int nCellsSolve, FView<const int> landmask, FView<real> nt_c, FView<real> mu_c);
 
 // DRV:317-500 for mp_wsm6 on cells its..ite. params: module_mp_wsm6::mpas_wsm6_params() (init_microphysics).
 void driver_microphysics_wsm6(const wsm6::Wsm6Params<real>& params, MicrophysicsPools& m, int its, int ite);
