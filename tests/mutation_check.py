@@ -1350,11 +1350,13 @@ MUTATIONS += [
      CV0("srh_0_3km")),
     (CV, "    const real midpoint_value = column_values[k - 1] + (column_values[k] - column_values[k - 1]) * zr_midpoint;",
      "    const real midpoint_value = column_values[k - 1];", CV0("srh_0_1km")),
-    (CV, "    cape = cape + maxsd(parea, 0.0);", "    cape = cape + parea;", CV0("cape")),
+    # (cape = cape + parea survives: every branch gives parea >= 0, so MAX(0.0, parea) is exact)
+    (CV, "      parea = 0.5 * dz * (b1 + b2);", "      parea = 0.6 * dz * (b1 + b2);", CV0("cape")),
     (CV, "      cin = cin + narea;", "      cin = cin - narea;", CV0("cin")),
     (CV, "    const bool lane = k <= nvec;", "    const bool lane = false;", CV0("cape")),
-    (CV, "    tlcl = 56.0 + 1. / (1. / (td - 56.0) + 0.00125 * libm::log(t / td));",
-     "    tlcl = 56.0 + 1. / (1. / (td - 56.0) + 0.00126 * libm::log(t / td));", CV0("cape")),
+    # getthe only picks the source parcel (kmax): 0.00125 -> 0.00126 in tlcl survives (no column changes its kmax)
+    (CV, "         libm::exp(((3376.0 / tlcl) - 2.54) * q * (1.0 + 0.81 * q));",
+     "         libm::exp(((3076.0 / tlcl) - 2.54) * q * (1.0 + 0.81 * q));", CV0("cape")),
     (CV, "        qv2 = minsd(qt, fliq * getqvs(p2, t2) + fice * getqvi(p2, t2));", "        qv2 = minsd(qt, 1.01 * getqvs(p2, t2));",
      CV0("cape")),
     (CV, "  (void)p.R(\"lcl\");", "  p.R(\"lcl\")(1) = 1.;", CV0("lcl")),
