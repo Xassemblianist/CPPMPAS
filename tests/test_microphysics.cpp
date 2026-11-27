@@ -32,6 +32,16 @@ static void expect(bool ok, const std::string& what) {
 }
 
 // one column of nz levels through the kernel; returns qv, qc, qr, t after the call
+// bit for bit (-0.0 differs from +0.0; a NaN equals only the same NaN)
+static bool same_bits(const std::vector<real>& a, const std::vector<real>& b) {
+  return a.size() == b.size() && (a.empty() || std::memcmp(a.data(), b.data(), a.size() * sizeof(real)) == 0);
+}
+static bool all_finite(const std::vector<real>& a) {
+  for (real x : a)
+    if (!std::isfinite(x)) return false;
+  return !a.empty();
+}
+
 static std::vector<real> column(bool es_cap, real pii, real theta, real qv0) {
   const int nz = 4;
   std::vector<real> t(nz, theta), qv(nz, qv0), qc(nz, 1.e-4), qr(nz, 1.e-4), rho(nz, 0.1), pi(nz, pii), dz(nz, 500.0),
@@ -89,7 +99,8 @@ int main(int argc, char** argv) {
   expect(mp.active, "SC: Kessler active");
   expect(mp.mp_top_level == in.mesh.nVertLevels, "SC: mp_top_level = nVertLevels (" + std::to_string(mp.mp_top_level) + ")");
   expect(mp.dt_dyn == 3.0 && mp.dt_microp == 3.0, "SC: dt_dyn = dt_microp = 3");
-  expect(mp.i_rainnc.allocated() && mp.i_rainnc(1) == 0 && mp.rainnc(1) == 0.0, "SC: i_rainnc, rainnc zero");
+  expect(mp.i_rainnc.allocated() && mp.i_rainnc(1) == 0 && mp.rainnc(1) == 0.0 && !std::signbit(mp.rainnc(1)),
+         "SC: i_rainnc, rainnc +0.0");
   {  // a model top above config_microphysics_top = 45 km: refused
     Mesh m = in.mesh;
     for (int k = 1; k <= m.nVertLevels; ++k) m.dzu(k) = 3.0 * m.dzu(k);
@@ -108,8 +119,13 @@ int main(int argc, char** argv) {
     expect(!mp3.active, "MW: microphysics off");
   }
   // es_cap: pii = 0.1 (p = 1e5 * 0.1^(1004/287) = 32 Pa) and theta = 3000 K (T = 300 K, es = 3.5 kPa): capped
-  expect(column(true, 0.1, 3000.0, 1.e-3) != column(false, 0.1, 3000.0, 1.e-3), "es_cap changes a capped column");
-  expect(column(true, 0.95, 300.0, 1.e-2) == column(false, 0.95, 300.0, 1.e-2), "es_cap leaves an ordinary column");
+  {
+    const std::vector<real> capped = column(true, 0.1, 3000.0, 1.e-3), uncapped = column(false, 0.1, 3000.0, 1.e-3);
+    expect(all_finite(capped) && all_finite(uncapped) && !same_bits(capped, uncapped),
+           "es_cap changes a capped column (finite values)");
+  }
+  expect(same_bits(column(true, 0.95, 300.0, 1.e-2), column(false, 0.95, 300.0, 1.e-2)),
+         "es_cap leaves an ordinary column (bit for bit)");
   if (fails) std::printf("%d failures\n", fails);
   else std::printf("all passed\n");
   return fails ? 1 : 0;

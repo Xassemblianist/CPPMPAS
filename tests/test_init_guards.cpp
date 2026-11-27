@@ -17,6 +17,7 @@
 //
 // usage: test_init_guards <init file> <its namelist.atmosphere>
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <exception>
 #include <string>
@@ -231,7 +232,7 @@ int main(int argc, char** argv) {
     b.mesh.nominalMinDc(1) = 0.0;
     expect(throws_with([&] { atm_core_init(b.mesh, b.state, b.diag, bad, log); }, "a field out of its range"),
            "atm_core_init: a bad start time is an error");
-    expect(b.mesh.nominalMinDc(1) == 0.0, "atm_core_init: nominalMinDc untouched when the start time is refused");
+    expect(b.mesh.nominalMinDc(1) == 0.0 && !std::signbit(b.mesh.nominalMinDc(1)), "atm_core_init: nominalMinDc untouched when the start time is refused");
   }
 
   // --- the mesh scaling is unverified for a meshDensity other than 1 with config_h_ScaleWithMesh

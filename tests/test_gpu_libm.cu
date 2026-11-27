@@ -91,9 +91,16 @@ double from_bits(std::uint64_t b) {
 
 int main(int argc, char** argv) {
   int ndev = 0;
-  if (cudaGetDeviceCount(&ndev) != cudaSuccess || ndev < 1) {
+  // only a machine without a device skips (77); any other CUDA error (a driver older than the runtime, an
+  // initialisation error) is a failure
+  const cudaError_t dev_err = cudaGetDeviceCount(&ndev);
+  if (dev_err == cudaErrorNoDevice || (dev_err == cudaSuccess && ndev < 1)) {
     std::printf("SKIP: no usable CUDA device\n");
     return 77;
+  }
+  if (dev_err != cudaSuccess) {
+    std::printf("FAIL cudaGetDeviceCount: %s\n", cudaGetErrorString(dev_err));
+    return 1;
   }
   const int nrand = argc > 1 ? std::atoi(argv[1]) : 200000;
   std::vector<double> xs = {0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 1.0000000000000002, 0.9999999999999999, 3.0e-310,

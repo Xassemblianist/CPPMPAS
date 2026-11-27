@@ -25,7 +25,7 @@ int main() {
   // a work array of 40 elements with a GPU capacity of 4: zero-filled, all writable, copied whole
   LocalArray<double, 4> w(40);
   bool ok = w.size() == 40;
-  for (int i = 0; i < 40 && ok; ++i) ok = w[i] == 0.0;
+  for (int i = 0; i < 40 && ok; ++i) ok = w[i] == 0.0 && !std::signbit(w[i]);  // +0.0, not -0.0
   for (int i = 0; i < 40; ++i) w[i] = i;
   const LocalArray<double, 4> c = w;
   for (int i = 0; i < 40; ++i) ok = ok && c[i] == i && w[i] == i;
