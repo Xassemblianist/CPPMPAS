@@ -28,6 +28,8 @@ B, BC, X, L = "src/core/backend.hpp", "src/core/backend_cuda.cu", "tools/cppmpas
 CM = "CMakeLists.txt"
 AS, DP = "src/core_atmosphere/atm_advance_scalars.cpp", "src/core_atmosphere/atm_dissipation_perturbation.cpp"
 MP, KS = "src/core_atmosphere/atm_microphysics.cpp", "src/physics/mp_kessler.hpp"
+RAD, RDRV = "src/physics/module_ra_rrtmg.cpp", "src/physics/mpas_atmphys_radiation.cpp"
+RG_RAD = ["gpu_radiation_RG_0", "gpu_radiation_RG_1800"]
 
 
 def dev(orig, mut):
@@ -122,6 +124,34 @@ GPU_MUTATIONS = [
      dev("    surface_pressure(i) = surface_pressure(i) + pressure_p(1, i) + pressure_b(1, i);",
          "    surface_pressure(i) = surface_pressure(i) + pressure_p(1, i) + pressure_b(2, i);"),
      ["gpu_dycore_SC_restart_surface_pressure", "gpu_dycore_SC_output30_surface_pressure"]),
+    # --- the radiation step of RG on the device (tests/radiation_replay), each mutant in the device code only ---
+    # o3climatology_from_MPAS (OZ:317-321): the two months' factors swapped
+    (RDRV, "    for (int k = 1; k <= noz; ++k) o3clim(k, iCell) = fact1 * ozmixm(nm, k, iCell) + fact2 * ozmixm(np, k, iCell);",
+     dev("    for (int k = 1; k <= noz; ++k) o3clim(k, iCell) = fact1 * ozmixm(nm, k, iCell) + fact2 * ozmixm(np, k, iCell);",
+         "    for (int k = 1; k <= noz; ++k) o3clim(k, iCell) = fact2 * ozmixm(nm, k, iCell) + fact1 * ozmixm(np, k, iCell);"),
+     RG_RAD),
+    # calc_cldfraction (CL:361): the exponent gamma in place of pexp
+    (RDRV, "        cldfrac_p(i, k) = libm::pow(rhum / rhgrid, pexp) * (1. - libm::exp(arg));  // CL:361",
+     dev("        cldfrac_p(i, k) = libm::pow(rhum / rhgrid, pexp) * (1. - libm::exp(arg));  // CL:361",
+         "        cldfrac_p(i, k) = libm::pow(rhum / rhgrid, gamma) * (1. - libm::exp(arg));  // CL:361"), RG_RAD),
+    # the LW o3vmr diagnostic (RL:489): the pressures in units of 10 Pa
+    (RDRV, "        p2dv(i, k) = pres_hyd_p(i, k) / 100.;",
+     dev("        p2dv(i, k) = pres_hyd_p(i, k) / 100.;", "        p2dv(i, k) = pres_hyd_p(i, k) / 10.;"), RG_RAD),
+    # rrtmg_lwrad's buffer layers (LW 11822): at least two
+    (RAD, "  return in.kte + std::max(static_cast<int>(nint(pw1d_top / deltap)), 1);",
+     dev("  return in.kte + std::max(static_cast<int>(nint(pw1d_top / deltap)), 1);",
+         "  return in.kte + std::max(static_cast<int>(nint(pw1d_top / deltap)), 2);"), RG_RAD),
+    # the LW stage of the level sums skips the top level of every column
+    (RAD, "      if (lev > nlay[c]) return;",
+     dev("      if (lev > nlay[c]) return;", "      if (lev >= nlay[c]) return;"), RG_RAD),
+    # the SW zenith angle (SW 10206) with CUDA's cos in place of glibc's
+    (RAD, "  const real coszrs = sinlat * sindec + coslat * cosdec * libm::cos(hrang);",
+     dev("  const real coszrs = sinlat * sindec + coslat * cosdec * libm::cos(hrang);",
+         "  const real coszrs = sinlat * sindec + coslat * cosdec * ::cos(hrang);"), RG_RAD),
+    # the SW McICA subcolumns (SW 10540-10549) with permuteseed 2
+    (RAD, "  mcica_subcol(icld, 1, 112, nlay, v.pavel, v.cldfrac, w.hlay, in.idcor, in.julday, lat,",
+     dev("  mcica_subcol(icld, 1, 112, nlay, v.pavel, v.cldfrac, w.hlay, in.idcor, in.julday, lat,",
+         "  mcica_subcol(icld, 2, 112, nlay, v.pavel, v.cldfrac, w.hlay, in.idcor, in.julday, lat,"), RG_RAD),
 ]
 # tests/mutation_check.py mutants by a piece of their original fragment, with the GPU tests they must break (a mutant
 # of the shared source changes the CPU build alike: the vs_cpu tests are not among them)
