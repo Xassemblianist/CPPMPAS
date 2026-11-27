@@ -9,7 +9,7 @@
 # levels as RG and 41, RG's len_disp 240 km and dt 600 s with dx on both sides of New Tiedtke's 15 km switch
 # (len_disp 12 km), a convection step of two dynamics steps (n_cu = 2), the rainc bucket, a restart (initflag 0 at
 # the first step) and dt 300 s; three steps each, so initflag 1 and 0 both run.
-set -u
+set -euo pipefail
 mpas=$1; mmm=$2; work=$3; cpp=$4; shift 4
 here=$(dirname "$(realpath "$0")")
 cases=${*:-"1:55:3:1:240000:1:0:0:600 2:55:3:2:240000:1:0:0:600 3:55:3:3:12000:1:0:0:600 7:55:3:4:240000:1:0:0:600 12:55:3:5:12000:2:1:0:600 64:55:3:6:240000:1:0:0:600 63:41:3:7:12000:1:1:1:300 13:55:2:8:240000:1:0:1:600"}
@@ -20,12 +20,13 @@ rc=0
 for c in $cases; do
   IFS=: read -r nc nv ns seed ld ncu acr rst dt <<< "$c"
   in=$work/in_$c.bin
+  rm -f "$in" "$work/ref_$c.bin" "$work/cpp_$c.bin" "$work/ref_$c.log"  # no file of an earlier run can stand in
   python3 -I "$here/columns.py" make "$in" "$nc" "$nv" "$ns" "$seed" "$ld" "$ncu" "$acr" "$rst" "$dt" || { echo "FAIL: columns $c"; rc=1; continue; }
   "$work/ref/cu_gwdo_column_ref" "$in" "$work/ref_$c.bin" > "$work/ref_$c.log" 2>&1 || { cat "$work/ref_$c.log"; echo "FAIL: reference run $c"; rc=1; continue; }
   "$cpp" "$in" "$work/cpp_$c.bin" || { echo "FAIL: CPPMPAS run $c"; rc=1; continue; }
   echo -n "case $c: "
-  python3 -I "$here/columns.py" stats "$work/ref_$c.bin" "$nc"
-  if python3 -I "$here/columns.py" compare "$work/ref_$c.bin" "$work/cpp_$c.bin"; then
+  python3 -I "$here/columns.py" stats "$work/ref_$c.bin" "$nc" || { echo "FAIL: stats $c"; rc=1; continue; }
+  if python3 -I "$here/columns.py" compare "$in" "$work/ref_$c.bin" "$work/cpp_$c.bin"; then
     rm -f "$in" "$work/ref_$c.bin" "$work/cpp_$c.bin"  # kept when they differ
   else
     rc=1

@@ -118,7 +118,7 @@ contains
         return
       end if
     end do
-    stop 'pool stub full'
+    error stop 'pool stub full'
   end function
   integer function find(names, name)
     character(len=64), intent(in) :: names(nmax)
@@ -412,6 +412,6 @@ contains
                            rublten,rvblten,rthblten
 
 !--- local variables and arrays:
-  stop 'gwdo_ugwp: not part of the bl_ysu_gwdo check'
+  error stop 'gwdo_ugwp: not part of the bl_ysu_gwdo check'
   end subroutine gwdo_ugwp
 end module module_bl_ugwp_gwdo

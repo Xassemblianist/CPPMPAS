@@ -2,7 +2,7 @@
 """Synthetic columns for the radiation column check, and the comparison of the two programs' outputs.
 
   columns.py make <in.bin> <nCellsSolve> <nVertLevels> <nsteps> <seed> <cldovrlp> <dcorrlen> <o3climatology>
-  columns.py compare <ref out.bin> <cpp out.bin>
+  columns.py compare <in.bin> <ref out.bin> <cpp out.bin>   (the input gives nsteps: every step must be in both)
 
 cldovrlp: config_radt_cld_overlap 0 'none', 1 'random', 2 'maximum_random' (mesoscale_reference), 3 'maximum',
 5 'exponential_random'; dcorrlen: config_radt_cld_dcorrlen 0 'constant', 1 'latitude_varying'; o3climatology:
@@ -47,19 +47,58 @@ def put(o, name, a, kind=0):
 
 
 def records(path):
+    """The records of a column file; a short header or short data (a truncated file) is an error."""
     out = []
     with open(path, "rb") as f:
         while True:
             h = f.read(NAMELEN)
             if not h:
                 break
+            raw = f.read(24)
+            if len(h) != NAMELEN or len(raw) != 24:
+                raise ValueError(f"{path}: record {len(out) + 1} has a short header (truncated file)")
             name = h.decode().strip()
-            meta = np.frombuffer(f.read(24), dtype="<i4")
+            meta = np.frombuffer(raw, dtype="<i4")
             kind, nd, dims = int(meta[0]), int(meta[1]), [int(x) for x in meta[2:6]]
+            if kind not in (0, 1) or not 1 <= nd <= 4 or min(dims[:nd]) < 0:
+                raise ValueError(f"{path}: record {len(out) + 1} ({name!r}) has a bad header {meta.tolist()}")
             n = int(np.prod(dims[:nd]))
-            data = np.frombuffer(f.read(n * (8 if kind == 0 else 4)), dtype="<u8" if kind == 0 else "<i4")
+            size = n * (8 if kind == 0 else 4)
+            body = f.read(size)
+            if len(body) != size:
+                raise ValueError(f"{path}: record {len(out) + 1} ({name}) has {len(body)} of {size} bytes "
+                                 f"(truncated file)")
+            data = np.frombuffer(body, dtype="<u8" if kind == 0 else "<i4")
             out.append((name, kind, dims[:nd], data))
     return out
+
+
+def layout_problems(inp, recs):
+    """What a complete output of the input's nsteps steps holds: every step's phase markers, each followed by data
+    records, and at least one value."""
+    hdr = [x for n, _, _, x in records(inp) if n == "hdr"]
+    if len(hdr) != 1:
+        return [f"{inp}: no hdr record"]
+    nsteps = int(hdr[0][2])
+    if nsteps < 1:
+        return [f"{inp}: nsteps = {nsteps}"]
+    want = {(ph, s) for ph in ("S",) for s in range(1, nsteps + 1)}
+    want.add(("I", 0))  # the initialisation
+    seen, problems = set(), []
+    for i, (name, kind, dims, x) in enumerate(recs):
+        if name.startswith("#"):
+            if kind != 1 or x.size != 1:
+                problems.append(f"marker {name} is not one integer")
+                continue
+            seen.add((name[1:], int(x[0])))
+            if i + 1 == len(recs) or recs[i + 1][0].startswith("#"):
+                problems.append(f"marker {name} {int(x[0])} is followed by no data record")
+    missing = sorted(want - seen)
+    if missing:
+        problems.append(f"{len(missing)} phase markers missing (first {missing[0]}): the run did not finish")
+    if not any(x.size for n, _, _, x in recs if not n.startswith("#")):
+        problems.append("no value written")
+    return problems
 
 
 def make(path, nC, nV, nsteps, seed, cldovrlp, dcorrlen, o3clim):
@@ -184,8 +223,18 @@ def make(path, nC, nV, nsteps, seed, cldovrlp, dcorrlen, o3clim):
             put(o, n, np.ascontiguousarray(a.T))  # Fortran (nCellsSolve, levels)
 
 
-def compare(ref, cpp):
-    a, b = records(ref), records(cpp)
+def compare(inp, ref, cpp):
+    try:
+        a, b = records(ref), records(cpp)
+    except ValueError as exc:
+        print(f"FAIL: {exc}")
+        return 1
+    for label, recs in (("ref", a), ("cpp", b)):
+        problems = layout_problems(inp, recs)
+        for x in problems:
+            print(f"FAIL: {label}: {x}")
+        if problems:
+            return 1
     if [(n, k, d) for n, k, d, _ in a] != [(n, k, d) for n, k, d, _ in b]:
         for x, y in zip(a, b):
             if x[:3] != y[:3]:
@@ -220,4 +269,4 @@ if __name__ == "__main__":
     if sys.argv[1] == "make":
         make(sys.argv[2], *map(int, sys.argv[3:10]))
     else:
-        sys.exit(compare(sys.argv[2], sys.argv[3]))
+        sys.exit(compare(sys.argv[2], sys.argv[3], sys.argv[4]))
