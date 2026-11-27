@@ -1284,6 +1284,9 @@ MUTATIONS += [
      RG1("theta_m")),
     (DRV, "      dzs(1, iCell) = 0.10;", "      dzs(1, iCell) = 0.11;", RG1("theta_m")),
     (DRV, "      east(1, iCell) = -libm::sin(lon);", "      east(1, iCell) = libm::sin(lon);", RG1("u")),
+    # SURVIVES (shown once): the greenness update at step 1 recomputes the init file's own sfc_albbck / vegfra / shdmin
+    # / shdmax for the same date (init_atmosphere ran the same monthly_interp_to_date), and the next ring is at 24 h,
+    # after the last output of every reference; the update itself is killed by the shdmin mutant below
     (DRV, "  if (r.green_alarm.ringing(now_s)) {", "  if (false && r.green_alarm.ringing(now_s)) {", RG1("theta_m")),
     (DRV, "      o3climatology_from_MPAS(r.rad.curr_julday, q, m.nCellsSolve());",
      "      o3climatology_from_MPAS(r.rad.curr_julday + 1.0, q, m.nCellsSolve());", RG1("theta_m")),
@@ -1292,10 +1295,14 @@ MUTATIONS += [
     (DRV, "      rqvdynten(k, i) = config_monotonic ? (scalars2(qv, k, i) - s.scalars(qv, k, i)) / dt : 0.;",
      "      rqvdynten(k, i) = 0.;", ["dycore_RG_step2_theta_m"]),
     (LU, "    if (julday < 105 || julday >= 288) isn = 2;", "    if (julday < 105 || julday >= 285) isn = 2;", RG1("theta_m")),
+    # SURVIVES (shown once): over water sfc_albbck is read by no scheme after the update (the open-water albedo comes
+    # from landuse_init_forMPAS's sfc_albedo at the start), so the 0.08 is exact on RG
     (LU, "      if (landmask(iCell) == 0) sfc_albbck(iCell) = 0.08;", "      if (landmask(iCell) == 0) sfc_albbck(iCell) = 0.07;",
      RG1("theta_m")),
     (LU, "        field_out(n) = (field_in(month2, n) * real(target_date - middle[l]) +",
      "        field_out(n) = (field_in(month1, n) * real(target_date - middle[l]) +", RG1("theta_m")),
+    # monthly_min_max's minimum (shdmin, read by Noah) in the step-1 greenness update (DT:228-258)
+    (LU, "      field_min(n) = minner;", "      field_min(n) = maxxer;", RG1("theta_m")),
     # the writer keeps the input file's attributes of the physics fields (the reference restart's isltyp)
     (W, "      if (std::find(rd.begin(), rd.end(), n) != rd.end()) {", "      if (false) {", ["dycore_RG_restart_isltyp"]),
 ]
