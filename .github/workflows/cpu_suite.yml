@@ -22,7 +22,8 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: cpu_suite-${{ github.event_name }}-${{ inputs.ref || github.ref }}-${{ inputs.labels || 'all' }}
+  # pushes to main: only the newest runs; every dispatch runs on its own
+  group: cpu_suite-${{ github.event_name == 'push' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'push' }}
 env:
   REF: ${{ inputs.ref || github.sha }}
