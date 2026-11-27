@@ -45,8 +45,12 @@ void physics_get_tend(GetTendPools& mp, int rk_step, int dynamics_substep, FView
   using namespace physics_constants;
   const std::string& pbl = mp.pbl_scheme;
   const std::string& cu = mp.convection_scheme;
-  if (pbl != "off" && pbl != "bl_ysu")  // TD:405-425: bl_mynn's qs / ni / nc / nifa / nwfa tendencies
+  if (pbl != "off" && pbl != "bl_ysu" && pbl != "bl_mynn")
     throw Error("physics_get_tend: config_pbl_scheme = '" + pbl + "' has no verified port");
+  if (pbl == "bl_mynn" && mp.microp_scheme == "mp_thompson_aerosols")  // TD:414-422
+    throw Error("physics_get_tend: bl_mynn with mp_thompson_aerosols (nc / nifa / nwfa tendencies) has no verified port");
+  if (pbl == "bl_mynn" && (!mp.index_qs || !mp.index_ni))
+    throw Error("physics_get_tend: bl_mynn needs the scalars qs and ni (TD:409-410)");
   const GetTendArrays m = mp;
   const int nV = m.nVertLevels, nCells = m.nCells, nEdges = m.nEdges;
   const int nCellsSolve = m.nCellsSolve, nEdgesSolve = m.nEdgesSolve;
@@ -95,6 +99,13 @@ void physics_get_tend(GetTendPools& mp, int rk_step, int dynamics_substep, FView
         tend_scalars(m.index_qi, k, i) = tend_scalars(m.index_qi, k, i) + m.rqiblten(k, i) * mass(k, i);
       }
     });
+    if (pbl == "bl_mynn")  // TD:405-412
+      parallel_for(1, nCellsSolve, [=] CPPMPAS_LAMBDA(int i) {
+        for (int k = 1; k <= nV; ++k) {
+          tend_scalars(m.index_qs, k, i) = tend_scalars(m.index_qs, k, i) + m.rqsblten(k, i) * mass(k, i);
+          tend_scalars(m.index_ni, k, i) = tend_scalars(m.index_ni, k, i) + m.rniblten(k, i) * mass(k, i);
+        }
+      });
   }
 
   if (cu != "off") {  // TD:430-465
