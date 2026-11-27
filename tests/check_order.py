@@ -13,6 +13,9 @@ numbering, written differently on purpose (numpy, no loops shared with the C++):
 * completeness: the dump holds exactly the fields MPAS reads from such a file (grid: the horizontal mesh; init: the
   input stream fields CPPMPAS handles, Registry.xml:499-648).
 
+Float values are compared bit for bit (same type, same bytes: -0.0 differs from +0.0, NaN payloads count); a
+garbage element must be all zero bytes (+0.0, the Registry default).
+
 usage: check_order.py <grid or init file> <dump.nc> [MW|SC|JW|-] [--init qv,qc,...]
 """
 import sys
@@ -41,6 +44,30 @@ STATE = ["initial_time", "xtime", "u_init", "v_init", "t_init", "u", "w", "rho",
 MOIST = ["qv", "qc", "qr", "qi", "qs", "qg"]  # var_array scalars, Registry order
 
 
+def same(a, b):
+    """a and b hold the same values: floats bit for bit with the same type, integers by value"""
+    a, b = np.asarray(a), np.asarray(b)
+    if a.shape != b.shape:
+        return False
+    if a.dtype.kind == "f" or b.dtype.kind == "f":
+        return a.dtype == b.dtype and np.ascontiguousarray(a).tobytes() == np.ascontiguousarray(b).tobytes()
+    return bool(np.array_equal(a, b))
+
+
+def all_zero_bits(a):
+    """every byte 0: integer 0 or +0.0 (not -0.0)"""
+    return not np.ascontiguousarray(np.asarray(a)).tobytes().strip(b"\0")
+
+
+def differing(a, b):
+    """indices where a and b differ (bit for bit for floats)"""
+    a, b = np.asarray(a), np.asarray(b)
+    if a.dtype.kind == "f" and a.dtype == b.dtype:
+        u = np.dtype(f"u{a.dtype.itemsize}")
+        return np.argwhere(np.ascontiguousarray(a).view(u) != np.ascontiguousarray(b).view(u))
+    return np.argwhere(a != b)
+
+
 def first_seen(on_cell, n_on_cell):
     used = np.arange(on_cell.shape[1])[None, :] < n_on_cell[:, None]
     flat = on_cell[used]                      # C order = cell by cell, slot by slot
@@ -60,7 +87,7 @@ def main():
     failures = []
     with nc.Dataset(src_path) as s, nc.Dataset(dump_path) as d:
         for ds in (s, d):
-            ds.set_auto_mask(False)
+            ds.set_auto_maskandscale(False)
             ds.set_auto_chartostring(False)
         n = {"c": len(s.dimensions["nCells"]), "e": len(s.dimensions["nEdges"]), "v": len(s.dimensions["nVertices"])}
         nEdgesOnCell = s["nEdgesOnCell"][:]
@@ -104,10 +131,10 @@ def main():
             if mem.shape[2] != len(active):
                 failures.append(f"scalars: {mem.shape[2]} constituents in memory, expected {len(active)}")
             for k, x in enumerate(active[:mem.shape[2]]):
-                if not np.array_equal(mem[:-1, :, k], s[x][0][order["c"] - 1]):
+                if not same(mem[:-1, :, k], s[x][0][order["c"] - 1]):
                     failures.append(f"scalars: constituent {k + 1} ({x}) differs from the file")
-            if np.any(mem[-1] != 0):
-                failures.append("scalars: garbage column is not 0")
+            if not all_zero_bits(mem[-1]):
+                failures.append("scalars: garbage column is not +0.0")
         checked = 0
         for name in d.variables:
             if name.startswith("indexTo") or name == "scalars":
@@ -126,7 +153,7 @@ def main():
             sdims = [x for x in sv.dimensions if x != "Time"]
             outer = OUTER.get(sdims[0]) if sdims else None
             if outer is None:
-                if not np.array_equal(mem.reshape(src.shape), src):
+                if not same(np.asarray(mem).reshape(np.shape(src)), src):
                     failures.append(f"{name}: values differ")
                 checked += 1
                 continue
@@ -136,11 +163,12 @@ def main():
                 k = CONN[name]
                 valid = (expect >= 1) & (expect <= n[k])
                 expect = np.where(valid, inv[k][np.clip(expect, 0, n[k])], n[k] + 1)
-            if not np.array_equal(body, expect):
-                bad = np.argwhere(body != expect)
-                failures.append(f"{name}: {len(bad)} values differ, first local index {bad[0] + 1}")
-            if np.any(garbage != 0):
-                failures.append(f"{name}: garbage element is not the Registry default 0")
+            if not same(body, expect):
+                bad = differing(body, expect)
+                first = bad[0] + 1 if len(bad) else f"(types {body.dtype} / {expect.dtype})"
+                failures.append(f"{name}: {len(bad)} values differ, first local index {first}")
+            if not all_zero_bits(garbage):
+                failures.append(f"{name}: garbage element is not the Registry default 0 (+0.0)")
             checked += 1
         if checked != len(expected) - 3 - (scalars is not None):
             failures.append(f"only {checked} arrays checked")

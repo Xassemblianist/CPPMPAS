@@ -226,9 +226,10 @@ MUTATIONS = [
      "    if (m.cellsOnEdge(1, iEdge) == nCells + 1)", ["unit_init_guards"]),
     (R, "    buf = f.get_double(rv.name, record);", "    buf = f.get_double(rv.name, record), buf[0] = buf[0] * 0.5;",
      ["readrestart_MW", "readrestart_SC", "readrestart_JW"] + [f"dycore_restart0_MW_{f}" for f in "u w rho theta".split()]),
-    ("tests/compare_arrays.py", "            out.append((k, arr.dtype.str, arr.tobytes()))", "            out.append((k, \"x\", str(a)))",
+    # (attributes of a classic file come from tools/mpas_compare.py's raw header reader: name, type, bytes)
+    ("tests/compare_arrays.py", "            if atts_x != atts_y:", "            if [t[::2] for t in atts_x] != [t[::2] for t in atts_y]:",
      ["compare_arrays_unit"]),
-    ("tests/compare_arrays.py", "            if attributes(x) != attributes(y):", "            if False:", ["compare_arrays_unit"]),
+    ("tests/compare_arrays.py", "            if atts_x != atts_y:", "            if False:", ["compare_arrays_unit"]),
     (L, "double cos(double x) { return ::cppwrf::glibc::cos(arg(x)); }",
      "double cos(double x) { return ::cppwrf::glibc::mvec::cos(arg(x)); }", ["unit_libm"]),
     (L, "    *sinx = g::copysign(g::do_cos(a, da), x);", "    *sinx = g::copysign(g::do_cos(y, hp1), x);", ["unit_libm"]),
@@ -438,8 +439,8 @@ MUTATIONS = [
     ("src/core/field.hpp", "      if (e != 0 && n > data_.max_size() / static_cast<std::size_t>(e))",
      "      if (false)", ["unit_decomp"]),
     ("src/core/field.hpp", "    if (d < 0) throw Error(\"FArray: negative dimension index\");", "", ["unit_decomp"]),
-    ("tests/compare_arrays.py", "            out.append((k, arr.dtype.str, arr.tobytes()))\n    return out",
-     "            out.append((k, arr.dtype.str, arr.tobytes()))\n    return sorted(out)", ["compare_arrays_unit"]),
+    ("tests/compare_arrays.py", "            if atts_x != atts_y:", "            if sorted(atts_x) != sorted(atts_y):",
+     ["compare_arrays_unit"]),
     # (an empty name would also fail as a missing variable: the mutant restores the old filter)
     ("tests/compare_arrays.py", "    names = a.vars.split(\",\")\n", "    names = [v for v in a.vars.split(\",\") if v]\n",
      ["compare_arrays_unit"]),
