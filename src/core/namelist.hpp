@@ -54,10 +54,10 @@ std::map<std::string, std::string> effective_namelist(const std::string& path);
 // InitConfig from a namelist.atmosphere file (empty path: the Registry defaults), after effective_namelist's checks.
 InitConfig read_init_config(const std::string& path);
 // The constituents of the var_array scalars the namelist activates, in Registry order (Registry.xml:1701-1748: qv
-// always; qc, qr ... through their packages, mpas_atmphys_packages.F). Handled: config_physics_suite = 'none', which
-// turns 'suite' into 'off' (mpas_atmphys_control.F:155-165), config_les_model = 'none', convection and PBL off, and
-// microphysics off (qv) or mp_kessler (mp_kessler_in, mpas_atmphys_packages.F:88-89: qv, qc, qr). Anything else is
-// an error.
+// always; qc, qr, qi, qs, qg through their packages, mpas_atmphys_packages.F), after physics_namelist_check's
+// resolution of 'suite' (mpas_atmphys_control.F:157-196) for config_physics_suite 'none' and 'mesoscale_reference'.
+// Handled: config_les_model = 'none'; microphysics off, mp_kessler or mp_wsm6; convection off or cu_ntiedtke; PBL off
+// or bl_ysu. Anything else is an error.
 std::vector<std::string> active_scalars(const InitConfig& cfg);
 
 }  // namespace cppmpas

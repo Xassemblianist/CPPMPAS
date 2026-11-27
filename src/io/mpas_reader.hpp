@@ -8,6 +8,7 @@
 
 #include "core/mesh.hpp"
 #include "io/netcdf_file.hpp"
+#include "io/registry_pools.hpp"
 
 namespace cppmpas {
 
@@ -26,6 +27,7 @@ struct MpasInput {
   State state;
   Diag diag;
   bool has_state = false;
+  RegistryPools pools;  // the fields of the other var_structs (read_input_pools), by name
   SourceInfo source;
   std::vector<std::string> warnings;  // MPAS's own warnings (mpas_bootstrapping.F), e.g. a missing attribute
 };
@@ -37,6 +39,14 @@ MpasInput read_mpas_grid(const std::string& path);
 // qv, qc, qr for SC with mp_kessler, Registry.xml:1701-1712). qv is required; a name given twice is an error.
 MpasInput read_mpas_init(const std::string& path, const std::vector<std::string>& scalars);
 
+// The fields of the input stream that belong to the Registry pools (sfc_input, diag_physics, diag's relhum, ...;
+// Registry.xml:567-648) and to the active packages, read into in.pools with MPAS's memory extents and local order.
+// A field of an inactive package is skipped ("Requested field ... is deactivated due to packages",
+// mpas_bootstrapping.F); a field the file lacks keeps its Registry default with MPAS's warning
+// "Variable <name> not in input file." (mpas_io_streams.F). dims: the namelist-defined dimensions (nLags,
+// nOznLevels, nAerLevels, cam_dim1); nSoilLevels and nMonths come from the file when it has them.
+void read_input_pools(const std::string& path, MpasInput& in, const ActivePackages& packages,
+                      const std::map<std::string, int>& dims);
 // Field access by MPAS name (for the writer and tests). Exactly one of r / i / c is set.
 struct FieldRef {
   std::string name;

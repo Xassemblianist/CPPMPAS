@@ -76,10 +76,12 @@ add_library(cppmpas STATIC
   src/physics/module_sf_noahdrv.cpp
   src/physics/mpas_atmphys_driver_lsm.cpp
   src/physics/mpas_atmphys_lsm_noahinit.cpp
+  src/physics/mpas_atmphys_control.cpp
   src/operators/vector_operations.cpp
   src/operators/vector_reconstruct.cpp
   src/io/netcdf_file.cpp
   src/io/registry.cpp
+  src/io/registry_pools.cpp
   src/io/mpas_reader.cpp
   src/io/mpas_restart.cpp
   src/io/mpas_writer.cpp

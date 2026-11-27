@@ -16,6 +16,7 @@
 // the reference's arithmetic instruction counts (only the set-up of the stub pool calls differs);
 // module_sf_sfclayrev.F's sfclayrev and sf_sfclayrev_pre_run are instruction-identical.
 #include <string>
+#include <vector>
 
 #include "core/field.hpp"
 #include "core/precision.hpp"
@@ -45,8 +46,16 @@ struct SfclayerPools {
 // init_sfclayer (SL:799-836) for 'sf_monin_obukhov_rev': sf_sfclayrev_init as the MPAS executable computes it
 void init_sfclayer(const std::string& sfclayer_scheme, sfclayrev::SFClayRevTables<real>& tables);
 
+// The *_sea arrays of mpas_atmphys_vars (mpas_atmphys_vars.F:934-937) that outlive driver_sfclayer: allocate_sfclayer
+// allocates them, deallocate_sfclayer leaves them, driver_seaice reads them and deallocate_seaice frees them
+// (mpas_atmphys_driver_seaice.F:152-160, 336-460). Filled only with config_frac_seaice (1-based: element i - 1).
+struct SfclayerSeaArrays {
+  std::vector<real> chs, chs2, cqs2, cpm, hfx, qfx, qgh, qsfc, lh;
+};
+
 // SL:839-1088 on cells its..ite (its = 1). v: MPAS_to_physics' arrays (pres_hyd_p, psfc_p, t_p, u_p, v_p, qv_p, dz_p).
+// sea_out (optional): receives the *_sea arrays the sea-ice driver reads.
 void driver_sfclayer(int itimestep, const sfclayrev::SFClayRevTables<real>& tables, SfclayerPools& m,
-                     const PhysicsVars& v, int its, int ite);
+                     const PhysicsVars& v, int its, int ite, SfclayerSeaArrays* sea_out = nullptr);
 
 }  // namespace cppmpas::phys

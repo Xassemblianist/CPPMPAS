@@ -93,7 +93,10 @@ cppmpas_error_test(boundary "lies on the mesh boundary (cellsOnCell = 0)" info $
 cppmpas_error_test(bdymask "limited-area meshes are not handled" info --init ${W}/err_bdymask.nc)
 cppmpas_error_test(two_records "has 2 time records" info --init ${W}/err_two_records.nc)
 cppmpas_error_test(missing_init_var "required variable zz of the input stream is missing" info --init ${W}/err_missing_zz.nc)
-cppmpas_error_test(missing_scalar "active scalar qr is missing" info --init --scalars qv,qc,qr ${W}/err_missing_qr.nc)
+# a constituent the input file lacks keeps its default 0 with MPAS's warning (the RG input has no qi, qs, qg)
+add_test(NAME err_missing_scalar COMMAND ${PY} ${T}/expect_error.py --warning "Variable qr not in input file."
+  ${EXE} info --init --scalars qv,qc,qr ${W}/err_missing_qr.nc)
+set_tests_properties(err_missing_scalar PROPERTIES FIXTURES_REQUIRED inputs)
 cppmpas_error_test(bad_dims "variable u has dimensions (Time, nVertLevels, nEdges)" info --init ${W}/err_bad_dims_u.nc)
 cppmpas_error_test(unknown_scalar "scalar 'qz' is not a constituent" info --init --scalars qv,qz ${W}/mw_init.nc)
 cppmpas_error_test(unported_field "variable 'relhum' has no CPPMPAS port" history ${W}/mw_init.nc ${W}/x.nc --fields u,relhum)

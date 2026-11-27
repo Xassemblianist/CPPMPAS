@@ -325,16 +325,37 @@ InitConfig read_init_config(const std::string& path) {
 }
 
 std::vector<std::string> active_scalars(const InitConfig& c) {
-  if (c.config_physics_suite != "none")
-    throw Error("active scalars: config_physics_suite = '" + c.config_physics_suite + "' is not handled");
   if (c.config_les_model != "none") throw Error("active scalars: config_les_model = '" + c.config_les_model + "' is not handled");
-  // mpas_atmphys_control.F:157-159: with the suite 'none', 'suite' means 'off'
-  const auto off = [](const std::string& s) { return s == "suite" || s == "off"; };
-  if (!off(c.config_convection_scheme) || !off(c.config_pbl_scheme))
-    throw Error("active scalars: convection / PBL schemes are not handled");
-  if (off(c.config_microp_scheme)) return {"qv"};
-  if (c.config_microp_scheme == "mp_kessler") return {"qv", "qc", "qr"};
-  throw Error("active scalars: config_microp_scheme = '" + c.config_microp_scheme + "' is not handled");
+  // physics_namelist_check (mpas_atmphys_control.F:157-196): 'suite' resolved by the physics suite
+  std::string mp = c.config_microp_scheme, cu = c.config_convection_scheme, pbl = c.config_pbl_scheme;
+  if (c.config_physics_suite == "mesoscale_reference") {
+    if (mp == "suite") mp = "mp_wsm6";
+    if (cu == "suite") cu = "cu_ntiedtke";
+    if (pbl == "suite") pbl = "bl_ysu";
+  } else if (c.config_physics_suite == "none") {
+    if (mp == "suite") mp = "off";
+    if (cu == "suite") cu = "off";
+    if (pbl == "suite") pbl = "off";
+  } else {
+    throw Error("active scalars: config_physics_suite = '" + c.config_physics_suite + "' is not handled");
+  }
+  // atmphys_setup_packages (mpas_atmphys_packages.F:84-176) and the packages of the scalars (Registry.xml:1701-1748):
+  // qv always; qc with bl_ysu_in, cu_ntiedtke_in, mp_kessler_in, mp_wsm6_in (and Thompson / MYNN); qr with
+  // mp_kessler_in or mp_wsm6_in; qi with bl_ysu_in, cu_ntiedtke_in or mp_wsm6_in; qs, qg with mp_wsm6_in
+  if (cu != "off" && cu != "cu_ntiedtke") throw Error("active scalars: config_convection_scheme = '" + cu + "' is not handled");
+  if (pbl != "off" && pbl != "bl_ysu") throw Error("active scalars: config_pbl_scheme = '" + pbl + "' is not handled");
+  if (mp != "off" && mp != "mp_kessler" && mp != "mp_wsm6")
+    throw Error("active scalars: config_microp_scheme = '" + mp + "' is not handled");
+  const bool wsm6 = mp == "mp_wsm6", kessler = mp == "mp_kessler", ntiedtke = cu == "cu_ntiedtke", ysu = pbl == "bl_ysu";
+  std::vector<std::string> v = {"qv"};
+  if (ysu || ntiedtke || kessler || wsm6) v.push_back("qc");
+  if (kessler || wsm6) v.push_back("qr");
+  if (ysu || ntiedtke || wsm6) v.push_back("qi");
+  if (wsm6) {
+    v.push_back("qs");
+    v.push_back("qg");
+  }
+  return v;
 }
 
 }  // namespace cppmpas

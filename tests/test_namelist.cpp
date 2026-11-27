@@ -192,13 +192,16 @@ int main(int argc, char** argv) {
     c.config_microp_scheme = "mp_kessler";
     expect(active_scalars(c) == std::vector<std::string>{"qv", "qc", "qr"}, "mp_kessler: qv, qc, qr");
     c.config_microp_scheme = "mp_wsm6";
-    bool threw = false;
-    try {
-      (void)active_scalars(c);
-    } catch (const Error&) {
-      threw = true;
-    }
-    expect(threw, "mp_wsm6 is not handled");
+    expect(active_scalars(c) == std::vector<std::string>{"qv", "qc", "qr", "qi", "qs", "qg"},
+           "mp_wsm6: qv, qc, qr, qi, qs, qg");
+    // the mesoscale_reference suite: mp_wsm6, cu_ntiedtke, bl_ysu (mpas_atmphys_control.F:157-166)
+    InitConfig mr;
+    mr.config_physics_suite = "mesoscale_reference";
+    expect(active_scalars(mr) == std::vector<std::string>{"qv", "qc", "qr", "qi", "qs", "qg"},
+           "mesoscale_reference: qv, qc, qr, qi, qs, qg");
+    mr.config_microp_scheme = "off";
+    expect(active_scalars(mr) == std::vector<std::string>{"qv", "qc", "qi"},
+           "mesoscale_reference without microphysics: qc, qi of cu_ntiedtke_in / bl_ysu_in");
     // each of the other physics choices is an error
     auto refuses = [&](InitConfig x, const std::string& text) {
       try {
@@ -211,17 +214,20 @@ int main(int argc, char** argv) {
     InitConfig d;
     d.config_physics_suite = "none";
     InitConfig x = d;
-    x.config_physics_suite = "mesoscale_reference";
-    expect(refuses(x, "config_physics_suite = 'mesoscale_reference' is not handled"), "a physics suite is not handled");
+    x.config_physics_suite = "convection_permitting";
+    expect(refuses(x, "config_physics_suite = 'convection_permitting' is not handled"), "a physics suite is not handled");
     x = d;
     x.config_les_model = "3d_smagorinsky";
     expect(refuses(x, "config_les_model = '3d_smagorinsky' is not handled"), "an LES model is not handled");
     x = d;
-    x.config_convection_scheme = "cu_ntiedtke";
-    expect(refuses(x, "convection / PBL schemes are not handled"), "a convection scheme is not handled");
+    x.config_convection_scheme = "cu_kain_fritsch";
+    expect(refuses(x, "config_convection_scheme = 'cu_kain_fritsch' is not handled"), "a convection scheme is not handled");
     x = d;
-    x.config_pbl_scheme = "bl_ysu";
-    expect(refuses(x, "convection / PBL schemes are not handled"), "a PBL scheme is not handled");
+    x.config_pbl_scheme = "bl_mynn";
+    expect(refuses(x, "config_pbl_scheme = 'bl_mynn' is not handled"), "a PBL scheme is not handled");
+    x = d;
+    x.config_microp_scheme = "mp_thompson";
+    expect(refuses(x, "config_microp_scheme = 'mp_thompson' is not handled"), "a microphysics scheme is not handled");
   }
   }
   if (locale_only) {

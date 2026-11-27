@@ -128,7 +128,7 @@ void init_sfclayer(const std::string& sfclayer_scheme, sfclayrev::SFClayRevTable
 }
 
 void driver_sfclayer(int itimestep, const sfclayrev::SFClayRevTables<real>& tables, SfclayerPools& m,
-                     const PhysicsVars& v, int its, int ite) {
+                     const PhysicsVars& v, int its, int ite, SfclayerSeaArrays* sea_out) {
   using namespace physics_constants;
   (void)itimestep;  // initflag (SL:885-886) is used by sf_mynn only
   if (m.sfclayer_scheme != "sf_monin_obukhov_rev")
@@ -348,6 +348,17 @@ void driver_sfclayer(int itimestep, const sfclayrev::SFClayRevTables<real>& tabl
         m.fm(i) = p.fm[I(i)] * x + (1. - x) * sea.fm[I(i)];
       }
     }
+  if (seaice && sea_out) {  // the module arrays the sea-ice driver reads next
+    sea_out->chs = sea.chs;
+    sea_out->chs2 = sea.chs2;
+    sea_out->cqs2 = sea.cqs2;
+    sea_out->cpm = sea.cpm;
+    sea_out->hfx = sea.hfx;
+    sea_out->qfx = sea.qfx;
+    sea_out->qgh = sea.qgh;
+    sea_out->qsfc = sea.qsfc;
+    sea_out->lh = sea.lh;
+  }
 }
 
 }  // namespace cppmpas::phys
