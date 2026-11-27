@@ -205,7 +205,7 @@ PHYSICS_MUTATIONS = [
      RGR("skintemp", "tslb") + RGV),
     # the sea-ice driver's SFLX skipped
     (PH + "module_sf_noahdrv.cpp", "  parallel_for(a.its, a.ite, [=] CPPMPAS_LAMBDA(int i) { si(i - ims, 0); });",
-     "  parallel_for(a.its, a.ite, [=] CPPMPAS_LAMBDA(int i) {\n" + dev("    si(i - ims, 0);", "    (void)si;")
+     "  parallel_for(a.its, a.ite, [=] CPPMPAS_LAMBDA(int i) {\n" + dev("    si(i - ims, 0);", "    (void)si; (void)(i - ims);")
      + "\n  });", RGR("skintemp", "hfx")),
     # seaice_to_MPAS (seaice.F:387-405): open-water albedo 0.07
     (PH + "mpas_atmphys_driver_lsm.cpp", "      L.at(L.sfc_albedo_p, i) = x * L.at(L.sfc_albedo_p, i) + (1. - x) * 0.08;",
@@ -221,7 +221,7 @@ PHYSICS_MUTATIONS = [
      RGR("rublten", "rthblten") + RGV),
     # GWDO's column routine skipped
     (PH + "mpas_atmphys_gwdo.cpp", "    bl_gwdo::bl_gwdo_run<real>(c, kte, gravity, cp, R_d, ep_1, pii, m.dt_pbl);",
-     dev("    bl_gwdo::bl_gwdo_run<real>(c, kte, gravity, cp, R_d, ep_1, pii, m.dt_pbl);", "    (void)c;"),
+     dev("    bl_gwdo::bl_gwdo_run<real>(c, kte, gravity, cp, R_d, ep_1, pii, m.dt_pbl);", "    (void)c; (void)kte; (void)m.dt_pbl;"),
      RGR("dtaux3d", "dusfcg")),
     # New Tiedtke's cuinin without the libmvec lanes
     (PH + "module_cu_ntiedtke.cpp", "    c.cuinin_mvec = lane(i - its, im);",
@@ -231,7 +231,7 @@ PHYSICS_MUTATIONS = [
     (PH + "mpas_atmphys_convection.cpp",
      "          (m.rthdynten(k, i) + m.rthblten(k, i) + m.rthratenlw(k, i) + m.rthratensw(k, i)) * v.pi_p(i, k);",
      dev("          (m.rthdynten(k, i) + m.rthblten(k, i) + m.rthratenlw(k, i) + m.rthratensw(k, i)) * v.pi_p(i, k);",
-         "          (m.rthdynten(k, i) + m.rthblten(k, i) + m.rthratenlw(k, i) + m.rthratensw(k, i)) * 1.0;"),
+         "          (m.rthdynten(k, i) + m.rthblten(k, i) + m.rthratenlw(k, i) + m.rthratensw(k, i)) * (0. * v.pi_p(i, k) + 1.);"),
      RGR("rthcuten", "rqvcuten")),
     # WSM6 without the libmvec lanes of the warm-rain loop (every column the scalar log / exp)
     (PH + "module_mp_wsm6.cpp", "           sr, i - its, ite - its + 1);",
