@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Tests for tools/mpas_compare.py on synthetic MPAS-like files. Run: python3 -m unittest discover tests/compare"""
 import contextlib
+import ctypes
+import ctypes.util
 import io
 import os
 import shutil
@@ -148,12 +150,96 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("theta variable attributes", out)
 
-    def test_wall_clock_attribute_ignored(self):
-        def m(ds):
-            ds.setncattr("creation_date", "2030-01-01 00:00:00")
-            ds.setncattr("file_id", "abcdefghij")
-        code, out = run(self.ref, self.cand(m))
+    def test_random_file_id_ignored(self):
+        code, out = run(self.ref, self.cand(lambda ds: ds.setncattr("file_id", "abcdefghij")))
         self.assertEqual(code, 0, out)
+
+    def test_file_id_missing(self):
+        code, out = run(self.ref, self.cand(lambda ds: ds.delncattr("file_id")))
+        self.assertEqual(code, 1)
+        self.assertIn("global attributes", out)
+
+    def test_date_attribute_compared(self):
+        # MPAS writes no wall-clock date: a date attribute that differs is a difference
+        code, out = run(self.ref, self.cand(lambda ds: ds.setncattr("creation_date", "2030-01-01 00:00:00")))
+        self.assertEqual(code, 1)
+        self.assertIn("global attributes", out)
+
+    def test_signed_zero_global_attribute(self):
+        ref = self.dir / "refz.nc"
+        write(ref, lambda ds: ds.setncattr("config_dt", 0.0))
+        code, out = run(ref, self.cand(lambda ds: ds.setncattr("config_dt", -0.0)))
+        self.assertEqual(code, 1)
+        self.assertIn("global attributes", out)
+
+    def test_global_attribute_order(self):
+        def m(ds):
+            v = ds.getncattr("model_name")
+            ds.delncattr("model_name")
+            ds.setncattr("model_name", v)
+        code, out = run(self.ref, self.cand(m))
+        self.assertEqual(code, 1)
+        self.assertIn("global attributes", out)
+
+    def test_text_attribute_nul(self):
+        # a units attribute "K\0" (two bytes, written through the C library: netCDF4-python strips the NUL when it
+        # writes and when it reads, so through it the file reads as "K"): the header bytes are compared
+        cand = self.cand()
+        lib = ctypes.CDLL(ctypes.util.find_library("netcdf"))
+        ncid, varid = ctypes.c_int(), ctypes.c_int()
+        self.assertEqual(lib.nc_open(str(cand).encode(), 1, ctypes.byref(ncid)), 0)  # NC_WRITE
+        self.assertEqual(lib.nc_redef(ncid), 0)
+        self.assertEqual(lib.nc_inq_varid(ncid, b"theta", ctypes.byref(varid)), 0)
+        self.assertEqual(lib.nc_put_att_text(ncid, varid, b"units", ctypes.c_size_t(2), b"K\0"), 0)
+        self.assertEqual(lib.nc_close(ncid), 0)
+        with nc.Dataset(cand) as ds:
+            self.assertEqual(ds["theta"].getncattr("units"), "K")  # what netCDF4-python shows
+        code, out = run(self.ref, cand)
+        self.assertEqual(code, 1)
+        self.assertIn("theta variable attributes", out)
+
+    def test_variable_attribute_type(self):
+        def m(ds):
+            ds["theta"].setncattr("missing_value", np.float32(1.0))
+        ref = self.dir / "reft.nc"
+        write(ref, lambda ds: ds["theta"].setncattr("missing_value", np.float64(1.0)))
+        code, out = run(ref, self.cand(m))
+        self.assertEqual(code, 1)
+        self.assertIn("theta variable attributes", out)
+
+    def test_zero_time_records(self):
+        for fmt in ("NETCDF3_64BIT_DATA", "NETCDF4"):
+            a, b = self.dir / f"z0_{fmt}.nc", self.dir / f"z1_{fmt}.nc"
+            for path in (a, b):
+                with nc.Dataset(path, "w", format=fmt) as ds:
+                    ds.createDimension("Time", None)
+                    ds.createDimension("nCells", N_CELLS)
+                    ds.createVariable("theta", "f8", ("Time", "nCells"))
+            code, out = run(a, b)
+            self.assertEqual(code, 1, fmt)
+            self.assertIn("theta no time record", out)
+
+    def test_truncated_file(self):
+        cand = self.cand()
+        data = cand.read_bytes()
+        cand.write_bytes(data[:-8])
+        code, out = run(self.ref, cand)
+        self.assertEqual(code, 1)
+        self.assertIn("truncated", out)
+        code, out = run(cand, self.ref)
+        self.assertEqual(code, 1)
+        self.assertIn("truncated", out)
+
+    def test_same_file_is_error(self):
+        code, _ = run(self.ref, self.ref)
+        self.assertEqual(code, 2)
+        code, _ = run(self.dir, self.dir)
+        self.assertEqual(code, 2)
+
+    def test_empty_name_is_error(self):
+        for sel in ("theta,", "theta,,w32", ""):
+            code, _ = run(self.ref, self.cand(), "--vars", sel)
+            self.assertEqual(code, 2, sel)
 
     def test_other_global_attribute(self):
         code, out = run(self.ref, self.cand(lambda ds: ds.setncattr("config_dt", 300.0)))
