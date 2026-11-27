@@ -477,9 +477,8 @@ void physics_driver(PhysicsRun& r, const Mesh& m, State& s, Diag& d, RegistryPoo
     MPAS_to_physics(tp, v, its, ite);
   }
   if (r.l_radtlw || r.l_radtsw) {  // DR:210-246
-    // TEMPORARY (radiation on the host until opm25/gpu-radiation is merged): in the CUDA build these calls run as
-    // host code on the managed arrays MPAS_to_physics and the earlier steps' kernels wrote (every launch has
-    // synchronised), and the kernels after them read what they write
+    // in the CUDA build the cloudiness and the RRTMG drivers run as kernels on the arrays MPAS_to_physics wrote and
+    // return synchronised (GPU_RADIATION_INTERFACE: physics/mpas_atmphys_radiation.hpp)
     RadiationPools q = radiation_pools(r, m, p);
     r.rad.sw_ran = false;
     driver_cloudiness(q, v, r.rad, its, ite);

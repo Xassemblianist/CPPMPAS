@@ -28,13 +28,17 @@ B, BC, X, L = "src/core/backend.hpp", "src/core/backend_cuda.cu", "tools/cppmpas
 CM = "CMakeLists.txt"
 AS, DP = "src/core_atmosphere/atm_advance_scalars.cpp", "src/core_atmosphere/atm_dissipation_perturbation.cpp"
 MP, KS = "src/core_atmosphere/atm_microphysics.cpp", "src/physics/mp_kessler.hpp"
+RAD, RDRV = "src/physics/module_ra_rrtmg.cpp", "src/physics/mpas_atmphys_radiation.cpp"
+RG_RAD = ["gpu_radiation_RG_0", "gpu_radiation_RG_1800"]
 
 
 def dev(orig, mut):
     """the mutated statement in the device code only (the CPU build keeps the original): the vs_cpu tests see it.
     The mutated statement must use the same variables as the original: an extended lambda's implicit captures are
     the host pass's, so a variable only the device branch names is not captured (a first version that divided by
-    rho_zz_old in place of rho_zz_new, or dropped pressure_b, read another capture's bytes on the device)."""
+    rho_zz_old in place of rho_zz_new, or dropped pressure_b, read another capture's bytes on the device). It must
+    also name them in the original's order: the device pass lays out the captures in the order of their first use
+    in its body, so a swap of two captures reads each from the other's slot and cancels (a first o3clim mutant)."""
     return f"#if defined(__CUDA_ARCH__)\n{mut}\n#else\n{orig}\n#endif"
 
 
@@ -123,6 +127,39 @@ GPU_MUTATIONS = [
      dev("    surface_pressure(i) = surface_pressure(i) + pressure_p(1, i) + pressure_b(1, i);",
          "    surface_pressure(i) = surface_pressure(i) + pressure_p(1, i) + pressure_b(2, i);"),
      ["gpu_dycore_SC_restart_surface_pressure", "gpu_dycore_SC_output30_surface_pressure"]),
+    # --- the radiation step of RG on the device (tests/radiation_replay), each mutant in the device code only ---
+    # o3climatology_from_MPAS (OZ:317-321): the second month subtracted. (A first version swapped fact1 and fact2: it
+    # survived, a mutant of nothing: the device pass orders an extended lambda's implicit captures by their first use
+    # in the body it compiles, the host pass by its own, so a swap of two captures in the device branch reads each
+    # from the other's slot and cancels. The mutated statement must use the captures in the original's order.)
+    (RDRV, "    for (int k = 1; k <= noz; ++k) o3clim(k, iCell) = fact1 * ozmixm(nm, k, iCell) + fact2 * ozmixm(np, k, iCell);",
+     dev("    for (int k = 1; k <= noz; ++k) o3clim(k, iCell) = fact1 * ozmixm(nm, k, iCell) + fact2 * ozmixm(np, k, iCell);",
+         "    for (int k = 1; k <= noz; ++k) o3clim(k, iCell) = fact1 * ozmixm(nm, k, iCell) - fact2 * ozmixm(np, k, iCell);"),
+     RG_RAD),
+    # calc_cldfraction (CL:361): the exponent gamma in place of pexp. RG's 00:00 call has no cloud water or ice
+    # anywhere (qcld < qcldmin in every cell, cldfrac = 0): only the 00:30 call reaches this statement
+    (RDRV, "        cldfrac_p(i, k) = libm::pow(rhum / rhgrid, pexp) * (1. - libm::exp(arg));  // CL:361",
+     dev("        cldfrac_p(i, k) = libm::pow(rhum / rhgrid, pexp) * (1. - libm::exp(arg));  // CL:361",
+         "        cldfrac_p(i, k) = libm::pow(rhum / rhgrid, gamma) * (1. - libm::exp(arg));  // CL:361"), ["gpu_radiation_RG_1800"]),
+    # the LW o3vmr diagnostic (RL:489): the pressures in units of 10 Pa
+    (RDRV, "        p2dv(i, k) = pres_hyd_p(i, k) / 100.;",
+     dev("        p2dv(i, k) = pres_hyd_p(i, k) / 100.;", "        p2dv(i, k) = pres_hyd_p(i, k) / 10.;"), RG_RAD),
+    # rrtmg_lwrad's standard profile above the model top (LW 11993) matched at level kte + 1. (A first version asked for
+    # at least two buffer layers, LW 11822: equivalent on RG, whose top pressures, 7.5-12.4 hPa, give 2-3 everywhere.)
+    (RAD, "    v.tz[K(k)] = w.varint[K(k)] + (v.tz[K(kte)] - w.varint[K(kte)]);",
+     dev("    v.tz[K(k)] = w.varint[K(k)] + (v.tz[K(kte)] - w.varint[K(kte)]);",
+         "    v.tz[K(k)] = w.varint[K(k)] + (v.tz[K(kte + 1)] - w.varint[K(kte + 1)]);"), RG_RAD),
+    # the LW stage of the level sums skips the top level of every column
+    (RAD, "      if (lev > nlay[c]) return;",
+     dev("      if (lev > nlay[c]) return;", "      if (lev >= nlay[c]) return;"), RG_RAD),
+    # the SW zenith angle (SW 10206) with CUDA's cos in place of glibc's
+    (RAD, "  const real coszrs = sinlat * sindec + coslat * cosdec * libm::cos(hrang);",
+     dev("  const real coszrs = sinlat * sindec + coslat * cosdec * libm::cos(hrang);",
+         "  const real coszrs = sinlat * sindec + coslat * cosdec * ::cos(hrang);"), RG_RAD),
+    # the SW McICA subcolumns (SW 10540-10549) with permuteseed 2 (no cloud at 00:00: the 00:30 call)
+    (RAD, "  mcica_subcol(icld, 1, 112, nlay, v.pavel, v.cldfrac, w.hlay, in.idcor, in.julday, lat,",
+     dev("  mcica_subcol(icld, 1, 112, nlay, v.pavel, v.cldfrac, w.hlay, in.idcor, in.julday, lat,",
+         "  mcica_subcol(icld, 2, 112, nlay, v.pavel, v.cldfrac, w.hlay, in.idcor, in.julday, lat,"), ["gpu_radiation_RG_1800"]),
 ]
 # tests/mutation_check.py mutants by a piece of their original fragment, with the GPU tests they must break (a mutant
 # of the shared source changes the CPU build alike: the vs_cpu tests are not among them)

@@ -578,6 +578,26 @@ add_test(NAME dycore_RG_streams_all COMMAND ${PY} ${T}/streams_compare.py ${CPPM
   ${REF_RG}/forecast ${W}/dycore_RG_streams ${W}/dycore_RG_streams.json 5 702)
 set_tests_properties(dycore_RG_streams_all PROPERTIES FIXTURES_REQUIRED dycore_RG_streams)
 
+# RG's radiation calls replayed (tests/radiation_replay): cppmpas run of RG's steps configuration for 4 steps with
+# CPPMPAS_RADIATION_DUMP set writes the radiation calls of steps 1 and 4 (00:00 and 00:30: the inputs and the outputs
+# the run computed); test_radiation_replay runs each call again from its inputs and compares every radiation output
+# (o3clim, cldfrac, o3vmr, rre_*, the LW and SW fluxes, coszr, rthratenlw / rthratensw) with the run's at tolerance 0.
+# The run itself is RG, bit-identical to rg-004 (dycore_RG_*). The GPU replay of the same dumps is
+# gpu_radiation_RG_* below.
+add_executable(test_radiation_replay radiation_replay/test_radiation_replay.cpp)
+target_link_libraries(test_radiation_replay PRIVATE cppmpas)
+target_compile_options(test_radiation_replay PRIVATE -Wall -Wextra)
+set(RADIATION_DUMP_RG ${W}/radiation_dump_RG)
+add_test(NAME radiation_dump_RG COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${RADIATION_DUMP_RG}' && mkdir -p '${RADIATION_DUMP_RG}/run' && CPPMPAS_RADIATION_DUMP='${RADIATION_DUMP_RG}' '${EXE}' run '${REF_RG}/init/x1.10242.init.nc' '${RADIATION_DUMP_RG}/run' --namelist '${REF_RG}/steps/namelist.atmosphere' --scalars qv,qc,qr,qi,qs,qg --steps 4 --every 0 --tables '${CPPMPAS_MPAS_TABLES}' --rrtmg '${CPPMPAS_CPPWRF_RRTMG}' && ls -l '${RADIATION_DUMP_RG}' && test -s '${RADIATION_DUMP_RG}/radiation.0.bin' && test -s '${RADIATION_DUMP_RG}/radiation.1800.bin'")
+set_tests_properties(radiation_dump_RG PROPERTIES FIXTURES_SETUP radiation_dump_RG TIMEOUT 1800)
+set(RADIATION_RG_CALLS 0 1800)
+foreach(t IN LISTS RADIATION_RG_CALLS)
+  add_test(NAME radiation_replay_RG_${t} COMMAND test_radiation_replay ${RADIATION_DUMP_RG}/radiation.${t}.bin
+    ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_lw_tables.bin ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_sw_tables.bin)
+  set_tests_properties(radiation_replay_RG_${t} PROPERTIES FIXTURES_REQUIRED radiation_dump_RG)
+endforeach()
+
 # RG24 (mpas842-dbl-rg24-001, the v0.1 target: the RG case for 24 h; label "long", about 15 minutes): the forecast
 # run as the reference made it (cppmpas run --streams: 144 steps, history and diagnostics every 3 h from 00:00 to
 # 2026-10-13_00, restart at 12:10), every file of the reference's forecast directory compared at tolerance 0 with
@@ -668,6 +688,26 @@ else()
   add_test(NAME gpu_backend COMMAND ${GPU} device)
 endif()
 cppmpas_gpu_props(gpu_backend)
+# RG's radiation calls at 00:00 and 00:30 on the device (tests/radiation_replay, the CUDA build of the same test):
+# every loop of the cloudiness, ozone and radiation drivers and every RRTMG stage a kernel, against the CPU run's
+# outputs at tolerance 0
+if(CPPMPAS_ENABLE_CUDA)
+  set(_rr_cu ${CMAKE_BINARY_DIR}/cuda_src/tests/radiation_replay/test_radiation_replay.cpp.cu)
+  file(CONFIGURE OUTPUT ${_rr_cu} CONTENT "// generated: the CUDA build of tests/radiation_replay/test_radiation_replay.cpp\n#include \"${CMAKE_CURRENT_SOURCE_DIR}/radiation_replay/test_radiation_replay.cpp\"\n")
+  add_executable(test_gpu_radiation_replay ${_rr_cu})
+  target_link_libraries(test_gpu_radiation_replay PRIVATE cppmpas_cuda)
+  set_target_properties(test_gpu_radiation_replay PROPERTIES CUDA_SEPARABLE_COMPILATION ON CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+  foreach(t IN LISTS RADIATION_RG_CALLS)
+    add_test(NAME gpu_radiation_RG_${t} COMMAND test_gpu_radiation_replay ${RADIATION_DUMP_RG}/radiation.${t}.bin
+      ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_lw_tables.bin ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_sw_tables.bin)
+    cppmpas_gpu_props(gpu_radiation_RG_${t} FIXTURES_REQUIRED radiation_dump_RG)
+  endforeach()
+else()
+  foreach(t IN LISTS RADIATION_RG_CALLS)
+    add_test(NAME gpu_radiation_RG_${t} COMMAND ${GPU} device)
+    cppmpas_gpu_props(gpu_radiation_RG_${t})
+  endforeach()
+endif()
 # atm_mpas_init_block on the GPU: every initdump field of MW, SC and JW against MPAS, and against the CPU build
 foreach(case MW SC JW)
   add_test(NAME gpu_initdump_run_${case} COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c

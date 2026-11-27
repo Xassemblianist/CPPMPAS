@@ -42,6 +42,7 @@ def CV24(fields, hours="03 06"):
     """3 h / 6 h convective diagnostics tests of RG24 (label long)"""
     return [f"diag_RG24_conv_2026-10-12_{h}.00.00_{f}" for h in hours.split() for f in fields.split()]
 RAD, RDRV = "src/physics/module_ra_rrtmg.cpp", "src/physics/mpas_atmphys_radiation.cpp"
+RADH = "src/physics/module_ra_rrtmg.hpp"
 MC, RF, RD = "src/physics/mpas_atmphys_microphysics.cpp", "src/physics/mp_wsm6_refl.hpp", "src/physics/mp_radar.hpp"
 
 
@@ -1192,17 +1193,17 @@ MUTATIONS += [
     ("src/physics/mpas_atmphys_todynamics.cpp", "      tend_th(k, i) = coeff * tend_th(k, i) + R_v / R_d", "      tend_th(k, i) = tend_th(k, i) + R_v / R_d", ["pbl_column"]),
     # --- radiation (tests/radiation_column): cloudiness, RRTMG wrappers and drivers, ozone climatology
     # LW buffer layer count (LW 11822)
-    (RAD, 'std::max(static_cast<int>(std::lround(pw1d[K(kte + 1)] / deltap)), 1)',
-     'std::max(static_cast<int>(std::lround(pw1d[K(kte + 1)] / deltap)), 2)', ["radiation_column"]),
+    (RAD, 'std::max(static_cast<int>(nint(pw1d_top / deltap)), 1)',
+     'std::max(static_cast<int>(nint(pw1d_top / deltap)), 2)', ["radiation_column"]),
     # table temperature profile matched at level kte (LW 11993)
-    (RAD, 'tlev[K(k)] = varint[K(k)] + (tlev[K(kte)] - varint[K(kte)]);',
-     'tlev[K(k)] = varint[K(k)] + (tlev[K(kte + 1)] - varint[K(kte + 1)]);', ["radiation_column"]),
+    (RAD, 'v.tz[K(k)] = w.varint[K(k)] + (v.tz[K(kte)] - w.varint[K(kte)]);',
+     'v.tz[K(k)] = w.varint[K(k)] + (v.tz[K(kte + 1)] - w.varint[K(kte + 1)]);', ["radiation_column"]),
     # vinterp_ozn interpolation weights (VI:126-127)
-    (RAD, '          V(i, k) = (O(i, ku) * dpl + O(i, ku + 1) * dpu) / (dpl + dpu);\n        }\n        found',
-     '          V(i, k) = (O(i, ku) * dpu + O(i, ku + 1) * dpl) / (dpl + dpu);\n        }\n        found', ["radiation_column"]),
+    (RADH, '        V(k, (O(kupper) * dpl + O(kupper + 1) * dpu) / (dpl + dpu));\n        found = true;',
+     '        V(k, (O(kupper) * dpu + O(kupper + 1) * dpl) / (dpl + dpu));\n        found = true;', ["radiation_column"]),
     # LW inirad ozone on every layer with config_o3climatology = false (LW 12024-12026)
-    (RAD, 'for (int k = kts; k <= nlayers; ++k) o3vmr[K(k)] = o3mmr[K(k)] * amdo;',
-     'for (int k = kts; k <= nlayers - 1; ++k) o3vmr[K(k)] = o3mmr[K(k)] * amdo;', ["radiation_column"]),
+    (RAD, 'for (int k = kts; k <= nlayers; ++k) v.wkl[2][K(k)] = v.o3mmr[K(k)] * amdo;',
+     'for (int k = kts; k <= nlayers - 1; ++k) v.wkl[2][K(k)] = v.o3mmr[K(k)] * amdo;', ["radiation_column"]),
     # relcalc snow ramp (LW 12493)
     (RAD, '    r = r + (rliqocean - r) * std::min(1.0, std::max(0.0, snowh * 10.));',
      '    r = r + (rliqocean - r) * std::min(1.0, std::max(0.0, snowh * 1.));', ["radiation_column"]),
@@ -1211,8 +1212,8 @@ MUTATIONS += [
      'mcica_subcol(icld, 151, 140,', ["radiation_column"]),
     # zenith angle: the reference's sincos of xxlat (SW 10205). SURVIVES: on the check's latitudes sincos and sin / cos
     # round the same (s_sincos.c differs from __sin only in some ulps of 0.855 <= |x| < 2.43); kept as a known survivor
-    (RAD, '    libm::sincos(xxlat, &sinlat, &coslat);',
-     '    sinlat = libm::sin(xxlat); coslat = libm::cos(xxlat);', ["radiation_column"]),
+    (RAD, '  libm::sincos(xxlat, &sinlat, &coslat);',
+     '  sinlat = libm::sin(xxlat); coslat = libm::cos(xxlat);', ["radiation_column"]),
     # SW flux adjustment scon / rrsw_scon (inatm_sw)
     (RAD, '  const rb rrsw_scon = rb(1.36822e+03);',
      '  const rb rrsw_scon = rb(1.3682e+03);', ["radiation_column"]),
@@ -1226,11 +1227,11 @@ MUTATIONS += [
     (RDRV, '  double intjulian_r8 = double(julian + 1.0);  // OZ:279',
      '  double intjulian_r8 = double(julian);  // OZ:279', ["radiation_column"]),
     # init_o3climatology latitude interpolation order (OZ:178-179)
-    (RDRV, '            m.ozmixm(mm, k, iCell) = OZI(j, k, i1, mm) + (OZI(j, k, i2, mm) - OZI(j, k, i1, mm)) * dlatCell / dlat;',
-     '            m.ozmixm(mm, k, iCell) = OZI(j, k, i1, mm) + (OZI(j, k, i2, mm) - OZI(j, k, i1, mm)) * (dlatCell / dlat);', ["radiation_column"]),
+    (RDRV, '            ozmixm(mm, k, iCell) = OZI(j, k, i1, mm) + (OZI(j, k, i2, mm) - OZI(j, k, i1, mm)) * dlatCell / dlat;',
+     '            ozmixm(mm, k, iCell) = OZI(j, k, i1, mm) + (OZI(j, k, i2, mm) - OZI(j, k, i1, mm)) * (dlatCell / dlat);', ["radiation_column"]),
     # o3vmr diagnostic pressures in hPa (RL:489)
-    (RDRV, '        p2d(i, k) = v.pres_hyd_p(i, k) / 100.;',
-     '        p2d(i, k) = v.pres_hyd_p(i, k) / 10.;', ["radiation_column"]),
+    (RDRV, '        p2dv(i, k) = pres_hyd_p(i, k) / 100.;',
+     '        p2dv(i, k) = pres_hyd_p(i, k) / 10.;', ["radiation_column"]),
     # Noah column check (tests/noah_column): log10 of TDFCND, the soil table read (SOILPARM.TBL SATDK / SATDW),
     # lsminit's supercooled water with MPAS's gravity (WRF's lsminit uses 9.81), the convective rain of
     # lsm_from_MPAS (:460-468), correct_tsk_over_seaice's xice < 0.1 limit (lsm_shared.F:49), usemonalb =
@@ -1492,6 +1493,10 @@ MUTATIONS += [
      ["dycore_run_RG_streams"]),
     # the RG24 forecast's config_run_duration is a verified value
     (NT, '0_02:00:00\\n1_00:00:00")', '0_02:00:00")', ["namelist_table_current"]),
+    # the radiation-replay check (tests/radiation_replay, RG's calls at 00:00 and 00:30): a dump whose cldfrac record
+    # holds o3vmr (write_radiation_dump) must fail the replay
+    (RDRV, '  reals("cldfrac", levels(cv(m.cldfrac), nV));',
+     '  reals("cldfrac", levels(cv(m.o3vmr), nV));', ["radiation_replay_RG_0", "radiation_replay_RG_1800"]),
 ]
 
 MUTATIONS = [(p, o, n, [t for t in ts if t not in EQUIVALENT_ON_SC.get((p, n), [])]) for p, o, n, ts in MUTATIONS]
