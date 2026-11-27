@@ -63,8 +63,9 @@ void driver_microphysics_thompson(const thompson::ThompsonView& tv, Microphysics
   if (m.has_reqc != 0 || m.has_reqi != 0 || m.has_reqs != 0)
     throw Error("mp_gt_driver: has_reqc / has_reqi / has_reqs (config_microp_re, calc_effectRad) has no verified port");
   if (its != 1) throw Error("driver_microphysics: its /= 1");
-  if (!m.index_qv || !m.index_qc || !m.index_qr || !m.index_qi || !m.index_qs || !m.index_qg || !m.index_ni ||
-      !m.index_nr)
+  // an inactive constituent has MPAS's index -1 (scalar_index)
+  if (m.index_qv <= 0 || m.index_qc <= 0 || m.index_qr <= 0 || m.index_qi <= 0 || m.index_qs <= 0 ||
+      m.index_qg <= 0 || m.index_ni <= 0 || m.index_nr <= 0)
     throw Error("driver_microphysics: mp_thompson needs qv, qc, qr, qi, qs, qg, ni and nr");
   const int kts = 1, kte = m.nVertLevels;
   if (kte < 3 || kte > thompson::kMaxLevels) throw Error("mp_thompson: nVertLevels outside 3..128");
@@ -259,7 +260,9 @@ void driver_microphysics_thompson(const thompson::ThompsonView& tv, Microphysics
       const real w1 = (zp[kp + 1] - 1000.) / (zp[kp + 1] - zp[kp]);
       const real w2 = 1.0 - w1;
       m.refl10cm_1km(i) = w1 * dBZ1d[kp] + w2 * dBZ1d[kp + 1];
-      m.refl10cm_1km_max(i) = m.refl10cm_1km_max(i) > m.refl10cm_1km(i) ? m.refl10cm_1km_max(i) : m.refl10cm_1km(i);
+      // max(refl10cm_1km_max(i), refl10cm_1km(i)): maxsd keeps the first argument unless the second is greater (a
+      // tie of -0.0 / +0.0 and a NaN keep refl10cm_1km_max)
+      m.refl10cm_1km_max(i) = m.refl10cm_1km(i) > m.refl10cm_1km_max(i) ? m.refl10cm_1km(i) : m.refl10cm_1km_max(i);
     });
     // compute_relhum (DRV:798-850)
     parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {

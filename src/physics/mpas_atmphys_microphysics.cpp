@@ -54,7 +54,8 @@ void driver_microphysics_wsm6(const wsm6::Wsm6Params<real>& params, Microphysics
   if (mp.l_diags && !mp.radar) throw Error("driver_microphysics: l_diags without the WSM6 radar tables");
   if (mp.l_acrain) throw Error("driver_microphysics: l_acrain (config_bucket_update) has no verified port");
   if (its != 1) throw Error("driver_microphysics: its /= 1");
-  if (!mp.index_qv || !mp.index_qc || !mp.index_qr || !mp.index_qi || !mp.index_qs || !mp.index_qg)
+  if (mp.index_qv <= 0 || mp.index_qc <= 0 || mp.index_qr <= 0 || mp.index_qi <= 0 || mp.index_qs <= 0 ||
+      mp.index_qg <= 0)  // an inactive constituent has MPAS's index -1 (scalar_index)
     throw Error("driver_microphysics: WSM6 needs qv, qc, qr, qi, qs and qg");
   const int kts = 1, kte = mp.nVertLevels;
   if (mp.mp_top_level < 1 || mp.mp_top_level > kte) throw Error("driver_microphysics: mp_top_level outside 1..nVertLevels");
@@ -198,7 +199,9 @@ void driver_microphysics_wsm6(const wsm6::Wsm6Params<real>& params, Microphysics
       const real w1 = (zp[kp] - 1000.) / (zp[kp] - zp[kp - 1]);
       const real w2 = 1.0 - w1;
       m.refl10cm_1km(i) = w1 * dBZ1d[kp - 1] + w2 * dBZ1d[kp];
-      m.refl10cm_1km_max(i) = m.refl10cm_1km_max(i) > m.refl10cm_1km(i) ? m.refl10cm_1km_max(i) : m.refl10cm_1km(i);
+      // max(refl10cm_1km_max(i), refl10cm_1km(i)): maxsd keeps the first argument unless the second is greater (a
+      // tie of -0.0 / +0.0 and a NaN keep refl10cm_1km_max)
+      m.refl10cm_1km_max(i) = m.refl10cm_1km(i) > m.refl10cm_1km_max(i) ? m.refl10cm_1km(i) : m.refl10cm_1km_max(i);
     });
     // compute_relhum (DRV:798-850)
     parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {

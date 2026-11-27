@@ -3,6 +3,7 @@
 #include "physics/mp_thompson_init.hpp"
 
 #include <cmath>
+#include <limits>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -33,6 +34,9 @@ double folded_log(double a) { return ::cppmpas::libm::log(a); }
 // peeled first iteration and the two of the epilogue) and runs n = 3 .. nb - 2 through libmvec's 2-lane exp (2
 // _ZGVbN2v_exp per loop). The folded exps: expl rounded to double (CPPWRF 7fac5bf src/phys/mp_thompson/
 // thompson_tables.cpp:47-53, the same rule in WRF's object), checked against the reference's xDx.
+// gfortran folds the edges n = 2, nb-1 and nb with MPFR (correctly rounded); x87 expl rounded to double gives the same
+// 15 values (checked by thompson_column's init records). This needs the x86-64 80-bit long double.
+static_assert(std::numeric_limits<long double>::digits == 64, "bin_edges: the folded edges need x87 long double");
 void bin_edges(double* xDx, int nb) {
   const double l1 = folded_log(xDx[nb] / xDx[0]);
   const double l0 = folded_log(xDx[0]);

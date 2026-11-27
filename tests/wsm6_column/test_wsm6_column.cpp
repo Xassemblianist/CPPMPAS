@@ -2,6 +2,7 @@
 // The C++ side of the WSM6 column check: test_wsm6_column <in.bin> <out.bin> runs driver_microphysics_wsm6
 // (src/physics/mpas_atmphys_microphysics.cpp) on the columns of in.bin as harness.F90 runs MPAS's own code, and
 // writes the same out.bin layout (tests/wsm6_column/columns.py); a third argument 'l_diags' as harness.F90's.
+#include <bit>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -68,6 +69,7 @@ int main(int argc, char** argv) {
   // the diagnostics (harness.F90's initial values) and mp_wsm6_init's radar tables
   FArray<real> refl10cm({nV, nC}, -999.), refl_max({nC}, -999.), refl_1km({nC}, -999.), refl_1km_max({nC}, 3.),
       relhum({nV, nC}, -999.);
+  for (int i = 2; i <= nC; i += 3) refl_1km_max(i) = std::bit_cast<double>(0x7FF8000000000000ULL);  // as harness.F90
   const auto radar = cppmpas::phys::wsm6::wsm6_radar_init(params.pi, cppmpas::physics_constants::rho_r,
                                                           cppmpas::physics_constants::rho_s, params.deng,
                                                           params.n0g);

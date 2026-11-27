@@ -154,12 +154,13 @@ CPPMPAS_HD inline int cup_maximi(const real* array, int ks, int ke, int ierr) {
   return maxx;
 }
 
-// GF:3232-3280
-CPPMPAS_HD inline int cup_minimi(const real* array, int ks, int kend, int ierr) {
+// GF:3232-3280. kte: the upper bound of MPAS's array(its:ite, kts:kte); a search past it is undefined in MPAS
+CPPMPAS_HD inline int cup_minimi(const real* array, int ks, int kend, int ierr, int kte) {
   int kt = ks;
   if (ierr == 0) {
     real x = array[ks];
     const int kstop = maxi(ks + 1, kend);
+    if (kstop > kte) kernel_fail("cup_minimi: MPAS's search GF:3269-3272 would read past kte (undefined)");
     for (int k = ks + 1; k <= kstop; ++k) {
       if (array[k] < x) {
         x = array[k];
@@ -173,13 +174,16 @@ CPPMPAS_HD inline int cup_minimi(const real* array, int ks, int kend, int ierr) 
 // GF:2987-3103 with use_excess = 0 (zqexec = ztexec = 0)
 CPPMPAS_HD inline void cup_kbcon(real cap_inc, int iloop, int& k22, int& kbcon, const real* he_cup,
                                  const real* hes_cup, real& hkb, int& ierr, int kbmax, const real* p_cup, real cap_max,
-                                 real xl, real cp, real ztexec, real zqexec) {
+                                 real xl, real cp, real ztexec, real zqexec, int kte) {
+  // kte: the upper bound of MPAS's hes_cup / he_cup(its:ite, kts:kte); a level past it is undefined in MPAS
   constexpr int use_excess = 0;
   kbcon = 1;
   if (ierr != 0) return;
   kbcon = k22 + 1;
   if (iloop == 5) kbcon = k22;
   for (;;) {                      // label 32
+    if (kbcon > kte || k22 > kte)
+      kernel_fail("cup_kbcon: MPAS's search GF:3045-3100 would read past kte (undefined; kbmax + 2 > kte)");
     const real hetest = hkb;      // GF:3055-3061
     if (hetest < hes_cup[kbcon]) {  // go to 31 (GF:3045-3053)
       kbcon = kbcon + 1;
@@ -753,8 +757,8 @@ CPPMPAS_HD inline void cup_gf(const GfColumn& c, real dtime, real xl, real rv, r
     hkbo = heo_cup[k22] + real(use_excess) * (xl * c.zqexec + cp * c.ztexec);
   }
   cup_kbcon(cap_max_increment, 1, k22, kbcon, heo_cup, heso_cup, hkbo, ierr, kbmax, po_cup, cap_max, xl, cp,
-            c.ztexec, c.zqexec);  // GF:985-989
-  const int kstabi = cup_minimi(heso_cup, kbcon, kstabm, ierr);  // GF:993-995
+            c.ztexec, c.zqexec, ktf);  // GF:985-989
+  const int kstabi = cup_minimi(heso_cup, kbcon, kstabm, ierr, ktf);  // GF:993-995
   if (ierr == 0)  // GF:997-1004
     for (int k = k22; k <= kbcon; ++k) {
       frh = q_cup[k] / qes_cup[k];
@@ -910,7 +914,7 @@ CPPMPAS_HD inline void cup_gf(const GfColumn& c, real dtime, real xl, real rv, r
       }
   }
   // GF:1283-1324: downdraft originating level
-  int jmin = cup_minimi(heso_cup, k22, kzdown, ierr);
+  int jmin = cup_minimi(heso_cup, k22, kzdown, ierr, ktf);
   if (ierr == 0) {
     int jmini = jmin;
     bool keep_going = true;
@@ -1172,9 +1176,9 @@ CPPMPAS_HD inline void cup_gf(const GfColumn& c, real dtime, real xl, real rv, r
   ierr3 = ierr;
   int k22x = k22, kbconx = 0;
   cup_kbcon(cap_max_increment, 2, k22x, kbconx, heo_cup, heso_cup, hkbo, ierr2, kbmax, po_cup, cap_max, xl, cp,
-            c.ztexec, c.zqexec);
+            c.ztexec, c.zqexec, ktf);
   cup_kbcon(cap_max_increment, 3, k22x, kbconx, heo_cup, heso_cup, hkbo, ierr3, kbmax, po_cup, cap_max, xl, cp,
-            c.ztexec, c.zqexec);
+            c.ztexec, c.zqexec, ktf);
   // GF:1937-1943
   cup_forcing_ens_3d(closure_n, xland1, aa0, aa1, xaa0_ens, mbdt_ens1, dtime, ierr, ierr2, ierr3, xf_ens, axx,
                      c.mconv, omeg, k22, pr_ens, kbcon, ichoice);
@@ -1308,7 +1312,7 @@ CPPMPAS_HD inline void cup_gf_sh(const GfColumn& c, real dtime, real xl, real rv
     }
   }
   cup_kbcon(cap_max_increment, 5, k22, kbcon, heo_cup, heso_cup, hkbo, ierr, kbmax, po_cup, cap_max, xl, cp,
-            c.ztexec, c.zqexec);  // GF:4506-4510
+            c.ztexec, c.zqexec, ktf);  // GF:4506-4510
   // GF:4514-4551
   real frh = 0., dh = 0., dz = 0., zuhe = 0.;
   if (ierr == 0) {

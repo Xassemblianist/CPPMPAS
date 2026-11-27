@@ -4,6 +4,7 @@
 // (src/physics/mpas_atmphys_microphysics_thompson.cpp) on the columns of in.bin as harness.F90 runs MPAS's own code,
 // and writes the same out.bin layout (tests/thompson_column/columns.py).
 #include <cmath>
+#include <bit>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -87,17 +88,19 @@ int main(int argc, char** argv) {
     m.n_microp = n_microp;
     FArray<real> refl10cm({nV, nC}, -999.), refl_max({nC}, -999.), refl_1km({nC}, -999.), refl_1km_max({nC}, 3.),
         relhum({nV, nC}, -999.);
+    for (int i = 2; i <= nC; i += 3) refl_1km_max(i) = std::bit_cast<double>(0x7FF8000000000000ULL);  // as harness.F90
     m.l_diags = diags;
     m.relhum = relhum.view(); m.refl10cm = refl10cm.view(); m.refl10cm_max = refl_max.view();
     m.refl10cm_1km = refl_1km.view(); m.refl10cm_1km_max = refl_1km_max.view();
 
     std::FILE* out = std::fopen(argv[2], "wb");
     if (!out) return 2;
-    auto wr = [&](const FArray<real>& a) { std::fwrite(a.data(), 8, a.size(), out); };
+    bool ok = true;
+    auto wr = [&](const FArray<real>& a) { ok = ok && std::fwrite(a.data(), 8, a.size(), out) == a.size(); };
     wr(nt_c); wr(mu_c);
     const double nm = n_microp;
-    std::fwrite(&dt_microp, 8, 1, out);
-    std::fwrite(&nm, 8, 1, out);
+    ok = ok && std::fwrite(&dt_microp, 8, 1, out) == 1;
+    ok = ok && std::fwrite(&nm, 8, 1, out) == 1;
     for (int step = 1; step <= nsteps; ++step) {
       cppmpas::phys::driver_microphysics_thompson(tables.v, m, 1, nC);
       wr(scalars); wr(theta_m); wr(rtp); wr(exner); wr(pp); wr(sfc); wr(tsp); wr(rtd); wr(dth); wr(precipw);
@@ -108,7 +111,10 @@ int main(int argc, char** argv) {
         wr(refl10cm); wr(refl_max); wr(refl_1km); wr(refl_1km_max); wr(relhum);
       }
     }
-    std::fclose(out);
+    if (std::fclose(out) != 0 || !ok) {
+      std::fprintf(stderr, "write error on %s\n", argv[2]);
+      return 1;
+    }
   } catch (const std::exception& e) {
     std::fprintf(stderr, "%s\n", e.what());
     return 1;

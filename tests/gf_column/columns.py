@@ -62,15 +62,23 @@ def records(path):
             if not h:
                 break
             name = h.decode().strip()
-            meta = np.frombuffer(f.read(24), dtype="<i4")
+            mb = f.read(24)
+            if len(h) != NAMELEN or len(mb) != 24:
+                raise SystemExit(f"FAIL: {path} ends inside a record header")
+            meta = np.frombuffer(mb, dtype="<i4")
             kind, nd, dims = int(meta[0]), int(meta[1]), [int(x) for x in meta[2:6]]
             n = int(np.prod(dims[:nd]))
-            data = np.frombuffer(f.read(n * (8 if kind == 0 else 4)), dtype="<u8" if kind == 0 else "<i4")
+            raw = f.read(n * (8 if kind == 0 else 4))
+            if n < 1 or len(raw) != n * (8 if kind == 0 else 4):
+                raise SystemExit(f"FAIL: {path}: record {name!r} is short or empty")
+            data = np.frombuffer(raw, dtype="<u8" if kind == 0 else "<i4")
             out.append((name, kind, dims[:nd], data))
     return out
 
 
 def make(path, nC, nV, nsteps, seed, len_disp, acrain, cdeep, cshal, dt):
+    if nC < 1 or nV < 3 or nsteps < 1:
+        raise SystemExit(f"FAIL: no column to run ({nC} cells, {nV} levels, {nsteps} steps)")
     rng = np.random.default_rng(seed)
     nCt = nC + 2
     nE = 3 * nCt
@@ -95,7 +103,7 @@ def make(path, nC, nV, nsteps, seed, len_disp, acrain, cdeep, cshal, dt):
     for i in range(nCt + 1):
         ext = i % 10  # array index i = cell i + 1
         reg = {7: 1, 8: 1, 9: 4}.get(ext, ext)  # 7, 8, 9: variants of the tropical and the elevated columns
-        land = reg in (0, 2, 4, 6) and ext != 9
+        land = (reg in (0, 2, 4, 6) and ext != 9) or (ext == 8 and i % 20 == 18)  # stabilising over land (xff0 < 0)
         hs = rng.uniform(100.0, 1500.0) if land else 0.0
         zg[i] = hs + eta * (ztop - hs) + 3.0 * np.sin(np.pi * eta) * rng.uniform(-1, 1)
         zm = 0.5 * (zg[i, 1:] + zg[i, :-1])
@@ -178,9 +186,13 @@ def make(path, nC, nV, nsteps, seed, len_disp, acrain, cdeep, cshal, dt):
             kc = np.nonzero((z > zb) & (z < zi))[0]  # a dry level inside the cloud layer (the moisture limit)
             if kc.size and rng.uniform() < 0.5:
                 sc[i, kc[kc.size // 2], 0] = 1e-9
-        if ext == 7:  # negative water vapour inside the deep cloud (q2d = 1e-8; neg_check's moisture limit)
-            kc = np.nonzero((z > 2500) & (z < 6000))[0][::3]
+        if ext == 7 and i % 20 != 17:  # negative water vapour inside the deep cloud (q2d = 1e-8; neg_check's moisture
+            kc = np.nonzero((z > 2500) & (z < 6000))[0][::3]  # limit)
             sc[i, kc, 0] = -1e-7 * rng.uniform(0, 1, kc.size)
+        if ext == 7 and i % 20 == 17:  # no negative vapour: neg_check's heating limit alone scales the tendencies
+            sc[i, :, 0] = np.maximum(sc[i, :, 0], 1e-3)
+        if ext == 7 and i % 20 == 7:  # subsaturated at k22, saturated at kbcon: the second ierr = 1200 test (GF:997-1004)
+            sc[i, 0:4, 0] = 0.85 * sc[i, 0:4, 0]
         th = T * (P0 / p) ** (RGAS / CP)
         qvp = np.maximum(sc[i, :, 0], 0.0)
         thm = th * (1.0 + RV / RGAS * qvp)
@@ -331,6 +343,10 @@ def compare(ref, cpp):
             if bad <= 25:
                 print(f"{phase} {name}: {d.size} of {x.size} differ, first at {tuple(int(t) + 1 for t in idx)}: "
                       f"ref {vx!r} cpp {vy!r}")
+    phases = sum(1 for r in a if r[0].startswith("#"))
+    if total == 0 or phases < 5:  # A..E of at least one step
+        print(f"FAIL: nothing compared ({total} values, {phases} phase records)")
+        return 1
     print(f"{total} values in {len(a)} records, {'IDENTICAL' if not bad else str(bad) + ' records differ'}")
     return 1 if bad else 0
 

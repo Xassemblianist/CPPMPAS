@@ -6,6 +6,7 @@
  * FNV-1a hash of the bytes for arrays over 100000 values. Integers are written as doubles. */
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define M(x) __module_mp_thompson_MOD_##x
@@ -66,7 +67,10 @@ static void puti(const char *name, int i) {
 
 void dump_thompson_init(const char *path) {
   f = fopen(path, "wb");
-  if (!f) return;
+  if (!f) {
+    fprintf(stderr, "dump_thompson_init: cannot open %s\n", path);
+    exit(1);
+  }
   PA(cce, 75); PA(ccg, 75); PA(ocg1, 15); PA(ocg2, 15); PA(cie, 7); PA(cig, 7); P1(oig1); P1(oig2); P1(obmi);
   PA(cre, 13); PA(crg, 13); P1(ore1); P1(org1); P1(org2); P1(org3); P1(obmr);
   PA(cse, 18); PA(csg, 18); P1(oams); P1(obms); P1(ocms);
@@ -91,5 +95,8 @@ void dump_thompson_init(const char *path) {
   RA(xcre, 4); RA(xcse, 4); RA(xcge, 4); RA(xcrg, 4); RA(xcsg, 4); RA(xcgg, 4);
   R1(xam_r); R1(xbm_r); R1(xmu_r); R1(xobmr); R1(xam_s); R1(xbm_s); R1(xmu_s); R1(xoams); R1(xobms); R1(xocms);
   R1(xam_g); R1(xbm_g); R1(xmu_g); R1(xoamg); R1(xobmg); R1(xocmg); R1(xorg2); R1(xosg2); R1(xogg2);
-  fclose(f);
+  if (ferror(f) || fclose(f) != 0) {
+    fprintf(stderr, "dump_thompson_init: write error on %s\n", path);
+    exit(1);
+  }
 }

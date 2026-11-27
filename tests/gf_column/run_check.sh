@@ -15,20 +15,25 @@ cases=${*:-"1:55:2:1:240000:0:0:8:600 2:55:2:2:240000:0:0:8:600 3:56:2:3:3000:0:
 mkdir -p "$work"
 "$here/build_ref.sh" "$mpas" "$mmm" "$work/ref" > "$work/build_ref.log" 2>&1 || { cat "$work/build_ref.log"; echo "FAIL: reference build"; exit 1; }
 head -1 "$work/build_ref.log"
+[ -n "${cases// /}" ] || { echo "FAIL: no case"; exit 1; }
 rc=0
+ncase=0
+"$cpp" guards || { echo "FAIL: the cu_grell_freitas hard errors"; rc=1; }
 for c in $cases; do
   IFS=: read -r nc nv ns seed ld acr cd cs dt <<< "$c"
-  in=$work/in_$c.bin
+  in=$work/in_$c.bin; rm -f "$work/ref_$c.bin" "$work/cpp_$c.bin"
   python3 -I "$here/columns.py" make "$in" "$nc" "$nv" "$ns" "$seed" "$ld" "$acr" "$cd" "$cs" "$dt" || { echo "FAIL: columns $c"; rc=1; continue; }
   "$work/ref/gf_column_ref" "$in" "$work/ref_$c.bin" > "$work/ref_$c.log" 2>&1 || { cat "$work/ref_$c.log"; echo "FAIL: reference run $c"; rc=1; continue; }
   "$cpp" "$in" "$work/cpp_$c.bin" || { echo "FAIL: CPPMPAS run $c"; rc=1; continue; }
+  ncase=$((ncase + 1))
   echo -n "case $c: "
-  python3 -I "$here/columns.py" stats "$work/ref_$c.bin" "$nc"
+  python3 -I "$here/columns.py" stats "$work/ref_$c.bin" "$nc" || { echo "FAIL: stats $c"; rc=1; }
   if python3 -I "$here/columns.py" compare "$work/ref_$c.bin" "$work/cpp_$c.bin"; then
     rm -f "$in" "$work/ref_$c.bin" "$work/cpp_$c.bin"  # kept when they differ
   else
     rc=1
   fi
 done
+[ $ncase -ge 1 ] || rc=1
 [ $rc = 0 ] && echo "gf column check: PASS" || echo "gf column check: FAIL"
 exit $rc

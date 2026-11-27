@@ -193,6 +193,10 @@ void driver_convection(int itimestep, ConvectionPools& mp, const PhysicsVars& vp
     if (mp.nVertLevels > cu_gf::kMaxLevels) throw Error("driver_convection: more than 100 levels");
     if (vp.ime < ite || vp.kme != mp.nVertLevels + 1)
       throw Error("driver_convection: MPAS_to_physics has not filled its..ite");
+    if (!mp.areaCell.p || !mp.zgrid.p || !mp.gsw.p || !mp.kpbl.p || !mp.cubot.p || !mp.cutop.p || !mp.xmb_total.p ||
+        !mp.xmb_shallow.p || !mp.qc_cu.p || !mp.qi_cu.p || !mp.k22_shallow.p || !mp.kbcon_shallow.p ||
+        !mp.ktop_shallow.p || !mp.ktop_deep.p)
+      throw Error("driver_convection: the cu_grell_freitas_in package arrays are not set");
     driver_convection_gf(itimestep, mp, vp, its, ite);
     return;
   }

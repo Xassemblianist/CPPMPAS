@@ -1334,7 +1334,7 @@ MUTATIONS += [
     (MC, "        if (zp[k - 1] < 1000.) kp = k;", "        if (zp[k - 1] < 1100.) kp = k;", ["wsm6_column"]),
     (MC, "        if (dBZ1d[k - 1] > mx) mx = dBZ1d[k - 1];", "        if (dBZ1d[k - 1] < mx) mx = dBZ1d[k - 1];",
      ["wsm6_column"]),
-    (MC, "      m.refl10cm_1km_max(i) = m.refl10cm_1km_max(i) > m.refl10cm_1km(i) ? m.refl10cm_1km_max(i) : m.refl10cm_1km(i);",
+    (MC, "      m.refl10cm_1km_max(i) = m.refl10cm_1km(i) > m.refl10cm_1km_max(i) ? m.refl10cm_1km(i) : m.refl10cm_1km_max(i);",
      "      m.refl10cm_1km_max(i) = m.refl10cm_1km(i);", ["wsm6_column"]),
     (MC, "        if (tempc <= 0.) qvs1 = rsif(p1, t1);", "        if (tempc <= -1.) qvs1 = rsif(p1, t1);", ["wsm6_column"]),
     (MC, "                 C8 = -.321582393E-13;", "                 C8 = -.321582393E-12;", ["wsm6_column"]),
@@ -1565,6 +1565,41 @@ MUTATIONS += [
     (CVD, '      rthraten_p(i, k) = m.rthratenlw(k, i) + m.rthratensw(k, i);', '      rthraten_p(i, k) = m.rthratenlw(k, i);', ["gf_column"]),
     (CVD, '    dx_p(i) = m.config_len_disp / libm::pow(m.meshDensity(i), 0.25);  // scalar pow@plt (header)', '    dx_p(i) = m.config_len_disp / libm::mvec_pow(m.meshDensity(i), 0.25);  // scalar pow@plt (header)', ["gf_column"]),
     (CVD, '    m.ktop_deep(i) = ktop_deep_p(i);', '    m.ktop_deep(i) = 0;', ["gf_column"]),
+]
+
+# Review fixes of the merged Thompson / Grell-Freitas branches
+MUTATIONS += [
+    # DRV:725 / DRV:777 max(refl10cm_1km_max(i), refl10cm_1km(i)) with the operands swapped (a NaN or a signed-zero tie
+    # then takes refl10cm_1km)
+    ("src/physics/mpas_atmphys_microphysics.cpp",
+     "      m.refl10cm_1km_max(i) = m.refl10cm_1km(i) > m.refl10cm_1km_max(i) ? m.refl10cm_1km(i) : m.refl10cm_1km_max(i);",
+     "      m.refl10cm_1km_max(i) = m.refl10cm_1km_max(i) > m.refl10cm_1km(i) ? m.refl10cm_1km_max(i) : m.refl10cm_1km(i);",
+     ["wsm6_column"]),
+    ("src/physics/mpas_atmphys_microphysics_thompson.cpp",
+     "      m.refl10cm_1km_max(i) = m.refl10cm_1km(i) > m.refl10cm_1km_max(i) ? m.refl10cm_1km(i) : m.refl10cm_1km_max(i);",
+     "      m.refl10cm_1km_max(i) = m.refl10cm_1km_max(i) > m.refl10cm_1km(i) ? m.refl10cm_1km_max(i) : m.refl10cm_1km(i);",
+     ["thompson_column"]),
+    # the index guards: MPAS's -1 of an inactive constituent (scalar_index) taken as present
+    ("src/physics/mpas_atmphys_microphysics_thompson.cpp", "m.index_ni <= 0", "!m.index_ni", ["unit_microphysics"]),
+    ("src/physics/mpas_atmphys_microphysics.cpp", "mp.index_qg <= 0", "!mp.index_qg", ["unit_microphysics"]),
+    # thompson_column's added columns: riming with dt_microp > 120 s (MT:2555), cloud sedimentation below 500 m
+    # (MT:3280-3285), the mu_c cap (IM:87), mp_gt_driver's negative-qv repair (MT:1325-1333), nt_c above Nt_c_max (MT:2728)
+    ("src/physics/mp_thompson.hpp", "      if (dt > 120.) {  // MT:2555-2559", "      if (dt > 130.) {  // MT:2555-2559", ["thompson_column"]),
+    ("src/physics/mp_thompson.hpp", "      if (hgt_agl > 500.0) break;", "      if (hgt_agl > 400.0) break;", ["thompson_column"]),
+    ("src/physics/mpas_atmphys_microphysics_thompson.cpp", "    mu_c(iCell) = 15. < a ? 15. : a;", "    mu_c(iCell) = 16. < a ? 16. : a;", ["thompson_column"]),
+    ("src/physics/mpas_atmphys_microphysics_thompson.cpp", "            P(qv_p, i, k) = 1.E-7;", "            P(qv_p, i, k) = 1.E-8;", ["thompson_column"]),
+    ("src/physics/mp_thompson.hpp", "    if (xnc > Nt_c_max) ncten[k]", "    if (xnc > 2. * Nt_c_max) ncten[k]", ["thompson_column"]),
+    # gf_column's added columns: the land xff0 < 0 closures (GF:2756-2764), neg_check's heating limit (GF:3502-3505),
+    # the second ierr = 1200 test (GF:997-1004)
+    ("src/physics/cu_gf.hpp", "      if (xff0 < 0.) {", "      if (xff0 < -1.e30) {", ["gf_column"]),
+    ("src/physics/cu_gf.hpp", "        const real qmem2 = 2. * thresh / qmem;", "        const real qmem2 = thresh / qmem;", ["gf_column"]),
+    ("src/physics/cu_gf.hpp", "      if (omeg[k] < -1.e-6 && frh >= 0.99 && sig < 0.091) ierr = 1200;\n    }\n\n  // GF:1021-1100",
+     "      if (omeg[k] < -1.e-6 && frh >= 0.999 && sig < 0.091) ierr = 1200;\n    }\n\n  // GF:1021-1100", ["gf_column"]),
+    # the cu_grell_freitas hard errors (test_gf_column guards)
+    ("src/physics/module_cu_gf.cpp", "  if (kte < 3) throw", "  if (kte < 2) throw", ["gf_column"]),
+    ("src/physics/mpas_atmphys_convection.cpp", "    if (!mp.areaCell.p ||", "    if (false && !mp.areaCell.p ||", ["gf_column"]),
+    ("src/physics/cu_gf.hpp", "    if (kbcon > kte || k22 > kte)", "    if (kbcon > kte + 2 || k22 > kte + 2)", ["gf_column"]),
+    ("src/physics/cu_gf.hpp", "    if (kstop > kte) kernel_fail", "    if (kstop > kte + 2) kernel_fail", ["gf_column"]),
 ]
 
 MUTATIONS = [(p, o, n, [t for t in ts if t not in EQUIVALENT_ON_SC.get((p, n), [])]) for p, o, n, ts in MUTATIONS]

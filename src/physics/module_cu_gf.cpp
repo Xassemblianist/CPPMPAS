@@ -12,6 +12,9 @@ void cu_grell_freitas(const GfArgs& a, int its, int ite) {
   const int kts = a.kts, kte = a.kte;
   if (kts != 1) throw Error("cu_grell_freitas: kts /= 1");
   if (kte > gf::kMaxLevels) throw Error("cu_grell_freitas: more than 100 levels");
+  // cup_MAXIMI with ks = 3 (GF:941, 4461) reads level 3 and CUP_gf_sh uses ktf - 4: fewer levels index past MPAS's
+  // arrays
+  if (kte < 3) throw Error("cu_grell_freitas: fewer than 3 levels");
   if (its != 1) throw Error("cu_grell_freitas: its /= 1");
   if (a.ishallow_g3 != 1) throw Error("cu_grell_freitas: ishallow_g3 /= 1 has no verified port");
   if (a.ichoice_deep > 16)

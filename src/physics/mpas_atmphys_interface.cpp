@@ -40,7 +40,8 @@ void MPAS_to_physics(const ToPhysicsPools& mp, PhysicsVars& vp, int its, int ite
     throw Error("MPAS_to_physics: config_microp_scheme = 'mp_thompson_aerosols' has no verified port");
   if (mp.pbl_scheme == "bl_mynn")  // PI:377-425
     throw Error("MPAS_to_physics: config_pbl_scheme = 'bl_mynn' has no verified port");
-  if (!mp.index_qv || !mp.index_qc || !mp.index_qr || !mp.index_qi || !mp.index_qs || !mp.index_qg)
+  if (mp.index_qv <= 0 || mp.index_qc <= 0 || mp.index_qr <= 0 || mp.index_qi <= 0 || mp.index_qs <= 0 ||
+      mp.index_qg <= 0)  // an inactive constituent has MPAS's index -1 (scalar_index)
     throw Error("MPAS_to_physics: the scalars qv, qc, qr, qi, qs and qg are needed (PI:316-321)");
   const int kts = 1, kte = mp.nVertLevels;
   if (vp.ime < ite || vp.kme != kte + 1) throw Error("MPAS_to_physics: allocate_forall_physics was not called");

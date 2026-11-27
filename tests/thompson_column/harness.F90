@@ -70,6 +70,9 @@ program thompson_column_ref
   rqgmpten = -999.; rnimpten = -999.; rnrmpten = -999.
   ! diagnostics: overwritten by l_diags except the running maximum refl10cm_1km_max (its value since the last reset)
   refl10cm = -999.; refl10cm_max = -999.; refl10cm_1km = -999.; refl10cm_1km_max = 3.; relhum = -999.
+  ! every third cell starts from a quiet NaN: MAX(refl10cm_1km_max(i), refl10cm_1km(i)) returns its first argument
+  ! unless the second is greater (maxsd), so this shows the operand order
+  refl10cm_1km_max(2::3) = transfer(int(z'7FF8000000000000', 8), 1.)
 
   ncs = nC; nvl = nV
   call reg_r2('zgrid', zgrid); call reg_r2('zz', zz); call reg_r2('rho_zz', rho_zz); call reg_r2('theta_m', theta_m)

@@ -6,7 +6,9 @@
 //    untaken PI:938-946) is refused; the MW namelist (microphysics off) leaves it inactive;
 //  * the MPAS parameter es_cap of the Kessler kernel (module_mp_kessler.F:219 es = min(es, 0.99*pressure)): it
 //    changes a column where es > 0.99*pressure and leaves an ordinary column unchanged. No SC column reaches the cap
-//    (es is a few kPa at most against >= 5 kPa of pressure), so the step files cannot show it.
+//    (es is a few kPa at most against >= 5 kPa of pressure), so the step files cannot show it;
+//  * driver_microphysics refuses a scheme's constituent whose index is MPAS's -1 (inactive, scalar_index), for WSM6
+//    and Thompson, before it reads any array.
 //
 // usage: test_microphysics <SC init file> <SC namelist.atmosphere> <MW namelist.atmosphere>
 #include <cmath>
@@ -20,6 +22,8 @@
 #include "core_atmosphere/atm_microphysics.hpp"
 #include "io/mpas_reader.hpp"
 #include "physics/mp_kessler.hpp"
+#include "physics/mp_thompson.hpp"
+#include "physics/mpas_atmphys_microphysics.hpp"
 
 using namespace cppmpas;
 
@@ -106,6 +110,32 @@ int main(int argc, char** argv) {
     MicrophysicsFields mp3;
     microphysics_init(argv[3], in.mesh, 6.0, mp3);
     expect(!mp3.active, "MW: microphysics off");
+  }
+  {  // a constituent the scheme needs is inactive (index -1): refused
+    auto refused = [](auto run) {
+      try {
+        run();
+      } catch (const Error& e) {
+        return std::strstr(e.what(), "needs") != nullptr;
+      }
+      return false;
+    };
+    phys::MicrophysicsPools p;
+    p.nVertLevels = 3;
+    p.mp_top_level = 3;
+    p.index_qv = 1; p.index_qc = 2; p.index_qr = 3; p.index_qi = 4; p.index_qs = 5; p.index_qg = 6;
+    p.index_ni = 7; p.index_nr = 8;
+    static phys::thompson::ThompsonView tv{};
+    for (int* idx : {&p.index_qg, &p.index_ni}) {
+      phys::MicrophysicsPools q = p;
+      *(idx == &p.index_qg ? &q.index_qg : &q.index_ni) = -1;
+      expect(refused([&] { phys::driver_microphysics_thompson(tv, q, 1, 1); }),
+             std::string("Thompson refuses index ") + (idx == &p.index_qg ? "qg" : "ni") + " = -1");
+    }
+    phys::MicrophysicsPools w = p;
+    w.index_qg = -1;
+    expect(refused([&] { phys::driver_microphysics_wsm6(phys::wsm6::Wsm6Params<real>{}, w, 1, 1); }),
+           "WSM6 refuses index qg = -1");
   }
   // es_cap: pii = 0.1 (p = 1e5 * 0.1^(1004/287) = 32 Pa) and theta = 3000 K (T = 300 K, es = 3.5 kPa): capped
   expect(column(true, 0.1, 3000.0, 1.e-3) != column(false, 0.1, 3000.0, 1.e-3), "es_cap changes a capped column");

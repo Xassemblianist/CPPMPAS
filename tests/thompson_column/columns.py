@@ -33,6 +33,7 @@ OUT = [("scalars", "s"), ("theta_m", "v"), ("rtheta_p", "v"), ("exner", "v"), ("
        ("graupelncv", "c"), ("sr", "c"), ("rainprod", "v"), ("evapprod", "v"), ("re_cloud", "v"), ("re_ice", "v"),
        ("re_snow", "v"), ("rthmpten", "v"), ("rqvmpten", "v"), ("rqcmpten", "v"), ("rqrmpten", "v"),
        ("rqimpten", "v"), ("rqsmpten", "v"), ("rqgmpten", "v"), ("rnimpten", "v"), ("rnrmpten", "v")]
+NINIT_RECORDS = 138  # the records of dump.c / dump_thompson_init
 DIAGS = [("refl10cm", "v"), ("refl10cm_max", "c"), ("refl10cm_1km", "c"), ("refl10cm_1km_max", "c"),
          ("relhum", "v")]
 
@@ -103,6 +104,28 @@ def make(path, nC, nV, nsteps, mp_top, dt, seed):
             sc[i, 3, 0] = -1e-7
             sc[i, nV // 2, 1:] = 0.0
             sc[i, 5::9, 6:] = -1.0
+        # branches the regimes above do not reach (deterministic, after the random draws)
+        if reg == 5:  # clear and subsaturated with negative qv: mp_gt_driver's repair after the no_micro return
+            sc[i, 0, 0] = -1e-7  # k = kts: the 1.E-7 branch
+            if nV > 8:
+                sc[i, 5, 0] = -3e-7  # kts + 1 < k < kte - 2: the neighbour mean
+        if lmask[i] == 2 and i % 5 == 2:
+            ntc0[i] = 50.e6  # mu_c = MIN(15., 1000.e6/nt_c + 2.) at its cap
+        if lmask[i] == 2 and i % 5 == 0 and i > 0:
+            ntc0[i] = 2.e9  # nt_c above Nt_c_max
+        cold = np.nonzero(T < 233.0)[0]
+        if reg == 1 and cold.size:  # tiny cloud water and rain below HGFR: homogeneous freezing of small amounts
+            k = cold[0]
+            sc[i, k, 1], sc[i, k, 2], sc[i, k, 7] = 5e-7, 5e-10, 10.0
+        if reg == 1 and i % 14 == 1 and cold.size > 1:  # large ice at the end of the ice table
+            k = cold[1]
+            sc[i, k, 3], sc[i, k, 6] = 0.02, 1e3
+        if reg == 0 and i % 14 == 0:  # very large cloud drops and a drizzle of many small drops
+            sc[i, 2, 1] = 0.08
+            sc[i, 4, 2], sc[i, 4, 7] = 1e-5, 1e8
+        if reg == 3 and i % 14 == 3:  # hydrometeors at the model top: the ksed1 = kte sedimentation starts
+            sc[i, nV - 1, 2:6] = 1e-6
+            sc[i, nV - 1, 6:] = 1e3
         th = T * (P0 / p) ** (RGAS / CP)
         thm = th * (1.0 + RV / RGAS * np.maximum(qv, 0.0))
         rho = p / (RGAS * T * (1.0 + 0.608 * np.maximum(qv, 0.0)))
@@ -145,6 +168,9 @@ def compare(inp, ref, cpp, diags=None):
     out = OUT + (DIAGS if diags == "l_diags" else [])
     hdr = np.fromfile(inp, dtype="<i4", count=5)
     nC, nV, nsteps = int(hdr[0]), int(hdr[1]), int(hdr[2])
+    if nC < 1 or nV < 1 or nsteps < 1:
+        print(f"FAIL: nothing to compare ({nC} cells, {nV} levels, {nsteps} steps)")
+        return 1
     a = np.fromfile(ref, dtype="<u8")
     b = np.fromfile(cpp, dtype="<u8")
     size = {"s": 8 * nV * nC, "v": nV * nC, "c": nC}
@@ -180,10 +206,14 @@ def read_dump(path):
     raw = open(path, "rb").read()
     out, o = [], 0
     while o < len(raw):
+        if o + 40 > len(raw):
+            raise SystemExit(f"FAIL: {path} ends inside a record header")
         name = raw[o:o + 32].rstrip(b"\0").decode()
         n = int(np.frombuffer(raw, dtype="<i8", count=1, offset=o + 32)[0])
         o += 40
         cnt = 2 if n == -1 else n
+        if cnt < 1 or o + 8 * cnt > len(raw):
+            raise SystemExit(f"FAIL: {path}: record {name!r} is short or empty")
         out.append((name, n, raw[o:o + 8 * cnt]))
         o += 8 * cnt
     return out
@@ -191,6 +221,9 @@ def read_dump(path):
 
 def compare_init(ref, cpp):
     a, b = read_dump(ref), read_dump(cpp)
+    if len(a) != NINIT_RECORDS:
+        print(f"FAIL: {len(a)} records in {ref}, thompson_init leaves {NINIT_RECORDS}")
+        return 1
     if [x[:2] for x in a] != [x[:2] for x in b]:
         print("FAIL: the two dumps have different records")
         return 1

@@ -13,7 +13,7 @@
 set -u
 mpas=$1; mmm=$2; tables=$3; work=$4; cpp=$5; shift 5
 here=$(dirname "$(realpath "$0")")
-cases=${*:-"1:55:2:55:600:1 2:55:2:55:600:2 3:56:3:56:600:3 7:55:3:55:600:4 14:55:3:55:300:5 64:55:3:55:600:6 64:56:2:56:90:7 9:41:2:33:600:8 7:30:4:30:45:9 1:55:2:55:600:11:d 2:56:2:56:600:12:d 7:55:3:55:600:14:d 64:55:3:55:600:15:d 64:56:2:56:90:16:d 9:41:2:33:600:17:d"}
+cases=${*:-"1:55:2:55:600:1 2:55:2:55:600:2 3:56:3:56:600:3 7:55:3:55:600:4 14:55:3:55:300:5 64:55:3:55:600:6 64:56:2:56:90:7 9:41:2:33:600:8 7:30:4:30:45:9 1:55:2:55:600:11:d 2:56:2:56:600:12:d 7:55:3:55:600:14:d 64:55:3:55:600:15:d 64:56:2:56:90:16:d 9:41:2:33:600:17:d 7:55:2:55:130:18 14:55:2:55:130:19:d 7:70:2:70:600:20 14:70:2:70:300:21:d"}
 for t in QRacrQG QRacrQS freezeH2O QIautQS; do
   [ -f "$tables/MP_THOMPSON_${t}_DATA.DBL" ] || { echo "FAIL: no $tables/MP_THOMPSON_${t}_DATA.DBL"; exit 1; }
 done
@@ -24,12 +24,15 @@ mkdir -p "$work"
 head -1 "$work/build_ref.log"
 mkdir -p "$work/run"
 for t in QRacrQG QRacrQS freezeH2O QIautQS; do ln -sf "$(realpath "$tables/MP_THOMPSON_${t}_DATA.DBL")" "$work/run/"; done
+[ -n "${cases// /}" ] || { echo "FAIL: no case"; exit 1; }
+rm -f "$work/ref_init.bin" "$work/cpp_init.bin"
 rc=0
 first=1
+ncase=0
 for c in $cases; do
   IFS=: read -r nc nv ns top dt seed d <<< "$c"
   diag=""; [ "${d:-}" = d ] && diag=l_diags
-  in=$work/in_$c.bin
+  in=$work/in_$c.bin; rm -f "$work/ref_$c.bin" "$work/cpp_$c.bin"
   python3 -I "$here/columns.py" make "$in" "$nc" "$nv" "$ns" "$top" "$dt" "$seed" || { echo "FAIL: columns $c"; rc=1; continue; }
   (cd "$work/run" && "$work/ref/thompson_column_ref" "$in" "$work/ref_$c.bin" "$work/ref_init.bin" $diag) || { echo "FAIL: reference run $c"; rc=1; continue; }
   "$cpp" "$in" "$work/cpp_$c.bin" "$work/cpp_init.bin" "$tables" $diag || { echo "FAIL: CPPMPAS run $c"; rc=1; continue; }
@@ -37,9 +40,12 @@ for c in $cases; do
     python3 -I "$here/columns.py" compare_init "$work/ref_init.bin" "$work/cpp_init.bin" || rc=1
     first=0
   fi
+  ncase=$((ncase + 1))
   echo -n "case $c: "
   python3 -I "$here/columns.py" compare "$in" "$work/ref_$c.bin" "$work/cpp_$c.bin" $diag || rc=1
   rm -f "$work/ref_$c.bin" "$work/cpp_$c.bin"
 done
+[ $first = 0 ] || { echo "FAIL: thompson_init was not compared"; rc=1; }
+[ $ncase -ge 1 ] || rc=1
 [ $rc = 0 ] && echo "thompson column check: PASS" || echo "thompson column check: FAIL"
 exit $rc
