@@ -21,10 +21,10 @@ void PhysicsVars::allocate_forall_physics(const std::string& microp_scheme, cons
                                           int kme_) {
   if (microp_scheme == "mp_thompson_aerosols")  // PI:131-137 (nifa_p, nwfa_p)
     throw Error("allocate_forall_physics: config_microp_scheme = 'mp_thompson_aerosols' has no verified port");
-  if (pbl_scheme == "bl_mynn")  // PI:139-147 (nc_p, ni_p, nifa_p, nwfa_p)
-    throw Error("allocate_forall_physics: config_pbl_scheme = 'bl_mynn' has no verified port");
   ime = ime_;
   kme = kme_;
+  if (pbl_scheme == "bl_mynn")  // PI:139-147
+    for (PArray* a : {&nc_p, &ni_p, &nifa_p, &nwfa_p}) a->allocate(ime, kme);
   for (PArray* a : {&psfc_p, &ptop_p, &psfc_hyd_p, &psfc_hydd_p}) a->allocate(ime, 1);  // PI:100-101, 150-151
   for (PArray* a : {&u_p, &v_p, &fzm_p, &fzp_p, &zz_p, &pres_p, &pi_p, &z_p, &zmid_p, &dz_p, &t_p, &th_p, &al_p,
                     &rho_p, &rh_p, &znu_p, &w_p, &pres2_p, &t2_p, &qv_p, &qc_p, &qr_p, &qi_p, &qs_p, &qg_p,
@@ -38,8 +38,12 @@ void MPAS_to_physics(const ToPhysicsPools& mp, PhysicsVars& vp, int its, int ite
   if (its != 1) throw Error("MPAS_to_physics: its /= 1");
   if (mp.microp_scheme == "mp_thompson_aerosols")  // PI:357-375
     throw Error("MPAS_to_physics: config_microp_scheme = 'mp_thompson_aerosols' has no verified port");
-  if (mp.pbl_scheme == "bl_mynn")  // PI:377-425
-    throw Error("MPAS_to_physics: config_pbl_scheme = 'bl_mynn' has no verified port");
+  if (mp.pbl_scheme == "bl_mynn") {  // PI:377-425
+    if (mp.f_nc && mp.f_nifa && mp.f_nwfa)  // PI:400-421 (mp_thompson_aerosols)
+      throw Error("MPAS_to_physics: bl_mynn with nc, nifa and nwfa (mp_thompson_aerosols) has no verified port");
+    if (mp.f_ni && mp.index_ni <= 0) throw Error("MPAS_to_physics: bl_mynn needs index_ni (PI:394)");
+    if (!vp.ni_p.data()) throw Error("MPAS_to_physics: allocate_forall_physics was not called for bl_mynn");
+  }
   if (mp.index_qv <= 0 || mp.index_qc <= 0 || mp.index_qr <= 0 || mp.index_qi <= 0 || mp.index_qs <= 0 ||
       mp.index_qg <= 0)  // an inactive constituent has MPAS's index -1 (scalar_index)
     throw Error("MPAS_to_physics: the scalars qv, qc, qr, qi, qs and qg are needed (PI:316-321)");
@@ -74,6 +78,20 @@ void MPAS_to_physics(const ToPhysicsPools& mp, PhysicsVars& vp, int its, int ite
       v.dz_p(i, k) = m.zgrid(k + 1, i) - m.zgrid(k, i);
     }
   });
+
+  if (mp.pbl_scheme == "bl_mynn") {  // PI:377-425
+    const bool f_ni = mp.f_ni;
+    parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {
+      for (int k = kts; k <= kte; ++k) {  // PI:379-386
+        v.nc_p(i, k) = 0.;
+        v.ni_p(i, k) = 0.;
+        v.nifa_p(i, k) = 0.;
+        v.nwfa_p(i, k) = 0.;
+      }
+      if (f_ni)  // PI:388-398
+        for (int k = kts; k <= kte; ++k) v.ni_p(i, k) = fmax0(m.scalars(m.index_ni, k, i));
+    });
+  }
 
   parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // PI:428-439
     const real tem1 = m.zgrid(2, i) - m.zgrid(1, i);

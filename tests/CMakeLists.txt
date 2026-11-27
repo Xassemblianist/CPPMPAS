@@ -1021,3 +1021,13 @@ foreach(stamp IN ITEMS 2026-10-12_03.00.00 2026-10-12_06.00.00)
     set_tests_properties(diag_RG24_conv_${stamp}_${f} PROPERTIES FIXTURES_REQUIRED diag_RG24_conv LABELS long)
   endforeach()
 endforeach()
+
+# The MYNN PBL (bl_mynn with MPAS's default config_mynn_* options) and its MPAS driver, with MPAS_to_physics and
+# physics_get_tend, against MPAS's own code built with the reference compiler and flags (tests/mynn_column/
+# run_check.sh): gfortran 14.2, the MPAS v8.4.2 source tree (CPPMPAS_MPAS_SRC) and MMM-physics a4baf7f
+# (CPPMPAS_MMM_PHYSICS); without them the reference build fails and so does the test.
+add_executable(test_mynn_column mynn_column/test_mynn_column.cpp)
+target_link_libraries(test_mynn_column PRIVATE cppmpas)
+add_test(NAME mynn_column COMMAND ${T}/mynn_column/run_check.sh ${CPPMPAS_MPAS_SRC} ${CPPMPAS_MMM_PHYSICS}
+  ${W}/mynn_column $<TARGET_FILE:test_mynn_column>)
+set_tests_properties(mynn_column PROPERTIES FIXTURES_REQUIRED work_dir)

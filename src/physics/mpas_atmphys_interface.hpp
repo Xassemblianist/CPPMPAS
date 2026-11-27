@@ -2,8 +2,10 @@
 #pragma once
 // MPAS-Atmosphere's interface from the dynamics to the physics (physics/mpas_atmphys_interface.F, PI): the arrays
 // allocate_forall_physics allocates in mpas_atmphys_vars (PI:86-158) and MPAS_to_physics (PI:235-559), statement by
-// statement. One rank, one thread (the reference runs 1 MPI rank, OMP_NUM_THREADS = 1): its..ite = 1..nCellsSolve,
-// ims = its, ime = ite, kts..kte = 1..nVertLevels, kme = kte + 1, jts = jte = 1 (mpas_atmphys_manager.F:661-669).
+// statement, with the bl_mynn branches (PI:139-147, 376-425: nc_p, nifa_p, nwfa_p zero, ni_p = max(0, ni) under
+// f_ni; mp_thompson_aerosols' nc / nifa / nwfa are refused). One rank, one thread (the reference runs 1 MPI rank,
+// OMP_NUM_THREADS = 1): its..ite = 1..nCellsSolve, ims = its, ime = ite, kts..kte = 1..nVertLevels, kme = kte + 1,
+// jts = jte = 1 (mpas_atmphys_manager.F:661-669).
 //
 // Reference object code (bin/atmosphere_model, sha256 524a1cf4...): __mpas_atmphys_interface_MOD_mpas_to_physics
 // has no FMA and no ymm register; its libm calls are the top-of-the-model pressure of PI:504,
@@ -63,7 +65,8 @@ struct PArray {
 #define CPPMPAS_PHYSICS_VARS(X)                                                                                  \
   X(psfc_p) X(ptop_p) X(u_p) X(v_p) X(fzm_p) X(fzp_p) X(zz_p) X(pres_p) X(pi_p) X(z_p) X(zmid_p) X(dz_p) X(t_p)   \
   X(th_p) X(al_p) X(rho_p) X(rh_p) X(znu_p) X(w_p) X(pres2_p) X(t2_p) X(qv_p) X(qc_p) X(qr_p) X(qi_p) X(qs_p)     \
-  X(qg_p) X(psfc_hyd_p) X(psfc_hydd_p) X(pres_hyd_p) X(pres_hydd_p) X(pres2_hyd_p) X(pres2_hydd_p) X(znu_hyd_p)
+  X(qg_p) X(psfc_hyd_p) X(psfc_hydd_p) X(pres_hyd_p) X(pres_hydd_p) X(pres2_hyd_p) X(pres2_hydd_p) X(znu_hyd_p)   \
+  X(nc_p) X(ni_p) X(nifa_p) X(nwfa_p)
 
 // Kernel view of PhysicsVars: the same member names, as PViews
 struct PhysicsVarsView {
@@ -81,7 +84,9 @@ struct PhysicsVars {
   PArray w_p, pres2_p, t2_p;
   PArray qv_p, qc_p, qr_p, qi_p, qs_p, qg_p;
   PArray psfc_hyd_p, psfc_hydd_p, pres_hyd_p, pres_hydd_p, pres2_hyd_p, pres2_hydd_p, znu_hyd_p;
-  // PI:86-158 for config_microp_scheme / config_pbl_scheme (mp_thompson_aerosols and bl_mynn are refused)
+  PArray nc_p, ni_p, nifa_p, nwfa_p;  // PI:139-147, allocated for bl_mynn only
+  // PI:86-158 for config_microp_scheme / config_pbl_scheme (mp_thompson_aerosols is refused; bl_mynn adds nc_p, ni_p,
+  // nifa_p, nwfa_p)
   void allocate_forall_physics(const std::string& microp_scheme, const std::string& pbl_scheme, int ime_, int kme_);
   // the kernel view (the arrays stay where they are; a const PhysicsVars is read through it by convention)
   PhysicsVarsView view() const {
@@ -130,6 +135,9 @@ struct ToPhysicsArrays {
   // state (time_lev)
   FView<const real> rho_zz, theta_m, w, scalars;
   int index_qv = 0, index_qc = 0, index_qr = 0, index_qi = 0, index_qs = 0, index_qg = 0;
+  int index_ni = 0;  // bl_mynn (PI:394-396)
+  // mpas_atmphys_vars (init_physics_flags, mpas_atmphys_init.F:520-533): index_ni / nc / nifa / nwfa > -1
+  bool f_ni = false, f_nc = false, f_nifa = false, f_nwfa = false;
   // diag
   FView<real> surface_pressure;
   FView<const real> exner, pressure_base, pressure_p, uReconstructZonal, uReconstructMeridional;

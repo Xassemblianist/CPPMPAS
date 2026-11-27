@@ -3,7 +3,8 @@
 // MPAS-Atmosphere's physics tendencies for the dynamics (physics/mpas_atmphys_todynamics.F, TD): physics_get_tend
 // (TD:98-279) with physics_get_tend_work (TD:304-498) and tend_toEdges (TD:501-552), statement by statement.
 //
-// Ported: config_pbl_scheme 'off' or 'bl_ysu' (TD:382-403; 'bl_mynn', TD:405-425, is refused), every
+// Ported: config_pbl_scheme 'off', 'bl_ysu' (TD:382-403) or 'bl_mynn' (TD:405-425: the qs and ni tendencies; its
+// nc / nifa / nwfa tendencies of mp_thompson_aerosols are refused), every
 // config_convection_scheme branch (TD:430-465: the common th / qv / qc / qi terms, cu_kain_fritsch's qr / qs,
 // cu_tiedtke / cu_ntiedtke's momentum through tend_toEdges), the longwave and shortwave heating (TD:469-485) and the
 // moist theta coupling (TD:489-495). The halo exchanges ('physics:blten', 'physics:cuten') are the caller's
@@ -29,11 +30,11 @@ struct GetTendArrays {
   FView<const real> edgeNormalVectors, east, north;
   // state: theta_m and scalars of time level 1, rho_zz of time level 2 (TD:163-165); diag rho_edge (TD:166)
   FView<const real> theta_m, scalars, mass, mass_edge;
-  int index_qv = 0, index_qc = 0, index_qr = 0, index_qi = 0, index_qs = 0;
+  int index_qv = 0, index_qc = 0, index_qr = 0, index_qi = 0, index_qs = 0, index_ni = 0;
   // diag
   FView<real> tend_u_phys;
   // tend_physics
-  FView<const real> rublten, rvblten, rthblten, rqvblten, rqcblten, rqiblten;
+  FView<const real> rublten, rvblten, rthblten, rqvblten, rqcblten, rqiblten, rqsblten, rniblten;
   FView<const real> rucuten, rvcuten, rthcuten, rqvcuten, rqccuten, rqrcuten, rqicuten, rqscuten;
   FView<const real> rthratenlw, rthratensw;
   FView<real> rublten_Edge, rucuten_Edge;
