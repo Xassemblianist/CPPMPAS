@@ -827,6 +827,67 @@ foreach(f IN LISTS DYCORE_SC_OUTPUT_FIELDS)
   cppmpas_gpu_props(gpu_dycore_SC_output30_${f} FIXTURES_REQUIRED gpu_dycore_long_SC LABELS long)
 endforeach()
 
+# RG with the mesoscale_reference physics on the GPU (the physics drivers and schemes as kernels; radiation as host
+# code on the managed arrays until the device radiation is merged): the 12 steps of dycore_run_RG against MPAS (step
+# files per field and through tools/mpas_compare.py, the 01:10 restart and the 1 h / 2 h histories per field) and the
+# step files against the CPU build's; the forecast run's streams of rg-004 (diag 00:00 with l_diags, histories,
+# restart); and (label long) RG24's 19 stream files against rg24-001
+add_test(NAME gpu_dycore_run_RG COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/gpu_dycore_RG' && mkdir -p '${W}/gpu_dycore_RG' && '${GEXE}' run '${REF_RG}/init/x1.10242.init.nc' '${W}/gpu_dycore_RG' --namelist '${REF_RG}/steps/namelist.atmosphere' --scalars qv,qc,qr,qi,qs,qg --steps 12 --write-at 6,7,12 --write-fields ${DYCORE_RG_LONG_LIST} --tables '${CPPMPAS_MPAS_TABLES}' --rrtmg '${CPPMPAS_CPPWRF_RRTMG}'")
+cppmpas_gpu_props(gpu_dycore_run_RG FIXTURES_SETUP gpu_dycore_RG)
+set_tests_properties(gpu_dycore_run_RG PROPERTIES TIMEOUT 1800)
+set(step 0)
+foreach(stamp IN LISTS DYCORE_RG_STAMPS)
+  foreach(f IN LISTS DYCORE_RG_FIELDS)
+    add_test(NAME gpu_dycore_RG_step${step}_${f} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py
+      ${REF_RG}/steps/step.2026-10-12_${stamp}.nc ${W}/gpu_dycore_RG/step.2026-10-12_${stamp}.nc ${f})
+    cppmpas_gpu_props(gpu_dycore_RG_step${step}_${f} FIXTURES_REQUIRED gpu_dycore_RG)
+  endforeach()
+  math(EXPR step "${step} + 1")
+endforeach()
+add_test(NAME gpu_dycore_RG_mpas_compare COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/gpu_dycore_RG_steps' && mkdir -p '${W}/gpu_dycore_RG_steps' && for s in ${DYCORE_RG_STAMP_WORDS}; do ln -s '${W}/gpu_dycore_RG/step.2026-10-12_'$s.nc '${W}/gpu_dycore_RG_steps/'; done && ${Python3_EXECUTABLE} -I '${T}/dycore_compare.py' '${CPPMPAS_MPAS_COMPARE}' '${REF_RG}/steps' '${W}/gpu_dycore_RG_steps' '${W}/gpu_dycore_RG_compare.json' 165")
+cppmpas_gpu_props(gpu_dycore_RG_mpas_compare FIXTURES_REQUIRED gpu_dycore_RG)
+add_test(NAME gpu_dycore_RG_vs_cpu COMMAND ${GPU} -- ${PY} ${T}/dycore_compare.py ${CPPMPAS_MPAS_COMPARE}
+  ${W}/dycore_RG ${W}/gpu_dycore_RG ${W}/gpu_dycore_RG_vs_cpu.json 165)
+cppmpas_gpu_props(gpu_dycore_RG_vs_cpu FIXTURES_REQUIRED "gpu_dycore_RG;dycore_RG")
+foreach(f IN LISTS DYCORE_RG_RESTART_FIELDS)
+  add_test(NAME gpu_dycore_RG_restart_${f} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py
+    ${REF_RG}/forecast/restart.2026-10-12_01.10.00.nc ${W}/gpu_dycore_RG/state.2026-10-12_01.10.00.nc ${f})
+  cppmpas_gpu_props(gpu_dycore_RG_restart_${f} FIXTURES_REQUIRED gpu_dycore_RG)
+endforeach()
+foreach(f IN LISTS DYCORE_RG_HISTORY_FIELDS)
+  add_test(NAME gpu_dycore_RG_history1h_${f} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py
+    ${REF_RG}/forecast/history.2026-10-12_01.00.00.nc ${W}/gpu_dycore_RG/state.2026-10-12_01.00.00.nc ${f})
+  add_test(NAME gpu_dycore_RG_history2h_${f} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py
+    ${REF_RG}/forecast/history.2026-10-12_02.00.00.nc ${W}/gpu_dycore_RG/state.2026-10-12_02.00.00.nc ${f})
+  cppmpas_gpu_props(gpu_dycore_RG_history1h_${f} gpu_dycore_RG_history2h_${f} FIXTURES_REQUIRED gpu_dycore_RG)
+endforeach()
+add_test(NAME gpu_dycore_run_RG_streams COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/gpu_dycore_RG_streams' && mkdir -p '${W}/gpu_dycore_RG_streams' && '${GEXE}' run '${REF_RG}/init/x1.10242.init.nc' '${W}/gpu_dycore_RG_streams' --namelist '${REF_RG}/forecast/namelist.atmosphere' --streams '${REF_RG}/forecast/streams.atmosphere' --scalars qv,qc,qr,qi,qs,qg --every 0 --tables '${CPPMPAS_MPAS_TABLES}' --rrtmg '${CPPMPAS_CPPWRF_RRTMG}'")
+cppmpas_gpu_props(gpu_dycore_run_RG_streams FIXTURES_SETUP gpu_dycore_RG_streams)
+set_tests_properties(gpu_dycore_run_RG_streams PROPERTIES TIMEOUT 1800)
+foreach(file IN LISTS RG_STREAM_FILES)
+  add_test(NAME gpu_dycore_RG_streams_${file} COMMAND ${GPU} -- ${PY} ${CPPMPAS_MPAS_COMPARE}
+    ${REF_RG}/forecast/${file}.nc ${W}/gpu_dycore_RG_streams/${file}.nc)
+  cppmpas_gpu_props(gpu_dycore_RG_streams_${file} FIXTURES_REQUIRED gpu_dycore_RG_streams)
+endforeach()
+add_test(NAME gpu_dycore_RG_streams_all COMMAND ${GPU} -- ${PY} ${T}/streams_compare.py ${CPPMPAS_MPAS_COMPARE}
+  ${REF_RG}/forecast ${W}/gpu_dycore_RG_streams ${W}/gpu_dycore_RG_streams.json 5 702)
+cppmpas_gpu_props(gpu_dycore_RG_streams_all FIXTURES_REQUIRED gpu_dycore_RG_streams)
+add_test(NAME gpu_dycore_run_long_RG24 COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/gpu_dycore_long_RG24' && mkdir -p '${W}/gpu_dycore_long_RG24' && '${GEXE}' run '${REF_RG24}/init/x1.10242.init.nc' '${W}/gpu_dycore_long_RG24' --namelist '${REF_RG24}/forecast/namelist.atmosphere' --streams '${REF_RG24}/forecast/streams.atmosphere' --scalars qv,qc,qr,qi,qs,qg --every 0 --tables '${CPPMPAS_MPAS_TABLES}' --rrtmg '${CPPMPAS_CPPWRF_RRTMG}'")
+cppmpas_gpu_props(gpu_dycore_run_long_RG24 FIXTURES_SETUP gpu_dycore_long_RG24 LABELS long)
+set_tests_properties(gpu_dycore_run_long_RG24 PROPERTIES TIMEOUT 7200)
+foreach(file IN LISTS RG24_STREAM_FILES)
+  add_test(NAME gpu_dycore_RG24_${file} COMMAND ${GPU} -- ${PY} ${CPPMPAS_MPAS_COMPARE}
+    ${REF_RG24}/forecast/${file}.nc ${W}/gpu_dycore_long_RG24/${file}.nc)
+  cppmpas_gpu_props(gpu_dycore_RG24_${file} FIXTURES_REQUIRED gpu_dycore_long_RG24 LABELS long)
+endforeach()
+add_test(NAME gpu_dycore_RG24_all COMMAND ${GPU} -- ${PY} ${T}/streams_compare.py ${CPPMPAS_MPAS_COMPARE}
+  ${REF_RG24}/forecast ${W}/gpu_dycore_long_RG24 ${W}/gpu_dycore_long_RG24.json 19 2168)
+cppmpas_gpu_props(gpu_dycore_RG24_all FIXTURES_REQUIRED gpu_dycore_long_RG24 LABELS long)
+
 # Isobaric diagnostics (core_atmosphere/diagnostics, mpas_isobaric_diagnostics.F) against the reference's
 # diagnostics stream: at t = 0 against mpas842-dbl-rg-004's diag.2026-10-12_00.00.00.nc (the input state; relhum is
 # the input file's) and after 18 steps against mpas842-dbl-rg24-001's diag.2026-10-12_03.00.00.nc (about 70 s). A

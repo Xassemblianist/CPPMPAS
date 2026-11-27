@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 
+#include "core/backend.hpp"
 #include "core/error.hpp"
 #include "core/libm.hpp"
 #include "core_atmosphere/diagnostics/mpas_atm_diagnostics.hpp"
@@ -27,11 +28,14 @@ namespace cppmpas::diag {
 
 namespace {
 
-inline real maxsd(real a, real b) { return a > b ? a : b; }  // gfortran MAX as maxsd, a the destination
-inline real minsd(real a, real b) { return a < b ? a : b; }
+// the levels of the per-thread column arrays of the GPU build (the CPU build has no limit)
+constexpr int kMaxDiagLevels = 256;
+
+CPPMPAS_HD inline real maxsd(real a, real b) { return a > b ? a : b; }  // gfortran MAX as maxsd, a the destination
+CPPMPAS_HD inline real minsd(real a, real b) { return a < b ? a : b; }
 
 // CV:528-544 (z, column_values 1-based through the pointers' [-1])
-real column_height_value(const real* column_values, const real* z, real z_interp, int n) {
+CPPMPAS_HD real column_height_value(const real* column_values, const real* z, real z_interp, int n) {
   int kz = 1;
   for (int k = 1; k <= n; ++k)
     if (z[k - 1] <= z_interp) kz = k;
@@ -42,7 +46,7 @@ real column_height_value(const real* column_values, const real* z, real z_interp
 }
 
 // CV:548-565
-real integral_zstaggered(const real* column_values, const real* z, real zbot, real ztop, int n) {
+CPPMPAS_HD real integral_zstaggered(const real* column_values, const real* z, real zbot, real ztop, int n) {
   real s = 0.;
   for (int k = 1; k <= n; ++k) {
     const real zb = maxsd(z[k - 1], zbot);
@@ -53,7 +57,7 @@ real integral_zstaggered(const real* column_values, const real* z, real zbot, re
 }
 
 // CV:569-589
-real integral_zpoint(const real* column_values, const real* z, real zbot, real ztop, int n) {
+CPPMPAS_HD real integral_zpoint(const real* column_values, const real* z, real zbot, real ztop, int n) {
   real s = 0.;
   for (int k = 1; k <= n - 1; ++k) {
     const real zb = maxsd(z[k - 1], zbot);
@@ -67,25 +71,25 @@ real integral_zpoint(const real* column_values, const real* z, real zbot, real z
 }
 
 // CV:1043-1054 getqvs (eps = 287.04/461.5 folded); vector: the exp lane of the first getcape loop
-inline real getqvs_es(real t, bool lane) {
+CPPMPAS_HD inline real getqvs_es(real t, bool lane) {
   const real a = 17.67 * (t - 273.15) / (t - 29.65);
   return 611.2 * (lane ? libm::mvec_exp(a) : libm::exp(a));
 }
-inline real getqvs(real p, real t, bool lane = false) {
+CPPMPAS_HD inline real getqvs(real p, real t, bool lane = false) {
   constexpr real eps = 287.04 / 461.5;
   const real es = getqvs_es(t, lane);
   return eps * es / (p - es);
 }
 
 // CV:1060-1071 getqvi
-inline real getqvi(real p, real t) {
+CPPMPAS_HD inline real getqvi(real p, real t) {
   constexpr real eps = 287.04 / 461.5;
   const real es = 611.2 * libm::exp(21.8745584 * (t - 273.15) / (t - 7.66));
   return eps * es / (p - es);
 }
 
 // CV:1077-1093 getthe
-inline real getthe(real p, real t, real td, real q) {
+CPPMPAS_HD inline real getthe(real p, real t, real td, real q) {
   real tlcl;
   if ((td - t) >= -0.1) {
     tlcl = t;
@@ -98,7 +102,7 @@ inline real getthe(real p, real t, real td, real q) {
 
 // CV:595-1037 getcape with source = 2 (most unstable parcel), adiabat = 1 (pseudoadiabatic, liquid only),
 // debug_level = 0 (no log writes)
-void getcape(int nk, const real* p_in, const real* t_in, const real* td_in, real& cape, real& cin) {
+CPPMPAS_HD void getcape(int nk, const real* p_in, const real* t_in, const real* td_in, real& cape, real& cin) {
   constexpr real pinc = 100.0;
   constexpr real g = 9.81;
   constexpr real p00 = 100000.0;
@@ -122,7 +126,9 @@ void getcape(int nk, const real* p_in, const real* t_in, const real* td_in, real
   constexpr real converge = 0.0002;
   constexpr real rd_cp = rd / cp;  // the constant rd/cp of CV:932
 
-  std::vector<real> p(nk + 1), t(nk + 1), td(nk + 1), pi(nk + 1), q(nk + 1), th(nk + 1), thv(nk + 1);
+  // the column arrays: the thread's own (core/backend.hpp LocalArray; the caller checks nk <= kMaxDiagLevels)
+  LocalArray<real, kMaxDiagLevels + 1> p(nk + 1), t(nk + 1), td(nk + 1), pi(nk + 1), q(nk + 1), th(nk + 1),
+      thv(nk + 1);
   // CV:708-717; pairs of k use the libmvec lanes, an odd last k the scalar calls
   const int nvec = (nk / 2) * 2;
   for (int k = 1; k <= nk; ++k) {
@@ -224,7 +230,7 @@ void getcape(int nk, const real* p_in, const real* t_in, const real* td_in, real
         th2 = th1 * libm::exp(lhv * (ql2 - ql1) / (cpm * tbar) + lhs * (qi2 - qi1) / (cpm * tbar) +
                               (rm / cpm - rd_cp) * libm::log(p2 / p1));
         if (i > 100) return;  // CV:937-947 lack of convergence (debug_level = 0: no message)
-        if (std::fabs(th2 - thlast) > converge) {
+        if (fabs(th2 - thlast) > converge) {
           thlast = thlast + 0.3 * (th2 - thlast);
         } else {
           not_converged = false;
@@ -271,7 +277,8 @@ void convective_diagnostics_setup(DiagnosticsContext& c) {
   c.is_needed_lml_wsp_max = c.output_stream_inclusion_count("wind_speed_level1_max") > 0;
 }
 
-// CV:99-198
+// CV:99-198. One kernel per cell loop (one thread per cell); the updraft helicity's vertex-to-cell sums are one
+// sequence (serial: each cell's sum in MPAS's vertex order).
 void convective_diagnostics_update(DiagnosticsContext& c) {
   if (!(c.is_needed_updraft_helicity || c.is_needed_w_max || c.is_needed_lml_wsp_max)) return;
   const Mesh& m = *c.mesh;
@@ -280,45 +287,57 @@ void convective_diagnostics_update(DiagnosticsContext& c) {
   const int nCells = m.nCells, nVertLevels = m.nVertLevels, nCellsSolve = m.nCellsSolve();
   const int nVertices = m.nVertices, nVertexDegree = m.vertexDegree;
   const int nVertLevelsP1 = nVertLevels + 1;
-  auto& updraft_helicity_max = c.pools->R("updraft_helicity_max");
-  auto& w_velocity_max = c.pools->R("w_velocity_max");
-  auto& wind_speed_level1_max = c.pools->R("wind_speed_level1_max");
-  const auto& vorticity = d.vorticity;
-  const auto& uzonal = d.uReconstructZonal;
-  const auto& umeridional = d.uReconstructMeridional;
-  const auto& w = s.w;
-  std::vector<real> z_agl(nVertLevelsP1);
+#if defined(CPPMPAS_USE_CUDA)
+  if (nVertLevelsP1 > kMaxDiagLevels) throw Error("convective_diagnostics_update: more than 255 levels");
+#endif
+  const auto updraft_helicity_max = c.pools->R("updraft_helicity_max").view();
+  const auto w_velocity_max = c.pools->R("w_velocity_max").view();
+  const auto wind_speed_level1_max = c.pools->R("wind_speed_level1_max").view();
+  const auto vorticity = d.vorticity.cview();
+  const auto uzonal = d.uReconstructZonal.cview();
+  const auto umeridional = d.uReconstructMeridional.cview();
+  const auto w = s.w.cview();
+  const auto cellsOnVertex = m.cellsOnVertex.cview();
+  const auto kiteAreasOnVertex = m.kiteAreasOnVertex.cview();
+  const auto areaCell = m.areaCell.cview();
+  const auto zgrid = m.zgrid.cview();
 
   if (c.is_needed_w_max) {  // CV:156-160
-    for (int iCell = 1; iCell <= nCellsSolve; ++iCell) {
+    parallel_for(1, nCellsSolve, [=] CPPMPAS_LAMBDA(int iCell) {
       real mx = w(1, iCell);  // maxval(w(1:nVertLevels,iCell))
       for (int k = 2; k <= nVertLevels; ++k) mx = maxsd(w(k, iCell), mx);
       w_velocity_max(iCell) = maxsd(mx, w_velocity_max(iCell));
-    }
+    });
   }
   if (c.is_needed_lml_wsp_max) {  // CV:162-166
-    for (int iCell = 1; iCell <= nCellsSolve; ++iCell)
+    parallel_for(1, nCellsSolve, [=] CPPMPAS_LAMBDA(int iCell) {
       wind_speed_level1_max(iCell) =
-          maxsd(std::sqrt(uzonal(1, iCell) * uzonal(1, iCell) + umeridional(1, iCell) * umeridional(1, iCell)),
+          maxsd(sqrt(uzonal(1, iCell) * uzonal(1, iCell) + umeridional(1, iCell) * umeridional(1, iCell)),
                 wind_speed_level1_max(iCell));
+    });
   }
   if (c.is_needed_updraft_helicity) {  // CV:168-193
-    FArray<real> updraft_helicity({nVertLevels, nCells + 1}, 0.);
-    for (int i = 1; i <= nVertices; ++i)
-      for (int j = 1; j <= nVertexDegree; ++j) {
-        const int iCell = m.cellsOnVertex(j, i);
-        for (int k = 1; k <= nVertLevels; ++k)
-          updraft_helicity(k, iCell) = updraft_helicity(k, iCell) + m.kiteAreasOnVertex(j, i) * vorticity(k, i);
-      }
-    for (int iCell = 1; iCell <= nCellsSolve; ++iCell)
+    FArray<real> updraft_helicity_a({nVertLevels, nCells + 1}, 0.);
+    const auto updraft_helicity = updraft_helicity_a.view();
+    serial([=] CPPMPAS_LAMBDA() {
+      for (int i = 1; i <= nVertices; ++i)
+        for (int j = 1; j <= nVertexDegree; ++j) {
+          const int iCell = cellsOnVertex(j, i);
+          for (int k = 1; k <= nVertLevels; ++k)
+            updraft_helicity(k, iCell) = updraft_helicity(k, iCell) + kiteAreasOnVertex(j, i) * vorticity(k, i);
+        }
+    });
+    parallel_for(1, nCellsSolve, [=] CPPMPAS_LAMBDA(int iCell) {
       for (int k = 1; k <= nVertLevels; ++k)
         updraft_helicity(k, iCell) = maxsd(0.5 * (w(k, iCell) + w(k + 1, iCell)), 0.) *
-                                     maxsd(updraft_helicity(k, iCell) / m.areaCell(iCell), 0.);
-    for (int iCell = 1; iCell <= nCellsSolve; ++iCell) {
-      for (int k = 1; k <= nVertLevelsP1; ++k) z_agl[k - 1] = m.zgrid(k, iCell) - m.zgrid(1, iCell);
+                                     maxsd(updraft_helicity(k, iCell) / areaCell(iCell), 0.);
+    });
+    parallel_for(1, nCellsSolve, [=] CPPMPAS_LAMBDA(int iCell) {
+      LocalArray<real, kMaxDiagLevels> z_agl(nVertLevelsP1);
+      for (int k = 1; k <= nVertLevelsP1; ++k) z_agl[k - 1] = zgrid(k, iCell) - zgrid(1, iCell);
       const real uph = integral_zstaggered(&updraft_helicity(1, iCell), z_agl.data(), 2000.0, 5000.0, nVertLevels);
       updraft_helicity_max(iCell) = maxsd(uph, updraft_helicity_max(iCell));
-    }
+    });
   }
 }
 
@@ -353,42 +372,43 @@ void convective_diagnostics_compute(DiagnosticsContext& c) {
   RegistryPools& p = *c.pools;
   const int nCells = m.nCells, nCellsSolve = m.nCellsSolve(), nVertLevels = m.nVertLevels;
   const int nVertLevelsP1 = nVertLevels + 1;
-  auto& cape = p.R("cape");
-  auto& cin = p.R("cin");
+#if defined(CPPMPAS_USE_CUDA)
+  if (nVertLevelsP1 > kMaxDiagLevels) throw Error("convective_diagnostics_compute: more than 255 levels");
+#endif
+  const auto cape = p.R("cape").view();
+  const auto cin = p.R("cin").view();
   (void)p.R("lcl");
   (void)p.R("lfc");
-  auto& srh_0_1km = p.R("srh_0_1km");
-  auto& srh_0_3km = p.R("srh_0_3km");
-  auto& uzonal_surface = p.R("uzonal_surface");
-  auto& uzonal_1km = p.R("uzonal_1km");
-  auto& uzonal_6km = p.R("uzonal_6km");
-  auto& umeridional_surface = p.R("umeridional_surface");
-  auto& umeridional_1km = p.R("umeridional_1km");
-  auto& umeridional_6km = p.R("umeridional_6km");
-  auto& temperature_surface = p.R("temperature_surface");
-  auto& dewpoint_surface = p.R("dewpoint_surface");
-  const auto& height = m.zgrid;
-  const auto& umeridional = d.uReconstructMeridional;
-  const auto& uzonal = d.uReconstructZonal;
-  const auto& theta_m = s.theta_m;
-  const auto& scalars = s.scalars;
-  const auto& exner = d.exner;
-  const auto& pressure_base = d.pressure_base;
-  const auto& pressure_p = d.pressure_p;
+  const auto srh_0_1km = p.R("srh_0_1km").view();
+  const auto srh_0_3km = p.R("srh_0_3km").view();
+  const auto uzonal_surface = p.R("uzonal_surface").view();
+  const auto uzonal_1km = p.R("uzonal_1km").view();
+  const auto uzonal_6km = p.R("uzonal_6km").view();
+  const auto umeridional_surface = p.R("umeridional_surface").view();
+  const auto umeridional_1km = p.R("umeridional_1km").view();
+  const auto umeridional_6km = p.R("umeridional_6km").view();
+  const auto temperature_surface = p.R("temperature_surface").view();
+  const auto dewpoint_surface = p.R("dewpoint_surface").view();
+  const auto height = m.zgrid.cview();
+  const auto umeridional = d.uReconstructMeridional.cview();
+  const auto uzonal = d.uReconstructZonal.cview();
+  const auto theta_m = s.theta_m.cview();
+  const auto scalars = s.scalars.cview();
+  const auto exner = d.exner.cview();
+  const auto pressure_base = d.pressure_base.cview();
+  const auto pressure_p = d.pressure_p.cview();
   int index_qv = 0;
   for (std::size_t k = 0; k < s.scalar_names.size(); ++k)
     if (s.scalar_names[k] == "qv") index_qv = static_cast<int>(k) + 1;
   if (index_qv == 0) throw Error("convective_diagnostics_compute: qv is not an active scalar");
 
   constexpr real dev_motion = 7.5, z_bunker_bot = 0., z_bunker_top = 6000.;
-  FArray<real> temperature({nVertLevels, nCells}), dewpoint({nVertLevels, nCells});
-  std::vector<real> dudz(nVertLevels + 1), dvdz(nVertLevels + 1), zp(nVertLevels), zrel(nVertLevels + 1),
-      srh(nVertLevels + 1), p_in(nVertLevels), t_in(nVertLevels), td_in(nVertLevels), ucol(nVertLevels),
-      vcol(nVertLevels);
+  FArray<real> temperature_a({nVertLevels, nCells}), dewpoint_a({nVertLevels, nCells});
+  const auto temperature = temperature_a.view(), dewpoint = dewpoint_a.view();
 
   // CV:363-374: k in pairs through _ZGVbN2v_log, an odd last level through log@plt
   const int nvec = (nVertLevels / 2) * 2;
-  for (int iCell = 1; iCell <= nCells; ++iCell)
+  parallel_for(1, nCells, [=] CPPMPAS_LAMBDA(int iCell) {
     for (int k = 1; k <= nVertLevels; ++k) {
       temperature(k, iCell) =
           (theta_m(k, iCell) / (1. + rvord * scalars(index_qv, k, iCell))) * exner(k, iCell);
@@ -399,9 +419,12 @@ void convective_diagnostics_compute(DiagnosticsContext& c) {
       dewpoint(k, iCell) = (243.5 * lg) / (17.67 - lg);
       dewpoint(k, iCell) = dewpoint(k, iCell) + 273.15;
     }
+  });
 
-  // CV:378-448
-  for (int iCell = 1; iCell <= nCellsSolve; ++iCell) {
+  // CV:378-448; the column arrays are the thread's own
+  parallel_for(1, nCellsSolve, [=] CPPMPAS_LAMBDA(int iCell) {
+    LocalArray<real, kMaxDiagLevels> dudz(nVertLevels + 1), dvdz(nVertLevels + 1), zp(nVertLevels),
+        zrel(nVertLevels + 1), srh(nVertLevels + 1), ucol(nVertLevels), vcol(nVertLevels);
     for (int k = 1; k <= nVertLevels; ++k) {
       zp[k - 1] = 0.5 * (height(k, iCell) + height(k + 1, iCell)) - height(1, iCell);
       ucol[k - 1] = uzonal(k, iCell);
@@ -433,7 +456,7 @@ void convective_diagnostics_compute(DiagnosticsContext& c) {
                           (z_bunker_top - z_bunker_bot);
       const real v_mean = integral_zstaggered(vcol.data(), zrel.data(), z_bunker_bot, z_bunker_top, nVertLevels) /
                           (z_bunker_top - z_bunker_bot);
-      const real shear_magnitude = maxsd(std::sqrt(u_shear * u_shear + v_shear * v_shear), 0.0001);
+      const real shear_magnitude = maxsd(sqrt(u_shear * u_shear + v_shear * v_shear), 0.0001);
       const real u_storm = u_mean + dev_motion * v_shear / shear_magnitude;
       const real v_storm = v_mean - dev_motion * u_shear / shear_magnitude;
 
@@ -457,11 +480,12 @@ void convective_diagnostics_compute(DiagnosticsContext& c) {
       if (need_srh_01km) srh_0_1km(iCell) = integral_zpoint(srh.data(), zrel.data(), 0.0, 1000.0, nVertLevelsP1);
       if (need_srh_03km) srh_0_3km(iCell) = integral_zpoint(srh.data(), zrel.data(), 0.0, 3000.0, nVertLevelsP1);
     }
-  }
+  });
 
   // CV:451-474
   if (need_cape || need_cin) {
-    for (int iCell = 1; iCell <= nCellsSolve; ++iCell) {
+    parallel_for(1, nCellsSolve, [=] CPPMPAS_LAMBDA(int iCell) {
+      LocalArray<real, kMaxDiagLevels> p_in(nVertLevels), t_in(nVertLevels), td_in(nVertLevels);
       for (int k = 1; k <= nVertLevels; ++k) {
         p_in[k - 1] = (pressure_p(k, iCell) + pressure_base(k, iCell)) / 100.0;
         t_in[k - 1] = temperature(k, iCell) - 273.15;
@@ -471,7 +495,7 @@ void convective_diagnostics_compute(DiagnosticsContext& c) {
       getcape(nVertLevels, p_in.data(), t_in.data(), td_in.data(), cape_out, cin_out);
       cape(iCell) = cape_out;
       cin(iCell) = cin_out;
-    }
+    });
   }
 }
 
@@ -480,7 +504,8 @@ void convective_diagnostics_reset(DiagnosticsContext& c) {
   for (const char* f : {"updraft_helicity_max", "w_velocity_max", "wind_speed_level1_max"})
     if (c.field_will_be_written(f)) {
       auto& a = c.pools->R(f);
-      for (std::size_t n = 0; n < a.size(); ++n) a.data()[n] = 0.;
+      real* ad = a.data();
+      parallel_for_n(a.size(), [=] CPPMPAS_LAMBDA(std::size_t n) { ad[n] = 0.; });
     }
 }
 
