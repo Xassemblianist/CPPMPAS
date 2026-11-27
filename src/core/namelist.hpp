@@ -53,6 +53,14 @@ std::map<std::string, NmlValue> read_namelist_file(const std::string& path);
 std::map<std::string, std::string> effective_namelist(const std::string& path);
 // InitConfig from a namelist.atmosphere file (empty path: the Registry defaults), after effective_namelist's checks.
 InitConfig read_init_config(const std::string& path);
+// Every Registry namelist option in Registry order (the order of MPAS's configs pool, which add_stream_attributes
+// iterates, mpas_subdriver.F:532-557) with its type (real, integer, logical, character) and effective value as
+// effective_namelist gives it.
+struct NamelistAttribute {
+  std::string name, type, value;
+};
+std::vector<NamelistAttribute> namelist_attributes(const std::string& path);
+
 // The constituents of the var_array scalars the namelist activates, in Registry order (Registry.xml:1701-1748: qv
 // always; qc, qr, qi, qs, qg through their packages, mpas_atmphys_packages.F), after physics_namelist_check's
 // resolution of 'suite' (mpas_atmphys_control.F:157-196) for config_physics_suite 'none' and 'mesoscale_reference'.

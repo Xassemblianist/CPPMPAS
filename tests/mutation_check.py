@@ -1453,6 +1453,47 @@ MUTATIONS += [
      CV24("w_velocity_max", "06")),
 ]
 
+# the output streams of cppmpas run --streams (io/mpas_streams.cpp, tools/cppmpas.cpp, the namelist attributes of
+# io/mpas_writer.cpp): RG's forecast directory (dycore_RG_streams_*, about 50 s) and RG24's (dycore_RG24_*, long)
+ST, NT = "src/io/mpas_streams.cpp", "src/core/namelist_table.inc"
+RGS = lambda *fs: [f"dycore_RG_streams_{f}" for f in fs]
+MUTATIONS += [
+    # the output interval in seconds: every alarm shifted, the 01:00 history is not written
+    (ST, "  return ((days * 24 + h) * 60 + m) * 60 + sec;", "  return ((days * 24 + h) * 60 + m) * 60 + sec + 600;",
+     RGS("history.2026-10-12_01.00.00", "all")),
+    # no restart file at the initial time (mpas_atm_core.F:667)
+    (ST, '  if (OutputStream* r = sm.find("restart")) r->reset(0);', '  if (OutputStream* r = sm.find("restart_")) r->reset(0);',
+     RGS("all")),
+    # restart_timestamp as Fortran's list-directed write writes it
+    (X, '            std::fprintf(tf, " %s\\n", stamp.c_str());', '            std::fprintf(tf, "%s\\n", stamp.c_str());', RGS("all")),
+    # MG:615-645: the diagnostics alarm takes the shorter of the output and diagnostics intervals (relhum at 01:00)
+    (X, "          step = std::min(step, interval_seconds(dia->spec.output_interval));",
+     "          step = std::max(step, interval_seconds(dia->spec.output_interval));", RGS("history.2026-10-12_01.00.00")),
+    # atm_reset_diagnostics (mpas_atm_core.F:884-895): refl10cm_1km_max restarts after each diagnostics write
+    (X, "            for (std::size_t k = 0; k < r.size(); ++k) r.data()[k] = 0.;",
+     "            for (std::size_t k = 0; k < r.size(); ++k) r.data()[k] = r.data()[k];",
+     ["dycore_RG24_diag.2026-10-12_06.00.00"]),
+    # the namelist options as global attributes: logicals, the schemes physics_namelist_check resolved
+    (W, '        f.put_att_text("", name, yes_no(value == "true"));', '        f.put_att_text("", name, yes_no(value != "true"));',
+     RGS("history.2026-10-12_00.00.00")),
+    (X, '            {"config_microp_scheme", &pr.cfg.config_microp_scheme},',
+     '            {"config_microp_scheme_", &pr.cfg.config_microp_scheme},', RGS("history.2026-10-12_00.00.00")),
+    # a field read from the input stream keeps the input file's attribute values (dvEdge's units '-')
+    (W, "            if (fa.name == k && fa.type == NC_CHAR) v = trimmed(fa.text());",
+     "            if (fa.name == k && fa.type == NC_INT) v = trimmed(fa.text());", RGS("history.2026-10-12_00.00.00")),
+    # an inactive field of a stream is skipped
+    (ST, "        if (!packages.active(*rv)) continue;  // an inactive field is skipped",
+     "        if (false) continue;  // an inactive field is skipped", ["dycore_run_RG_streams"]),
+    # MPAS_field_will_be_written answered by the stream manager: the diagnostics stream's fields are computed
+    (X, "      if (streams_mode) return sm.field_will_be_written(n, clock_s);", "      if (streams_mode) return false;",
+     RGS("diag.2026-10-12_00.00.00")),
+    # qv_init: the restart stream writes its Registry default
+    (R, '    const bool mesh_default = rv && rv->name == "qv_init";', '    const bool mesh_default = rv && rv->name == "qv_init_";',
+     ["dycore_run_RG_streams"]),
+    # the RG24 forecast's config_run_duration is a verified value
+    (NT, '0_02:00:00\\n1_00:00:00")', '0_02:00:00")', ["namelist_table_current"]),
+]
+
 MUTATIONS = [(p, o, n, [t for t in ts if t not in EQUIVALENT_ON_SC.get((p, n), [])]) for p, o, n, ts in MUTATIONS]
 
 

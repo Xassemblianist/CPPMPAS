@@ -8,6 +8,7 @@
 //    writes 0 in the unused slots j > nEdgesOnCell(i) / nEdgesOnEdge(i) (5053, 5074, 5095, 5152) and maps a garbage
 //    index n+1 to indexTo*ID(n+1) = 0.
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "io/mpas_reader.hpp"
@@ -24,13 +25,16 @@ struct HistoryOptions {
   int nprocs = 1;
   // empty: a random 10-character [0-9a-z] id, as MPAS writes (mpas_stream_manager.F:4263, 4306-4310; random_id.c)
   std::string file_id = "";
+  // the namelist options MPAS adds as global attributes after mesh_spec (mpas_subdriver.F:532-557), in order: a real
+  // as a double, an integer as an int, a logical as 'YES' / 'NO', a character value trimmed (type as in
+  // core/namelist.hpp NamelistAttribute; value: the effective value MPAS holds when the attributes are added)
+  std::vector<std::pair<std::string, std::pair<std::string, std::string>>> config_atts;
 };
 
 // Writes an MPAS history file for the given fields: CDF-5 (SMIOL's default format, smiolf.F90:426-430, with no
 // fformat passed by MPAS_io_open, mpas_io.F:420-421), Registry dimensions, types and attributes
 // (gen_inc.c:43-58), xtime as char(Time, StrLen = 64), global attributes of mpas_subdriver.F:513-530 and
-// mpas_stream_manager.F:4306-4310. NOT yet written: the namelist options MPAS adds as global attributes
-// (mpas_subdriver.F:532-557); they need the namelist port.
+// mpas_stream_manager.F:4306-4310, and the namelist options of opt.config_atts (mpas_subdriver.F:532-557).
 void write_history(MpasInput& in, const std::string& path, const std::vector<std::string>& fields,
                    const HistoryOptions& opt = {});
 

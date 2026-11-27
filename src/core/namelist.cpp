@@ -250,6 +250,13 @@ std::map<std::string, NmlValue> read_namelist_file(const std::string& path) {
   return kv;
 }
 
+std::vector<NamelistAttribute> namelist_attributes(const std::string& path) {
+  const auto eff = effective_namelist(path);
+  std::vector<NamelistAttribute> out;
+  for (const auto& o : kOptions) out.push_back({o.name, o.type, eff.at(lower(o.name))});
+  return out;
+}
+
 std::map<std::string, std::string> effective_namelist(const std::string& path) {
   std::map<std::string, NmlValue> file;
   if (!path.empty()) file = read_namelist_file(path);

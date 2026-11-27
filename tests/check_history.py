@@ -5,7 +5,8 @@ CPPMPAS's generated table): NetCDF type per Registry type, dimensions = Time fir
 StrLen = 64 for text (mpas_io_streams.F:1518-1519); dimensions defined in the order MPAS defines them, field by
 field in Fortran order: StrLen, inner dimensions, outer dimension, Time (mpas_io_streams.F:1518-1519, 1700-1745);
 attributes, in order, = every XML attribute except those MPAS ignores, 'description' renamed 'long_name'
-(src/tools/registry/gen_inc.c:43-58); CDF-5 (SMIOL default, smiolf.F90:426-430); global attributes of
+(src/tools/registry/gen_inc.c:43-58), with the init file's value of each where the init file has it (the fields are
+read from it: put_get_field_atts, mpas_io_streams.F:4315-4360); CDF-5 (SMIOL default, smiolf.F90:426-430); global attributes of
 mpas_subdriver.F:513-530 in that order, then file_id (mpas_stream_manager.F:4306-4310): the given one, or a random
 10-character [0-9a-z] id when none is given. Values must equal the source init file's bytes (file order).
 The Registry is preprocessed as the atmosphere core's build does: DO_PHYSICS defined, other macros undefined,
@@ -88,8 +89,16 @@ def main():
             v = h[n]
             if list(v.dimensions) != want_dims or v.dtype.str[1:] != want_type:
                 fails.append(f"{n}: {v.dtype}{v.dimensions}, expected {want_type}{tuple(want_dims)}")
-            want_atts = [(("long_name" if k == "description" else k), val)
-                         for k, val in el.attrib.items() if k not in IGNORED]
+            # a field read from the input file: put_get_field_atts (mpas_io_streams.F:4315-4360) replaces the value
+            # of each of its Registry attributes by the input file's (a text attribute the file has)
+            src_atts = {a: s[n].getncattr(a) for a in s[n].ncattrs()} if n in s.variables else {}
+            want_atts = []
+            for k, val in el.attrib.items():
+                if k in IGNORED:
+                    continue
+                k = "long_name" if k == "description" else k
+                fv = src_atts.get(k)
+                want_atts.append((k, fv.rstrip(" ") if isinstance(fv, str) else val))
             got_atts = [(a, v.getncattr(a)) for a in v.ncattrs()]
             if got_atts != want_atts:
                 fails.append(f"{n}: attributes {got_atts} != {want_atts}")

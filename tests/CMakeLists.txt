@@ -148,7 +148,7 @@ add_test(NAME unit_libm COMMAND test_libm 2000000)
 # and of the namelist of the MW restart run (tests/namelists/MW_restart: the MW forecast namelist restarted from the
 # reference's restart file at 00:30:06, verified by the dycore_restart_MW_* tests)
 add_test(NAME namelist_table_current COMMAND ${CMAKE_COMMAND} -E env sh -c
-  "${Python3_EXECUTABLE} -I '${CMAKE_SOURCE_DIR}/tools/gen_namelist_table.py' '${CPPMPAS_MPAS_REGISTRY}' ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/forecast/namelist.atmosphere '${CMAKE_SOURCE_DIR}/tests/namelists/MW_restart/namelist.atmosphere' ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg-004/RG/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg-004/RG/forecast/namelist.atmosphere > '${W}/namelist_table.inc' && ${CMAKE_COMMAND} -E compare_files '${W}/namelist_table.inc' '${CMAKE_SOURCE_DIR}/src/core/namelist_table.inc'")
+  "${Python3_EXECUTABLE} -I '${CMAKE_SOURCE_DIR}/tools/gen_namelist_table.py' '${CPPMPAS_MPAS_REGISTRY}' ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/forecast/namelist.atmosphere '${CMAKE_SOURCE_DIR}/tests/namelists/MW_restart/namelist.atmosphere' ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg-004/RG/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg-004/RG/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg24-001/RG24/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg24-001/RG24/forecast/namelist.atmosphere > '${W}/namelist_table.inc' && ${CMAKE_COMMAND} -E compare_files '${W}/namelist_table.inc' '${CMAKE_SOURCE_DIR}/src/core/namelist_table.inc'")
 set_tests_properties(namelist_table_current PROPERTIES FIXTURES_REQUIRED work_dir)
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -517,8 +517,9 @@ set_tests_properties(cu_gwdo_column PROPERTIES FIXTURES_REQUIRED work_dir)
 # directory through tools/mpas_compare.py) and, after steps 6, 7 and 12, the fields of the forecast run's history
 # (1 h, 2 h) and restart (01:10) streams. The steps run and the forecast run of the reference hold the same state (the
 # forecast run's output alarms only add diagnostics); relhum is left out: MPAS recomputes it in the WSM6 driver when
-# the diagnostics alarm rings (compute_relhum, l_diags), which CPPMPAS refuses. Needs CPPMPAS_MPAS_TABLES (the
-# reference build's tables) and CPPMPAS_CPPWRF_RRTMG (the RRTMG table images).
+# the diagnostics alarm rings (compute_relhum, l_diags), which a steps-configuration run never does (the forecast
+# configuration is the --streams test below). Needs CPPMPAS_MPAS_TABLES (the reference build's tables) and
+# CPPMPAS_CPPWRF_RRTMG (the RRTMG table images).
 set(REF_RG ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg-004/RG)
 set(DYCORE_RG_FIELDS xtime Time u w rho_zz theta_m rho theta pressure_p qv qc qr qi qs qg)
 set(DYCORE_RG_RESTART_FIELDS ru_p rw_p rt_diabatic_tend rthdynten isltyp ivgtyp mminlu isice_lu iswater_lu landmask shdmin shdmax snoalb albedo12m greenfrac var2d con oa1 oa2 oa3 oa4 ol1 ol2 ol3 ol4 qv qc qr qi qs qg u_init v_init t_init xtime Time u w rho_zz theta_m pressure_p rho theta exner exner_base rtheta_base pressure_base rho_base theta_base ru rw rtheta_p rho_p surface_pressure rainprod evapprod re_cloud re_ice re_snow tend_sfc_pressure nsteps_accum ndays_accum tlag tday_accum tyear_mean tyear_accum i_rainnc rainncv rainnc snowncv snownc graupelncv graupelnc sr i_rainc cuprec rainc raincv qcg wstar delta ch kpbl hpbl hfx mavail mol qfx qsfc ust ustm zol znt br cd cda chs chs2 cqs2 ck cka cpm flhc flqc gz1oz0 lh psim psih qgh regime rmol wspd fh fm u10 v10 q2 t2m th2m dusfcg dvsfcg dtaux3d dtauy3d rubldiff rvbldiff i_acswdnb i_acswdnbc i_acswdnt i_acswdntc i_acswupb i_acswupbc i_acswupt i_acswuptc acswdnb acswdnbc acswdnt acswdntc acswupb acswupbc acswupt acswuptc gsw i_aclwdnb i_aclwdnbc i_aclwdnt i_aclwdntc i_aclwupb i_aclwupbc i_aclwupt i_aclwuptc aclwdnb aclwdnbc aclwdnt aclwdntc aclwupb aclwupbc aclwupt aclwuptc glw o3clim o3vmr acsnom acsnow canwat chklowq grdflx lai noahres potevp sfc_albedo sfc_emiss sfc_emibck sfcrunoff smstav smstot snopcx snotime sstsk sstsk_dtc sstsk_dtw thc udrunoff xicem z0 zs rthmpten rqvmpten rqcmpten rqrmpten rqimpten rqsmpten rqgmpten rthcuten rqvcuten rqccuten rqicuten rqvdynten rucuten rvcuten rublten rvblten rthblten rqvblten rqcblten rqiblten rthratensw rthratenlw sfc_albbck skintemp snow snowc snowh sst tmn vegfra seaice xice xland dzs smcrel sh2o smois tslb t_oml t_oml_initial t_oml_200m_initial h_oml h_oml_initial hu_oml hv_oml)
@@ -558,27 +559,47 @@ foreach(f IN LISTS DYCORE_RG_HISTORY_FIELDS)
   set_tests_properties(dycore_RG_history2h_${f} PROPERTIES FIXTURES_REQUIRED dycore_RG)
 endforeach()
 
-# RG24 (mpas842-dbl-rg24-001, the v0.1 target: the RG case for 24 h; label "long", about 15 minutes): one run of 144
-# steps in the steps configuration writes the fields of the forecast run's history (every 3 h to 2026-10-13_00) and
-# restart (12:10, after step 73) streams; relhum is left out as for RG (l_diags).
+# RG as the reference's forecast run writes it (cppmpas run --streams with the forecast's namelist.atmosphere and
+# streams.atmosphere: history every 1 h, diagnostics every 3 h, restart at 01:10; mpas_atm_core.F:625-919): every
+# file of mpas842-dbl-rg-004's forecast directory (diag 00:00, history 00:00 / 01:00 / 02:00, restart 01:10), every
+# variable, its attributes and the global attributes (the namelist options included), the restart_timestamp file;
+# one test per file and one for the whole directory (about 50 s).
+set(RG_STREAM_FILES diag.2026-10-12_00.00.00 history.2026-10-12_00.00.00 history.2026-10-12_01.00.00
+  history.2026-10-12_02.00.00 restart.2026-10-12_01.10.00)
+add_test(NAME dycore_run_RG_streams COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/dycore_RG_streams' && mkdir -p '${W}/dycore_RG_streams' && '${EXE}' run '${REF_RG}/init/x1.10242.init.nc' '${W}/dycore_RG_streams' --namelist '${REF_RG}/forecast/namelist.atmosphere' --streams '${REF_RG}/forecast/streams.atmosphere' --scalars qv,qc,qr,qi,qs,qg --every 0 --tables '${CPPMPAS_MPAS_TABLES}' --rrtmg '${CPPMPAS_CPPWRF_RRTMG}'")
+set_tests_properties(dycore_run_RG_streams PROPERTIES FIXTURES_SETUP dycore_RG_streams TIMEOUT 1800)
+foreach(file IN LISTS RG_STREAM_FILES)
+  add_test(NAME dycore_RG_streams_${file} COMMAND ${PY} ${CPPMPAS_MPAS_COMPARE}
+    ${REF_RG}/forecast/${file}.nc ${W}/dycore_RG_streams/${file}.nc)
+  set_tests_properties(dycore_RG_streams_${file} PROPERTIES FIXTURES_REQUIRED dycore_RG_streams)
+endforeach()
+add_test(NAME dycore_RG_streams_all COMMAND ${PY} ${T}/streams_compare.py ${CPPMPAS_MPAS_COMPARE}
+  ${REF_RG}/forecast ${W}/dycore_RG_streams ${W}/dycore_RG_streams.json 5 702)
+set_tests_properties(dycore_RG_streams_all PROPERTIES FIXTURES_REQUIRED dycore_RG_streams)
+
+# RG24 (mpas842-dbl-rg24-001, the v0.1 target: the RG case for 24 h; label "long", about 15 minutes): the forecast
+# run as the reference made it (cppmpas run --streams: 144 steps, history and diagnostics every 3 h from 00:00 to
+# 2026-10-13_00, restart at 12:10), every file of the reference's forecast directory compared at tolerance 0 with
+# tools/mpas_compare.py (all variables, variable and global attributes) and the restart_timestamp file.
 set(REF_RG24 ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg24-001/RG24)
-set(DYCORE_RG24_HISTORY_STAMPS 2026-10-12_03.00.00 2026-10-12_06.00.00 2026-10-12_09.00.00 2026-10-12_12.00.00
-  2026-10-12_15.00.00 2026-10-12_18.00.00 2026-10-12_21.00.00 2026-10-13_00.00.00)
+set(RG24_STREAM_STAMPS 2026-10-12_00.00.00 2026-10-12_03.00.00 2026-10-12_06.00.00 2026-10-12_09.00.00
+  2026-10-12_12.00.00 2026-10-12_15.00.00 2026-10-12_18.00.00 2026-10-12_21.00.00 2026-10-13_00.00.00)
+set(RG24_STREAM_FILES restart.2026-10-12_12.10.00)
+foreach(stamp IN LISTS RG24_STREAM_STAMPS)
+  list(APPEND RG24_STREAM_FILES history.${stamp} diag.${stamp})
+endforeach()
 add_test(NAME dycore_run_long_RG24 COMMAND ${CMAKE_COMMAND} -E env sh -c
-  "rm -rf '${W}/dycore_long_RG24' && mkdir -p '${W}/dycore_long_RG24' && '${EXE}' run '${REF_RG24}/init/x1.10242.init.nc' '${W}/dycore_long_RG24' --namelist '${REF_RG24}/steps/namelist.atmosphere' --scalars qv,qc,qr,qi,qs,qg --steps 144 --every 0 --write-at 18,36,54,72,73,90,108,126,144 --write-fields ${DYCORE_RG_LONG_LIST} --tables '${CPPMPAS_MPAS_TABLES}' --rrtmg '${CPPMPAS_CPPWRF_RRTMG}'")
+  "rm -rf '${W}/dycore_long_RG24' && mkdir -p '${W}/dycore_long_RG24' && '${EXE}' run '${REF_RG24}/init/x1.10242.init.nc' '${W}/dycore_long_RG24' --namelist '${REF_RG24}/forecast/namelist.atmosphere' --streams '${REF_RG24}/forecast/streams.atmosphere' --scalars qv,qc,qr,qi,qs,qg --every 0 --tables '${CPPMPAS_MPAS_TABLES}' --rrtmg '${CPPMPAS_CPPWRF_RRTMG}'")
 set_tests_properties(dycore_run_long_RG24 PROPERTIES FIXTURES_SETUP dycore_long_RG24 LABELS long TIMEOUT 7200)
-foreach(f IN LISTS DYCORE_RG_RESTART_FIELDS)
-  add_test(NAME dycore_RG24_restart_${f} COMMAND ${PY} ${T}/compare_arrays.py
-    ${REF_RG24}/forecast/restart.2026-10-12_12.10.00.nc ${W}/dycore_long_RG24/state.2026-10-12_12.10.00.nc ${f})
-  set_tests_properties(dycore_RG24_restart_${f} PROPERTIES FIXTURES_REQUIRED dycore_long_RG24 LABELS long)
+foreach(file IN LISTS RG24_STREAM_FILES)
+  add_test(NAME dycore_RG24_${file} COMMAND ${PY} ${CPPMPAS_MPAS_COMPARE}
+    ${REF_RG24}/forecast/${file}.nc ${W}/dycore_long_RG24/${file}.nc)
+  set_tests_properties(dycore_RG24_${file} PROPERTIES FIXTURES_REQUIRED dycore_long_RG24 LABELS long)
 endforeach()
-foreach(stamp IN LISTS DYCORE_RG24_HISTORY_STAMPS)
-  foreach(f IN LISTS DYCORE_RG_HISTORY_FIELDS)
-    add_test(NAME dycore_RG24_history_${stamp}_${f} COMMAND ${PY} ${T}/compare_arrays.py
-      ${REF_RG24}/forecast/history.${stamp}.nc ${W}/dycore_long_RG24/state.${stamp}.nc ${f})
-    set_tests_properties(dycore_RG24_history_${stamp}_${f} PROPERTIES FIXTURES_REQUIRED dycore_long_RG24 LABELS long)
-  endforeach()
-endforeach()
+add_test(NAME dycore_RG24_all COMMAND ${PY} ${T}/streams_compare.py ${CPPMPAS_MPAS_COMPARE}
+  ${REF_RG24}/forecast ${W}/dycore_long_RG24 ${W}/dycore_long_RG24.json 19 2168)
+set_tests_properties(dycore_RG24_all PROPERTIES FIXTURES_REQUIRED dycore_long_RG24 LABELS long)
 
 # ---------------------------------------------------------------------------------------------------------------
 # GPU proof: the CUDA build of the same sources (cppmpas_gpu, CMake option CPPMPAS_ENABLE_CUDA; every kernel on the
@@ -811,7 +832,8 @@ endforeach()
 # the input file's) and after 18 steps against mpas842-dbl-rg24-001's diag.2026-10-12_03.00.00.nc (about 70 s). A
 # --write-at file stands for the ringing diagnostics stream (cppmpas run), so the fields below are exactly those
 # computed. relhum_*hPa at 03:00 interpolates the relhum the WSM6 driver computes when the diagnostics alarm rings
-# (compute_relhum, l_diags); it is checked once that port is in (at t = 0 it is the input file's relhum).
+# (compute_relhum, l_diags), which only a --streams run has: it is left out here and compared by dycore_RG24_diag.*
+# (at t = 0 it is the input file's relhum).
 set(DIAG_ISO_FIELDS mslp t_isobaric t_iso_levels z_isobaric z_iso_levels meanT_500_300)
 set(DIAG_ISO_LEVEL_FIELDS)
 foreach(v relhum dewpoint temperature height uzonal umeridional w vorticity)

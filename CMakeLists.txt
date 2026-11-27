@@ -130,6 +130,7 @@ set(CPPMPAS_SOURCES
   src/io/mpas_reader.cpp
   src/io/mpas_restart.cpp
   src/io/mpas_writer.cpp
+  src/io/mpas_streams.cpp
 )
 add_library(cppmpas STATIC ${CPPMPAS_SOURCES})
 target_include_directories(cppmpas PUBLIC ${CMAKE_SOURCE_DIR}/src ${NETCDF_INCDIR})

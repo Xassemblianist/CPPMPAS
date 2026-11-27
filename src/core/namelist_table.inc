@@ -10,6 +10,8 @@
 //   tests/namelists/MW_restart/namelist.atmosphere
 //   mpas842-dbl-rg-004/RG/steps/namelist.atmosphere
 //   mpas842-dbl-rg-004/RG/forecast/namelist.atmosphere
+//   mpas842-dbl-rg24-001/RG24/steps/namelist.atmosphere
+//   mpas842-dbl-rg24-001/RG24/forecast/namelist.atmosphere
 // Do not edit by hand. Columns: record, option, type, Registry default, accepted values (normalised, one
 // per line: reals as the shortest round-trip decimal, logicals true / false).
 CPPMPAS_NML_OPTION("nhyd_model", "config_time_integration", "character", "SRK3", "SRK3")
@@ -18,7 +20,7 @@ CPPMPAS_NML_OPTION("nhyd_model", "config_dt", "real", "720.0", "6.0\n3.0\n450.0\
 CPPMPAS_NML_OPTION("nhyd_model", "config_calendar_type", "character", "gregorian", "gregorian")
 CPPMPAS_NML_OPTION("nhyd_model", "config_start_time", "character", "2010-10-23_00:00:00", "0000-01-01_00:00:00\n0000-01-01_00:30:06\n2026-10-12_00:00:00")
 CPPMPAS_NML_OPTION("nhyd_model", "config_stop_time", "character", "none", "none")
-CPPMPAS_NML_OPTION("nhyd_model", "config_run_duration", "character", "5_00:00:00", "0_00:01:00\n0_01:00:00\n0_00:00:30\n0_01:15:00\n2_00:00:00\n0_00:29:54\n0_01:40:00\n0_02:00:00")
+CPPMPAS_NML_OPTION("nhyd_model", "config_run_duration", "character", "5_00:00:00", "0_00:01:00\n0_01:00:00\n0_00:00:30\n0_01:15:00\n2_00:00:00\n0_00:29:54\n0_01:40:00\n0_02:00:00\n1_00:00:00")
 CPPMPAS_NML_OPTION("nhyd_model", "config_split_dynamics_transport", "logical", "true", "false\ntrue")
 CPPMPAS_NML_OPTION("nhyd_model", "config_number_of_sub_steps", "integer", "4", "6\n4")
 CPPMPAS_NML_OPTION("nhyd_model", "config_dynamics_split_steps", "integer", "3", "1\n3")

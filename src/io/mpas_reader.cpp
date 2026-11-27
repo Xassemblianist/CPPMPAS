@@ -515,7 +515,11 @@ FieldRef field_ref(MpasInput& in, const std::string& name) {
     const RegistryVar* rv = find_registry_var(name);
     static const std::set<std::string> kPoolStructs = {"sfc_input", "diag_physics", "tend_physics", "atm_input",
                                                        "diag", "tend"};
-    if (rv && kPoolStructs.count(rv->var_struct) && in.pools.packages.active(*rv) && rv->array.empty()) {
+    // qv_init (mesh): not in the input stream, set by no routine of MPAS v8.4.2 (io/mpas_restart.cpp), so the
+    // restart stream writes its Registry default
+    const bool mesh_default = rv && rv->name == "qv_init";
+    if (rv && (kPoolStructs.count(rv->var_struct) || mesh_default) && in.pools.packages.active(*rv) &&
+        rv->array.empty()) {
       if (rv->type == "real") r.r = &in.pools.R(name);
       else if (rv->type == "integer") r.i = &in.pools.I(name);
       else r.c = &in.pools.C(name);

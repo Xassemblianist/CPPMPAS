@@ -8,6 +8,7 @@
 //                     [--unverified]
 //   cppmpas run       <init> <outdir> --namelist namelist.atmosphere --steps N [--scalars ...] [--file-id ID]
 //                     [--every K] [--write-at N1,N2,... --write-fields a,b,...] [--tables DIR --rrtmg DIR]
+//                     [--streams streams.atmosphere]
 // With config_physics_suite = 'mesoscale_reference', run reads the input stream's physics fields and runs MPAS's
 // physics (physics/mpas_atmphys_driver.hpp): --tables names the directory with LANDUSE.TBL, VEGPARM.TBL, SOILPARM.TBL,
 // GENPARM.TBL and OZONE_*.TBL (the reference build's tables), --rrtmg the one with rrtmg_lw_tables.bin and
@@ -27,6 +28,11 @@
 // rho, theta, pressure_p, scalars) to <outdir>/step.$Y-$M-$D_$h.$m.$s.nc, as MPAS names them; --every K writes
 // them at the start and after every K-th step only (0: never). --write-at writes, after each listed step, the
 // --write-fields to <outdir>/state.$Y-$M-$D_$h.$m.$s.nc (to compare with MPAS's history / restart streams).
+// --streams streams.atmosphere (with the physics suite) writes MPAS's output streams instead, as atm_core_run does
+// (io/mpas_streams.hpp: every active output stream whose alarm rings, its fields, file names and the namelist options
+// as global attributes; the physics diagnostics alarm from the output / diagnostics intervals, MG:615-645; the
+// diagnostics manager; atm_reset_diagnostics; restart_timestamp). The run lasts config_run_duration (--steps may be
+// left out). Without --streams a --write-at file stands for a ringing output stream of the diagnostics manager.
 // dump writes every array as MPAS holds it in memory on one rank: local order, local 1-based indices, the garbage
 // element included (dimensions <dim>_mem); compare with MPAS memory dumps after nothing more than a type change.
 // The var_array scalars is written whole, as "scalars" (num_scalars, nVertLevels, nCells+1) with the attribute
@@ -46,6 +52,7 @@
 #include "core_atmosphere/atm_init.hpp"
 #include "io/mpas_reader.hpp"
 #include "io/mpas_restart.hpp"
+#include "io/mpas_streams.hpp"
 #include "io/mpas_writer.hpp"
 #include "io/registry.hpp"
 #include "physics/mpas_atmphys_driver.hpp"
@@ -83,7 +90,7 @@ struct Args {
   std::vector<std::string> pos;
   bool init = false, unverified = false;
   std::vector<std::string> scalars{"qv"}, fields;
-  std::string file_id, namelist, tables, rrtmg;
+  std::string file_id, namelist, tables, rrtmg, streams;
   long steps = -1, every = 1;
   std::vector<long> write_at;
   std::vector<std::string> write_fields;
@@ -105,6 +112,7 @@ Args parse(int argc, char** argv) {
     else if (s == "--namelist") a.namelist = next();
     else if (s == "--tables") a.tables = next();
     else if (s == "--rrtmg") a.rrtmg = next();
+    else if (s == "--streams") a.streams = next();
     else if (s == "--steps") {
       a.steps = whole(s, next());
     } else if (s == "--every") {
@@ -267,7 +275,7 @@ int run(int argc, char** argv) {
     opt.file_id = a.file_id;
     write_history(in, a.pos[1], a.fields, opt);
   } else if (cmd == "run") {
-    if (a.pos.size() != 2 || a.steps < 0 || a.namelist.empty() || !a.fields.empty())
+    if (a.pos.size() != 2 || (a.steps < 0 && a.streams.empty()) || a.namelist.empty() || !a.fields.empty())
       throw Error("usage: cppmpas run <init> <outdir> --namelist file --steps N [--scalars ...] [--file-id ID] "
                   "[--every K] [--write-at N1,... --write-fields a,...]");
     a.init = true;
@@ -358,48 +366,130 @@ int run(int argc, char** argv) {
     in.held = {{"ru_p", &f.ru_p}, {"rw_p", &f.rw_p}, {"rt_diabatic_tend", &f.rt_diabatic_tend},
                {"rthdynten", &f.rthdynten}, {"rtheta_pp", &f.rtheta_pp}, {"rho_pp", &f.rho_pp}};
     for (const auto& w : a.write_fields) (void)field_ref(in, w);  // a field without a port: refused before the run
-    // the diagnostics manager (core_atmosphere/diagnostics/mpas_atm_diagnostics.hpp); a --write-at file stands for an
-    // output stream whose alarm rings, its --write-fields for the stream's fields
+    // --streams: MPAS's output streams (io/mpas_streams.hpp) written as atm_core_run writes them
+    // (mpas_atm_core.F:625-919), with the namelist options as global attributes (mpas_subdriver.F:532-557)
+    const bool streams_mode = !a.streams.empty();
+    StreamManager sm;
+    HistoryOptions stream_opt;
+    stream_opt.file_id = a.file_id;
+    if (streams_mode) {
+      if (!physics) throw Error("run --streams: only the physics suite's runs have a verified port of the streams");
+      sm = make_stream_manager(read_streams_file(a.streams), in.pools.packages, in.state.scalar_names,
+                               cfg.config_do_restart);
+      for (const auto& na : namelist_attributes(a.namelist)) {
+        std::string v = na.value;
+        // physics_namelist_check (atm_setup_packages) runs before add_stream_attributes: the resolved schemes
+        const std::map<std::string, const std::string*> resolved = {
+            {"config_microp_scheme", &pr.cfg.config_microp_scheme},
+            {"config_convection_scheme", &pr.cfg.config_convection_scheme},
+            {"config_lsm_scheme", &pr.cfg.config_lsm_scheme},
+            {"config_pbl_scheme", &pr.cfg.config_pbl_scheme},
+            {"config_gwdo_scheme", &pr.cfg.config_gwdo_scheme},
+            {"config_radt_cld_scheme", &pr.cfg.config_radt_cld_scheme},
+            {"config_radt_lw_scheme", &pr.cfg.config_radt_lw_scheme},
+            {"config_radt_sw_scheme", &pr.cfg.config_radt_sw_scheme},
+            {"config_sfclayer_scheme", &pr.cfg.config_sfclayer_scheme}};
+        if (auto it = resolved.find(na.name); it != resolved.end()) v = *it->second;
+        stream_opt.config_atts.push_back({na.name, {na.type, v}});
+      }
+      // MG:615-645: the physics diagnostics alarm from the 'output' and 'diagnostics' streams' output intervals
+      const OutputStream* out = sm.find("output");
+      const OutputStream* dia = sm.find("diagnostics");
+      if (!out) throw Error("run --streams: MPAS's physics_run_init reads the 'output' stream's interval (MG:615)");
+      long long step = 0;
+      if (out->spec.output_interval != "none") {
+        step = interval_seconds(out->spec.output_interval);
+        if (dia && dia->spec.output_interval != "none")
+          step = std::min(step, interval_seconds(dia->spec.output_interval));
+      } else if (dia && dia->spec.output_interval != "none") {
+        step = interval_seconds(dia->spec.output_interval);
+      }
+      if (step > 0) {
+        pr.diag_alarm.defined = true;
+        pr.diag_alarm.ring = 0;
+        pr.diag_alarm.interval = step;
+      }
+      // the clock runs from the start to the stop time (mpas_atm_core.F:338-357, 723)
+      const auto eff = effective_namelist(a.namelist);
+      if (eff.at("config_stop_time") != "none")
+        throw Error("run --streams: config_stop_time has no verified port (config_run_duration does)");
+      const long long dur = interval_seconds(eff.at("config_run_duration"));
+      const long long dts = static_cast<long long>(dcfg.config_dt);
+      if (static_cast<real>(dts) != dcfg.config_dt || dur % dts != 0)
+        throw Error("run --streams: config_run_duration is not a whole number of time steps");
+      if (a.steps >= 0 && a.steps != dur / dts)
+        throw Error("run --streams: --steps differs from config_run_duration / config_dt");
+      a.steps = dur / dts;
+    }
+    // the diagnostics manager (core_atmosphere/diagnostics/mpas_atm_diagnostics.hpp). Without --streams a --write-at
+    // file stands for an output stream whose alarm rings, its --write-fields for the stream's fields.
     diag::DiagnosticsContext dc;
     bool writing_state = false;
+    long long clock_s = 0;  // the clock's time, seconds after the start
     dc.mesh = &in.mesh;
     dc.state = &in.state;
     dc.diag = &in.diag;
     dc.pools = &in.pools;
     dc.field_will_be_written = [&](const std::string& n) {
+      if (streams_mode) return sm.field_will_be_written(n, clock_s);
       return writing_state && std::find(a.write_fields.begin(), a.write_fields.end(), n) != a.write_fields.end();
     };
     dc.output_stream_inclusion_count = [&](const std::string& n) {
+      if (streams_mode) return sm.output_inclusion_count(n);
       return static_cast<int>(std::find(a.write_fields.begin(), a.write_fields.end(), n) != a.write_fields.end());
     };
-    if (physics) diag::mpas_atm_diag_setup(dc, "none");
+    if (physics) diag::mpas_atm_diag_setup(dc, pr.cfg.config_sounding_interval);
+    const long long dt_s = static_cast<long long>(dcfg.config_dt);
     auto write_step = [&](long n) {
+      clock_s = n * dt_s;
       const bool step_file = a.every > 0 && n % a.every == 0;
       const bool state_file = std::find(a.write_at.begin(), a.write_at.end(), n) != a.write_at.end();
+      const bool ringing = streams_mode && sm.any_ringing(clock_s);
       writing_state = state_file;
       // mpas_atm_core.F:686 (t = 0) and :848: only when an output stream writes
-      if (step_file || state_file) atm_compute_output_diagnostics(in.mesh, in.state, in.diag);
+      if (step_file || state_file || ringing) atm_compute_output_diagnostics(in.mesh, in.state, in.diag);
       if (physics) {  // mpas_atm_core.F:692-694 (t = 0: reset first) and :855-856
         if (n == 0) diag::mpas_atm_diag_reset(dc);
         diag::mpas_atm_diag_update(dc);
         diag::mpas_atm_diag_compute(dc);
       }
-      if (!step_file && !state_file) {
-        if (physics) diag::mpas_atm_diag_reset(dc);  // mpas_atm_core.F:717, 914
-        return;
-      }
       std::string ts = in.state.xtime.substr(0, 19);
+      const std::string stamp = ts;
       for (auto& c : ts)
         if (c == ':') c = '.';
       HistoryOptions opt;
       opt.file_id = a.file_id;
       if (step_file) write_history(in, a.pos[1] + "/step." + ts + ".nc", fields, opt);
-      if (state_file)
-        write_history(in, a.pos[1] + "/state." + ts + ".nc", a.write_fields, opt);
+      if (state_file) write_history(in, a.pos[1] + "/state." + ts + ".nc", a.write_fields, opt);
+      if (ringing) {
+        // mpas_stream_mgr_write (mpas_atm_core.F:701, 862): every active output stream whose alarm rings
+        for (const auto& o : sm.outputs)
+          if (o.ringing(clock_s))
+            write_history(in, a.pos[1] + "/" + expand_filename(o.spec.filename_template, stamp), o.fields, stream_opt);
+        if (n > 0) {
+          // mpas_atm_core.F:884-895 atm_reset_diagnostics (DO_PHYSICS): refl10cm_1km_max(:) = 0 when allocated
+          const OutputStream* dia = sm.find("diagnostics");
+          const RegistryVar& rv = registry_var("refl10cm_1km_max");
+          if (dia && dia->ringing(clock_s) && in.pools.packages.active(rv)) {
+            auto& r = in.pools.R("refl10cm_1km_max");
+            for (std::size_t k = 0; k < r.size(); ++k) r.data()[k] = 0.;
+          }
+          // mpas_atm_core.F:899-908: the restart_timestamp file after a restart write (list-directed: a blank first)
+          const OutputStream* rs = sm.find("restart");
+          if (rs && rs->ringing(clock_s)) {
+            std::FILE* tf = std::fopen((a.pos[1] + "/restart_timestamp").c_str(), "w");
+            if (!tf) throw Error("run: cannot write restart_timestamp");
+            std::fprintf(tf, " %s\n", stamp.c_str());
+            std::fclose(tf);
+          }
+        }
+      }
       if (physics) diag::mpas_atm_diag_reset(dc);  // mpas_atm_core.F:717, 914
+      if (ringing)  // mpas_atm_core.F:719, 917
+        for (auto& o : sm.outputs)
+          if (o.ringing(clock_s)) o.reset(clock_s);
     };
     write_step(0);
-    const long long dt_s = static_cast<long long>(dcfg.config_dt);
     for (long n = 1; n <= a.steps; ++n) {
       itimestep = static_cast<int>(n);  // atm_core_run's itimestep (mpas_atm_core.F:722, 832)
       if (physics) {  // mpas_atm_core.F:1031-1037 (xtime_s = s + s_n / s_d of now - start)

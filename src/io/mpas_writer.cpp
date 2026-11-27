@@ -259,8 +259,17 @@ void write_history(MpasInput& in, const std::string& path, const std::vector<std
         for (const auto& a : in.source.var_atts.at(n)) f.put_att(n, a);
         continue;
       }
+      // a field the input stream read: put_get_field_atts (mpas_io_streams.F:4315-4360) replaced the value of each
+      // of its Registry attributes by the input file's (x1.10242.init.nc's dvEdge has units '-'), and the output
+      // stream writes those values
+      const auto& vr = in.source.vars_read;
+      const bool read_in = std::find(vr.begin(), vr.end(), n) != vr.end() && in.source.var_atts.count(n);
       // MPAS trims these too (mpas_io_streams.F:4341); no attribute of a field CPPMPAS writes ends in a blank
-      for (const auto& [k, v] : rv.attrs) {
+      for (const auto& [k, v0] : rv.attrs) {
+        std::string v = v0;
+        if (read_in)
+          for (const auto& fa : in.source.var_atts.at(n))
+            if (fa.name == k && fa.type == NC_CHAR) v = trimmed(fa.text());
         // mpas_atm_core.F:271-274: Time's units are 'seconds since ' // initial_time with '_' -> ' ' (written trimmed)
         if (n == "Time" && k == "units") {
           f.put_att_text(n, k, time_units);
@@ -284,6 +293,27 @@ void write_history(MpasInput& in, const std::string& path, const std::vector<std
     f.put_att_text("", "history", "mpirun -n " + std::to_string(opt.nprocs) + " ./atmosphere_model");
     f.put_att_text("", "parent_id", trimmed(m.parent_id));
     f.put_att_text("", "mesh_spec", trimmed(m.mesh_spec));
+    for (const auto& [name, tv] : opt.config_atts) {  // mpas_subdriver.F:532-557
+      const auto& [type, value] = tv;
+      if (type == "real") {
+        std::size_t used = 0;
+        const double d = std::stod(value, &used);
+        if (used != value.size()) throw Error("history: real attribute " + name + " = '" + value + "'");
+        f.put_att_double("", name, d);
+      } else if (type == "integer") {
+        std::size_t used = 0;
+        const int i = std::stoi(value, &used);
+        if (used != value.size()) throw Error("history: integer attribute " + name + " = '" + value + "'");
+        f.put_att_int("", name, i);
+      } else if (type == "logical") {
+        if (value != "true" && value != "false") throw Error("history: logical attribute " + name + " = " + value);
+        f.put_att_text("", name, yes_no(value == "true"));
+      } else if (type == "character") {
+        f.put_att_text("", name, trimmed(value));
+      } else {
+        throw Error("history: attribute " + name + " of type " + type);
+      }
+    }
     f.put_att_text("", "file_id", trimmed(opt.file_id.empty() ? random_file_id() : opt.file_id));
     f.enddef();
     for (const auto& n : fields) write_values(f, in, n);
