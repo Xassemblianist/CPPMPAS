@@ -805,3 +805,38 @@ foreach(f IN LISTS DYCORE_SC_OUTPUT_FIELDS)
     ${W}/gpu_dycore_long_SC/state.0000-01-01_00.30.00.nc ${f} --record 1)
   cppmpas_gpu_props(gpu_dycore_SC_output30_${f} FIXTURES_REQUIRED gpu_dycore_long_SC LABELS long)
 endforeach()
+
+# Isobaric diagnostics (core_atmosphere/diagnostics, mpas_isobaric_diagnostics.F) against the reference's
+# diagnostics stream: at t = 0 against mpas842-dbl-rg-004's diag.2026-10-12_00.00.00.nc (the input state; relhum is
+# the input file's) and after 18 steps against mpas842-dbl-rg24-001's diag.2026-10-12_03.00.00.nc (about 70 s). A
+# --write-at file stands for the ringing diagnostics stream (cppmpas run), so the fields below are exactly those
+# computed. relhum_*hPa at 03:00 interpolates the relhum the WSM6 driver computes when the diagnostics alarm rings
+# (compute_relhum, l_diags); it is checked once that port is in (at t = 0 it is the input file's relhum).
+set(DIAG_ISO_FIELDS mslp t_isobaric t_iso_levels z_isobaric z_iso_levels meanT_500_300)
+set(DIAG_ISO_LEVEL_FIELDS)
+foreach(v relhum dewpoint temperature height uzonal umeridional w vorticity)
+  foreach(l 50 100 200 250 500 700 850 925)
+    list(APPEND DIAG_ISO_LEVEL_FIELDS ${v}_${l}hPa)
+  endforeach()
+endforeach()
+set(DIAG_ISO_ALL ${DIAG_ISO_FIELDS} ${DIAG_ISO_LEVEL_FIELDS})
+string(REPLACE ";" "," DIAG_ISO_LIST "${DIAG_ISO_ALL}")
+add_test(NAME diag_run_RG_iso0 COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/diag_RG_iso0' && mkdir -p '${W}/diag_RG_iso0' && '${EXE}' run '${REF_RG}/init/x1.10242.init.nc' '${W}/diag_RG_iso0' --namelist '${REF_RG}/steps/namelist.atmosphere' --scalars qv,qc,qr,qi,qs,qg --steps 0 --every 0 --write-at 0 --write-fields ${DIAG_ISO_LIST} --tables '${CPPMPAS_MPAS_TABLES}' --rrtmg '${CPPMPAS_CPPWRF_RRTMG}'")
+set_tests_properties(diag_run_RG_iso0 PROPERTIES FIXTURES_SETUP diag_RG_iso0 TIMEOUT 600)
+foreach(f IN LISTS DIAG_ISO_ALL)
+  add_test(NAME diag_RG_iso0_${f} COMMAND ${PY} ${T}/compare_arrays.py
+    ${REF_RG}/forecast/diag.2026-10-12_00.00.00.nc ${W}/diag_RG_iso0/state.2026-10-12_00.00.00.nc ${f})
+  set_tests_properties(diag_RG_iso0_${f} PROPERTIES FIXTURES_REQUIRED diag_RG_iso0)
+endforeach()
+add_test(NAME diag_run_RG24_iso3h COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/diag_RG24_iso3h' && mkdir -p '${W}/diag_RG24_iso3h' && '${EXE}' run '${REF_RG24}/init/x1.10242.init.nc' '${W}/diag_RG24_iso3h' --namelist '${REF_RG24}/steps/namelist.atmosphere' --scalars qv,qc,qr,qi,qs,qg --steps 18 --every 0 --write-at 18 --write-fields ${DIAG_ISO_LIST} --tables '${CPPMPAS_MPAS_TABLES}' --rrtmg '${CPPMPAS_CPPWRF_RRTMG}'")
+set_tests_properties(diag_run_RG24_iso3h PROPERTIES FIXTURES_SETUP diag_RG24_iso3h TIMEOUT 1800)
+foreach(f IN LISTS DIAG_ISO_ALL)
+  if(f MATCHES "^relhum_")
+    continue()
+  endif()
+  add_test(NAME diag_RG24_iso3h_${f} COMMAND ${PY} ${T}/compare_arrays.py
+    ${REF_RG24}/forecast/diag.2026-10-12_03.00.00.nc ${W}/diag_RG24_iso3h/state.2026-10-12_03.00.00.nc ${f})
+  set_tests_properties(diag_RG24_iso3h_${f} PROPERTIES FIXTURES_REQUIRED diag_RG24_iso3h)
+endforeach()

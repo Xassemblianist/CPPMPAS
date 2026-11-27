@@ -1307,6 +1307,58 @@ MUTATIONS += [
     (W, "      if (std::find(rd.begin(), rd.end(), n) != rd.end()) {", "      if (false) {", ["dycore_RG_restart_isltyp"]),
 ]
 
+# isobaric diagnostics (core_atmosphere/diagnostics/mpas_isobaric_diagnostics.cpp, mpas_isobaric_diagnostics.F)
+ISO = "src/core_atmosphere/diagnostics/mpas_isobaric_diagnostics.cpp"
+I0 = lambda *fs: [f"diag_RG_iso0_{f}" for f in fs]
+MUTATIONS += [
+    # interp_tofixed_pressure (IS:1027-1110): the weights of the bracketing levels, the below-ground value
+    (ISO, "          const real dpu = pres_out(icol, k) - pres_in(icol, kupper[icol]);",
+     "          const real dpu = pres_out(icol, k) - pres_in(icol, kupper[icol] + 1);", I0("temperature_500hPa")),
+    (ISO, "        field_out(icol, k) = field_in(icol, nlev_in);", "        field_out(icol, k) = field_in(icol, nlev_in - 1);",
+     I0("temperature_925hPa")),
+    # pressure2 (IS:654-688): the middle levels, the lowest level, the libmvec lanes of the three loops
+    (ISO, "      const real w2 = (height(k + 1, iCell) - height(k, iCell)) / (height(k + 1, iCell) - height(k - 1, iCell));",
+     "      const real w2 = (height(k + 1, iCell) - height(k, iCell)) / (height(k + 1, iCell) - height(k, iCell));",
+     I0("height_500hPa")),
+    (ISO, "      const real z2 = 0.5 * (height(k + 1, iCell) + height(k + 2, iCell));",
+     "      const real z2 = 0.5 * (height(k + 1, iCell) + height(k + 1, iCell));", I0("height_925hPa")),
+    (ISO, "  const int nPair = nCells - nCells % 2;", "  const int nPair = 0;", I0("height_500hPa")),
+    # pressure at vertices (IS:691-700)
+    (ISO, "      pressure_v(k, iVert) = pressure_v(k, iVert) / areaTriangle(iVert);",
+     "      pressure_v(k, iVert) = pressure_v(k, iVert) / areaTriangle(1);", I0("vorticity_500hPa")),
+    # temperature and dewpoint (IS:702-716), the libmvec lanes of the dewpoint loop
+    (ISO, "            (theta_m(k, iCell) / (1. + rvord * scalars(index_qv, k, iCell))) * exner(k, iCell);",
+     "            (theta_m(k, iCell) / (1. + rvord * scalars(index_qv, k, iCell)));",
+     I0("temperature_500hPa") + ["diag_RG24_iso3h_temperature_500hPa"]),
+    (ISO, "        dewpoint(k, iCell) = dewpoint(k, iCell) + 273.15;", "        dewpoint(k, iCell) = dewpoint(k, iCell) + 273.16;",
+     I0("dewpoint_500hPa")),
+    (ISO, "    const int kPair = nVertLevels - nVertLevels % 2;", "    const int kPair = 0;", I0("dewpoint_850hPa")),
+    # the interpolated sources (IS:767-902)
+    (ISO, "    mass_level(need.relhum, relhum, \"relhum\");", "    mass_level(need.relhum, temperature, \"relhum\");",
+     I0("relhum_500hPa")),
+    (ISO, "    mass_level(need.uzonal, uzonal, \"uzonal\");", "    mass_level(need.uzonal, umeridional, \"uzonal\");",
+     I0("uzonal_500hPa")),
+    (ISO, "    w_level(vvel, \"w\");", "    w_level(height, \"w\");", I0("w_500hPa")),
+    # need flags (IS:104-302): a group not computed
+    (ISO, "  group(\"umeridional\", need.umeridional);", "  group(\"umeridional\", need.uzonal);", I0("umeridional_500hPa")),
+    # compute_slp (IS:1113-1243): virtual temperature, the mm5 correction, t_surf's power, the libmvec lanes
+    (ISO, "    const real thi = t(khi, icol) * (1. + 0.608 * scalars(index_qv, khi, icol));",
+     "    const real thi = t(khi, icol) * (1. + 0.61 * scalars(index_qv, khi, icol));", I0("mslp")),
+    (ISO, "        t_msl[icol] = tc - 0.005 * (d * d);", "        t_msl[icol] = tc - 0.005 * d;", I0("mslp")),
+    (ISO, "    t_surf[icol] = t_at_pconst * libm::pow(p(1, icol) / p_at_pconst, gamma_rr_grav);  // pow@plt (0x23edc4)",
+     "    t_surf[icol] = t_at_pconst * libm::pow(p(1, icol) / p_at_pconst, gamma * rr);", I0("mslp")),
+    (ISO, "    const bool lane = icol <= ncol - ncol % 2;", "    const bool lane = false;", I0("mslp")),
+    # compute_layer_mean (IS:1262-1351) and the isobaric levels (IS:616-638, 973-1046)
+    (ISO, "        layerMean(iCell) = layerMean(iCell) + w * 0.5 * (field_in(iCell, k) + field_in(iCell, k + 1));",
+     "        layerMean(iCell) = layerMean(iCell) + w * 0.5 * (field_in(iCell, k) + field_in(iCell, k));",
+     I0("meanT_500_300")),
+    (ISO, "    t_iso_levels(2) = 35000.0;", "    t_iso_levels(2) = 36000.0;", I0("t_iso_levels", "t_isobaric")),
+    (ISO, "    for (int k = 1; k <= 13; ++k) z_iso_levels(k) = 30000.0 + 5000.0 * (k - 1);  // 30000.0 ... 90000.0, exact",
+     "    for (int k = 1; k <= 13; ++k) z_iso_levels(k) = 30000.0 + 5000.0 * k;", I0("z_iso_levels", "z_isobaric")),
+    (ISO, "        press_in(iCell, nVertLevelsP1 + 1 - k) = pressure2(k, iCell) * 100.0;",
+     "        press_in(iCell, nVertLevelsP1 + 1 - k) = pressure2(k, iCell) * 100.1;", I0("z_isobaric")),
+]
+
 MUTATIONS = [(p, o, n, [t for t in ts if t not in EQUIVALENT_ON_SC.get((p, n), [])]) for p, o, n, ts in MUTATIONS]
 
 
