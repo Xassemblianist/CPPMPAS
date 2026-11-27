@@ -1,24 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The C++ side of the WSM6 column check: test_wsm6_column <in.bin> <out.bin> runs driver_microphysics_wsm6
 // (src/physics/mpas_atmphys_microphysics.cpp) on the columns of in.bin as harness.F90 runs MPAS's own code, and
-// writes the same out.bin layout (tests/wsm6_column/columns.py).
+// writes the same out.bin layout (tests/wsm6_column/columns.py); a third argument 'l_diags' as harness.F90's.
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <utility>
 #include <vector>
 
 #include "core/field.hpp"
 #include "physics/module_mp_wsm6.hpp"
+#include "physics/mpas_atmphys_constants.hpp"
 #include "physics/mpas_atmphys_microphysics.hpp"
 
 using cppmpas::FArray;
 using cppmpas::real;
 
 int main(int argc, char** argv) {
-  if (argc != 3) {
-    std::fprintf(stderr, "usage: test_wsm6_column <in.bin> <out.bin>\n");
+  if (argc != 3 && !(argc == 4 && std::strcmp(argv[3], "l_diags") == 0)) {
+    std::fprintf(stderr, "usage: test_wsm6_column <in.bin> <out.bin> [l_diags]\n");
     return 2;
   }
+  const bool diags = argc == 4;
   std::FILE* in = std::fopen(argv[1], "rb");
   if (!in) return 2;
   std::int32_t hdr[5];
@@ -62,6 +65,15 @@ int main(int argc, char** argv) {
   m.dt_dyn = dt;
   m.dt_microp = m.dt_dyn;
   const auto params = cppmpas::phys::module_mp_wsm6::mpas_wsm6_params();
+  // the diagnostics (harness.F90's initial values) and mp_wsm6_init's radar tables
+  FArray<real> refl10cm({nV, nC}, -999.), refl_max({nC}, -999.), refl_1km({nC}, -999.), refl_1km_max({nC}, 3.),
+      relhum({nV, nC}, -999.);
+  const auto radar = cppmpas::phys::wsm6::wsm6_radar_init(params.pi, cppmpas::physics_constants::rho_r,
+                                                          cppmpas::physics_constants::rho_s, params.deng,
+                                                          params.n0g);
+  m.l_diags = diags;
+  m.relhum = relhum.view(); m.refl10cm = refl10cm.view(); m.refl10cm_max = refl_max.view();
+  m.refl10cm_1km = refl_1km.view(); m.refl10cm_1km_max = refl_1km_max.view(); m.radar = &radar;
 
   std::FILE* out = std::fopen(argv[2], "wb");
   if (!out) return 2;
@@ -73,6 +85,9 @@ int main(int argc, char** argv) {
       wr(rainnc); wr(rainncv); wr(snownc); wr(snowncv); wr(graupelnc); wr(graupelncv); wr(sr); wr(rainprod);
       wr(evapprod); wr(rec); wr(rei); wr(res);
       for (auto& t : ten) wr(t);
+      if (diags) {
+        wr(refl10cm); wr(refl_max); wr(refl_1km); wr(refl_1km_max); wr(relhum);
+      }
     }
   } catch (const std::exception& e) {
     std::fprintf(stderr, "%s\n", e.what());

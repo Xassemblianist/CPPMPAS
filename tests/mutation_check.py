@@ -31,6 +31,7 @@ def D(fields, cases="MW SC JW"):
 ALL3 = "MW SC JW"
 RS = "src/io/mpas_restart.cpp"
 RAD, RDRV = "src/physics/module_ra_rrtmg.cpp", "src/physics/mpas_atmphys_radiation.cpp"
+MC, RF, RD = "src/physics/mpas_atmphys_microphysics.cpp", "src/physics/mp_wsm6_refl.hpp", "src/physics/mp_radar.hpp"
 
 
 def RST0(fields):
@@ -1305,6 +1306,30 @@ MUTATIONS += [
     (LU, "      field_min(n) = minner;", "      field_min(n) = maxxer;", RG1("theta_m")),
     # the writer keeps the input file's attributes of the physics fields (the reference restart's isltyp)
     (W, "      if (std::find(rd.begin(), rd.end(), n) != rd.end()) {", "      if (false) {", ["dycore_RG_restart_isltyp"]),
+    # WSM6 output diagnostics (l_diags): the wsm6_column cases with l_diags (refl10cm*, relhum)
+    (RF, "      ilamr[k] = 1. / lamr;", "      ilamr[k] = 1.01 / lamr;", ["wsm6_column"]),
+    (RF, "        const double fmelt_s = c_max(0.005, c_min(1.0 - rs[k] / rs[k_0], 0.99));",
+     "        const double fmelt_s = c_max(0.05, c_min(1.0 - rs[k] / rs[k_0], 0.99));", ["wsm6_column"]),
+    (RF, "        const double fmelt_g = c_max(0.005, c_min(1.0 - rg[k] / rg[k_0], 0.99));",
+     "        const double fmelt_g = c_max(0.05, c_min(1.0 - rg[k] / rg[k_0], 0.99));", ["wsm6_column"]),
+    (RF, "    dBZ[k] = 10. * (lane ? libm::mvec_log10(ze) : libm::log10(ze));", "    dBZ[k] = 10. * libm::log10(ze);",
+     ["wsm6_column"]),
+    (RD, "  tmp = (x + 0.5) * ::cppmpas::libm::mvec_log(tmp) - tmp;", "  tmp = (x + 0.5) * ::cppmpas::libm::log(tmp) - tmp;",
+     ["wsm6_column"]),
+    (RD, "  mra = mra + (1.0 - mra) * fm;", "  mra = mra + (1.0 - mra) * fm * 0.5;", ["wsm6_column"]),
+    (MC, "        dBZ1d[k - 1] = -35. > dBZ1d[k - 1] ? -35. : dBZ1d[k - 1];  // max(-35._RKIND, dBZ1d(k))",
+     "        dBZ1d[k - 1] = -30. > dBZ1d[k - 1] ? -30. : dBZ1d[k - 1];  // max(-35._RKIND, dBZ1d(k))", ["wsm6_column"]),
+    (MC, "        if (zp[k - 1] < 1000.) kp = k;", "        if (zp[k - 1] < 1100.) kp = k;", ["wsm6_column"]),
+    (MC, "        if (dBZ1d[k - 1] > mx) mx = dBZ1d[k - 1];", "        if (dBZ1d[k - 1] < mx) mx = dBZ1d[k - 1];",
+     ["wsm6_column"]),
+    (MC, "      m.refl10cm_1km_max(i) = m.refl10cm_1km_max(i) > m.refl10cm_1km(i) ? m.refl10cm_1km_max(i) : m.refl10cm_1km(i);",
+     "      m.refl10cm_1km_max(i) = m.refl10cm_1km(i);", ["wsm6_column"]),
+    (MC, "        if (tempc <= 0.) qvs1 = rsif(p1, t1);", "        if (tempc <= -1.) qvs1 = rsif(p1, t1);", ["wsm6_column"]),
+    (MC, "                 C8 = -.321582393E-13;", "                 C8 = -.321582393E-12;", ["wsm6_column"]),
+    (MC, "                 C8 = .161444444E-12;", "                 C8 = .161444444E-11;", ["wsm6_column"]),
+    (MC, "  const real X = xt > -80. ? xt : -80.;\n  real ESI", "  const real X = xt > -60. ? xt : -60.;\n  real ESI",
+     ["wsm6_column"]),
+    (MC, "        m.relhum(k, i) = m.relhum(k, i) * 100.;", "        m.relhum(k, i) = m.relhum(k, i) * 99.;", ["wsm6_column"]),
 ]
 
 MUTATIONS = [(p, o, n, [t for t in ts if t not in EQUIVALENT_ON_SC.get((p, n), [])]) for p, o, n, ts in MUTATIONS]

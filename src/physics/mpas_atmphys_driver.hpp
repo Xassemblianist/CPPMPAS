@@ -15,9 +15,8 @@
 //
 // Ported for config_physics_suite = 'mesoscale_reference' with RG's options (physics/mpas_atmphys_control.hpp
 // check_physics_supported): WSM6, New Tiedtke, YSU with GWDO, the revised MM5 surface layer, Noah with the sea-ice
-// driver and the surface diagnostics, RRTMG LW and SW with 'cld_fraction' and the ozone climatology. A diagnostics
-// alarm that rings (l_diags: an output or diagnostics stream with an interval) is refused: the WSM6 diagnostics
-// (reflectivity, relhum) are not ported.
+// driver and the surface diagnostics, RRTMG LW and SW with 'cld_fraction' and the ozone climatology. In the step
+// before a diagnostics alarm (l_diags) the WSM6 driver computes the radar reflectivity and relhum (DRV:467-482).
 #include <functional>
 #include <string>
 #include <vector>
@@ -29,6 +28,7 @@
 #include "physics/mpas_atmphys_radiation.hpp"
 #include "physics/mpas_atmphys_sfclayer.hpp"
 #include "physics/mp_wsm6.hpp"
+#include "physics/mp_wsm6_refl.hpp"
 #include "physics/sf_noah.hpp"
 
 namespace cppmpas::phys {
@@ -54,6 +54,7 @@ struct PhysicsRun {
   noah::NoahTables noah_tables;
   RrtmgTables rrtmg;
   wsm6::Wsm6Params<real> wsm6;
+  wsm6::Wsm6Radar wsm6_radar;  // mp_wsm6_init's radar_init (MW6:174-184), for the l_diags reflectivity
   // mpas_atmphys_vars / mpas_atmphys_manager
   real dt_dyn = 0, dt_microp = 0, dt_cu = 0, dt_pbl = 0, xice_threshold = 0;
   int n_cu = 1, n_microp = 1, mp_top_level = 0, isurban = 0;

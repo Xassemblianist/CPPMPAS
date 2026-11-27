@@ -366,6 +366,9 @@ void physics_core_init(PhysicsRun& r, const Mesh& m, State& s, Diag& d, Registry
   }
   // IN:323-324 init_convection: nothing for cu_ntiedtke (CV: Kain-Fritsch only)
   if (c.config_microp_scheme != "off") r.wsm6 = module_mp_wsm6::mpas_wsm6_params();  // IN:327-328, DRV:305-307
+  if (c.config_microp_scheme == "mp_wsm6")  // mp_wsm6_init MW6:174-184 (denr = rho_r, dens = rho_s, DRV:305)
+    r.wsm6_radar = wsm6::wsm6_radar_init(r.wsm6.pi, physics_constants::rho_r, physics_constants::rho_s, r.wsm6.deng,
+                                         r.wsm6.n0g);
   // IN:331 init_pbl: nothing for bl_ysu
   if (c.config_sfclayer_scheme != "off") init_sfclayer(c.config_sfclayer_scheme, r.sfclayrev_tables);  // IN:334
   if (c.config_lsm_scheme == "sf_noah") {  // IN:337-345
@@ -666,9 +669,6 @@ void microphysics_for_dynamics(PhysicsRun& r, const Mesh& m, State& s, Diag& d, 
   if (c.config_microp_scheme == "off") return;
   if (c.config_microp_scheme != "mp_wsm6")
     throw Error("microphysics: config_microp_scheme = '" + c.config_microp_scheme + "' with the physics suite");
-  if (r.l_diags)
-    throw Error("microphysics: l_diags (an output or diagnostics alarm in the next step): the WSM6 diagnostics "
-                "(refl10cm, relhum, DRV:467-482) have no verified port");
   MicrophysicsPools q;
   q.nVertLevels = m.nVertLevels;
   q.zgrid = cv(m.zgrid);
@@ -705,6 +705,14 @@ void microphysics_for_dynamics(PhysicsRun& r, const Mesh& m, State& s, Diag& d, 
   q.has_reqi = r.has_reqi;
   q.has_reqs = r.has_reqs;
   q.l_diags = r.l_diags;
+  if (r.l_diags) {  // DRV:467-482: compute_radar_reflectivity (diag_physics) and compute_relhum (diag)
+    q.relhum = p.v("relhum");
+    q.refl10cm = p.v("refl10cm");
+    q.refl10cm_max = p.v("refl10cm_max");
+    q.refl10cm_1km = p.v("refl10cm_1km");
+    q.refl10cm_1km_max = p.v("refl10cm_1km_max");
+    q.radar = &r.wsm6_radar;
+  }
   q.l_acrain = r.l_acrain;
   driver_microphysics_wsm6(r.wsm6, q, 1, m.nCellsSolve());
 }

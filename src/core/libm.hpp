@@ -130,4 +130,17 @@ CPPMPAS_FORCEINLINE double mvec_atan(double x) { return ::cppwrf::glibc::mvec::a
 // variant; its log is __log_fma). The reference calls it through log10@plt; no libmvec lane in Noah.
 CPPMPAS_FORCEINLINE double log10(double x) { return ::cppwrf::glibc::log10(arg(x)); }  // __ieee754_log10
 
+// WSM6 reflectivity (physics/mp_radar.hpp, mp_wsm6_refl.hpp): the 2-lane log10 _ZGVbN2v_log10_sse4 (CPPWRF's
+// core/libmvec_x86.hpp, Intel rcpps tables as the reference runs preload them), and the complex functions gfortran
+// calls for COMPLEX*16 ABS, LOG and SQRT: cabs (__cabs = __hypot, no ifunc), clog (__clog), csqrt (__csqrt)
+// (CPPWRF's core/glibc_math.hpp ports).
+CPPMPAS_FORCEINLINE double mvec_log10(double x) { return ::cppwrf::mvec::log10(arg(x)); }  // _ZGVbN2v_log10_sse4
+CPPMPAS_FORCEINLINE double cabs(double re, double im) { return ::cppwrf::glibc::hypot(arg(re), arg(im)); }
+CPPMPAS_FORCEINLINE void clog(double re, double im, double* r, double* i) {
+  ::cppwrf::glibc::clog(arg(re), arg(im), r, i);
+}
+CPPMPAS_FORCEINLINE void csqrt(double re, double im, double* r, double* i) {
+  ::cppwrf::glibc::csqrt(arg(re), arg(im), r, i);
+}
+
 }  // namespace cppmpas::libm

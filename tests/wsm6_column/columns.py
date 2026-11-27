@@ -2,13 +2,13 @@
 """Synthetic columns for the WSM6 column check, and the comparison of the two programs' outputs.
 
   columns.py make <in.bin> <nCells> <nVertLevels> <nsteps> <mp_top_level> <dt> <seed>
-  columns.py compare <in.bin> <ref out.bin> <cpp out.bin>
+  columns.py compare <in.bin> <ref out.bin> <cpp out.bin> [l_diags]
 
 in.bin (native-endian stream, read by harness.F90 and test_wsm6_column.cpp): int32 nCells, nVertLevels, nsteps,
 mp_top_level, nscal (6), float64 dt, then in Fortran order zgrid(nV+1,nC) zz rho_zz theta_m (nV,nC) w(nV+1,nC)
 scalars(6,nV,nC) exner pressure_base pressure_p exner_base rtheta_base rtheta_p (nV,nC) surface_pressure(nC)
 rainprod evapprod re_cloud re_ice re_snow (nV,nC) rainnc snownc graupelnc (nC).
-out.bin: per step, the OUT fields below in that order.
+out.bin: per step, the OUT fields below in that order, then (l_diags) the DIAGS fields.
 
 Cell i gets regime i % 5: 0 warm rain (cloud and rain below the freezing level), 1 cloud ice (cold, ice
 supersaturated), 2 snow, 3 graupel (deep mixed-phase column), 4 everything with some negative mixing ratios from
@@ -28,6 +28,8 @@ OUT = [("scalars", "s"), ("theta_m", "v"), ("rtheta_p", "v"), ("exner", "v"), ("
        ("graupelncv", "c"), ("sr", "c"), ("rainprod", "v"), ("evapprod", "v"), ("re_cloud", "v"), ("re_ice", "v"),
        ("re_snow", "v"), ("rthmpten", "v"), ("rqvmpten", "v"), ("rqcmpten", "v"), ("rqrmpten", "v"),
        ("rqimpten", "v"), ("rqsmpten", "v"), ("rqgmpten", "v")]
+DIAGS = [("refl10cm", "v"), ("refl10cm_max", "c"), ("refl10cm_1km", "c"), ("refl10cm_1km_max", "c"),
+         ("relhum", "v")]
 
 
 def make(path, nC, nV, nsteps, mp_top, dt, seed):
@@ -121,20 +123,21 @@ def make(path, nC, nV, nsteps, mp_top, dt, seed):
         ft(acc[0]); ft(acc[1]); ft(acc[2])
 
 
-def compare(inp, ref, cpp):
+def compare(inp, ref, cpp, diags=None):
+    out = OUT + (DIAGS if diags == "l_diags" else [])
     hdr = np.fromfile(inp, dtype="<i4", count=5)
     nC, nV, nsteps = int(hdr[0]), int(hdr[1]), int(hdr[2])
     a = np.fromfile(ref, dtype="<u8")
     b = np.fromfile(cpp, dtype="<u8")
     size = {"s": 6 * nV * nC, "v": nV * nC, "c": nC}
-    per = sum(size[t] for _, t in OUT)
+    per = sum(size[t] for _, t in out)
     if a.size != per * nsteps or b.size != per * nsteps:
         print(f"FAIL: sizes ref {a.size} cpp {b.size}, expected {per * nsteps}")
         return 1
     bad = 0
     off = 0
     for s in range(nsteps):
-        for name, t in OUT:
+        for name, t in out:
             n = size[t]
             d = np.nonzero(a[off:off + n] != b[off:off + n])[0]
             if d.size:
@@ -153,4 +156,4 @@ if __name__ == "__main__":
     if sys.argv[1] == "make":
         make(sys.argv[2], *map(int, sys.argv[3:7]), float(sys.argv[7]), int(sys.argv[8]))
     else:
-        sys.exit(compare(*sys.argv[2:5]))
+        sys.exit(compare(*sys.argv[2:6]))
