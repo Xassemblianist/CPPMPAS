@@ -1140,7 +1140,7 @@ EQUIVALENT_ON_SC = {
 }
 MUTATIONS += [
     # --- physics column checks, appended after the supercell's mutants (merge of the physics branches: the
-    # supercell keeps its indices 493-534; WSM6 535-537, YSU / surface layer 538-547, radiation 548-560, Noah 561-569)
+    # supercell keeps its indices 493-534; WSM6 535-537, YSU / surface layer 538-547, radiation 548-560, Noah 561-569, New Tiedtke 570-575, GWDO 576-578)
     # WSM6 column check (tests/wsm6_column): the libmvec lanes of MPAS's -O3 build (scalar log / exp everywhere,
     # CPPWRF's kernel as WRF calls it), the max(0, qv) of th_p (PI:665; cells of regime 4 have qv < 0), the
     # background radius above mp_top_level (PI:1010; case 9:41:2:33)
@@ -1230,6 +1230,23 @@ MUTATIONS += [
      ["noah_column"]),
     ("src/physics/module_sf_noahdrv.cpp", "gl.lvcoef = tables.lvcoef_data;", "gl.lvcoef = tables.salp_data;",
      ["noah_column"]),
+    # New Tiedtke (cu_ntiedtke) and its MPAS driver, column check (tests/cu_gwdo_column): 570 cuinin's cuadjtqn
+    # without the -O3 libmvec exp lanes (CPPWRF / WRF's scalar kernel), 571 dx_p (CV:840) without the
+    # _ZGVbN2vv_pow lanes, 572 initflag without config_do_restart (CV:478; restart cases), 573 thften without the
+    # shortwave heating (CV:846-847), 574 pratec = rn / dt without stepcu (PO:96; the n_cu = 2 case), 575 the
+    # rainc bucket without the i_rainc count (CV:1094; acrain cases)
+    ("src/physics/module_cu_ntiedtke.cpp", "    c.cuinin_mvec = lane(i - its, im);", "    c.cuinin_mvec = false;", ["cu_gwdo_column"]),
+    ("src/physics/mpas_atmphys_convection.cpp", "    dx_p(i) = m.config_len_disp / (lane(i - its, ite - its + 1) ? libm::mvec_pow", "    dx_p(i) = m.config_len_disp / (false ? libm::mvec_pow", ["cu_gwdo_column"]),
+    ("src/physics/mpas_atmphys_convection.cpp", "  if (m.config_do_restart || itimestep > 1) initflag = 0;", "  if (itimestep > 1) initflag = 0;", ["cu_gwdo_column"]),
+    ("src/physics/mpas_atmphys_convection.cpp", "          (m.rthdynten(k, i) + m.rthblten(k, i) + m.rthratenlw(k, i) + m.rthratensw(k, i)) * v.pi_p(i, k);", "          (m.rthdynten(k, i) + m.rthblten(k, i) + m.rthratenlw(k, i)) * v.pi_p(i, k);", ["cu_gwdo_column"]),
+    ("src/physics/module_cu_ntiedtke.cpp", "    (*a.pratec)(i) = rn / (real(a.stepcu) * a.dt);", "    (*a.pratec)(i) = rn / a.dt;", ["cu_gwdo_column"]),
+    ("src/physics/mpas_atmphys_convection.cpp", "      m.i_rainc(i) = m.i_rainc(i) + 1;", "      m.i_rainc(i) = m.i_rainc(i);", ["cu_gwdo_column"]),
+    # GWDO (bl_ysu_gwdo) and its MPAS driver, column check (tests/cu_gwdo_column): 576 WRF 4.8.0's cg = 1 (MPAS's
+    # MMM-physics a4baf7f bl_gwdo.F90:153 has 0.5), 577 WRF 4.8.0's olmin floor on ol (GW:342 has none; regime 4
+    # has ol = 0), 578 rubldiff without the PBL tendency removed (GD:680)
+    ("src/physics/bl_gwdo.hpp", "const T xl = T(4.0e4), gmax = T(1.), veleps = T(1.0), frc = T(1.0), ce = T(0.8), cg = T(0.5);", "const T xl = T(4.0e4), gmax = T(1.), veleps = T(1.0), frc = T(1.0), ce = T(0.8), cg = T(1.);", ["cu_gwdo_column"]),
+    ("src/physics/bl_gwdo.hpp", "    ol = ol4[(nwd - 1) % 4 + 1];", "    ol = c_max(ol4[(nwd - 1) % 4 + 1], olmin);", ["cu_gwdo_column"]),
+    ("src/physics/mpas_atmphys_gwdo.cpp", "      m.rubldiff(k, i) = rublten_p(i, k) - m.rublten(k, i);", "      m.rubldiff(k, i) = rublten_p(i, k);", ["cu_gwdo_column"]),
 ]
 
 MUTATIONS = [(p, o, n, [t for t in ts if t not in EQUIVALENT_ON_SC.get((p, n), [])]) for p, o, n, ts in MUTATIONS]

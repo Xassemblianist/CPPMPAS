@@ -63,8 +63,11 @@ add_library(cppmpas STATIC
   src/core_atmosphere/atm_init.cpp
   src/core_atmosphere/atm_solve_diagnostics.cpp
   src/operators/geometry_utils.cpp
+  src/physics/module_cu_ntiedtke.cpp
   src/physics/module_mp_wsm6.cpp
   src/physics/mpas_atmphys_microphysics.cpp
+  src/physics/mpas_atmphys_convection.cpp
+  src/physics/mpas_atmphys_gwdo.cpp
   src/physics/mpas_atmphys_interface.cpp
   src/physics/mpas_atmphys_pbl.cpp
   src/physics/mpas_atmphys_sfclayer.cpp
