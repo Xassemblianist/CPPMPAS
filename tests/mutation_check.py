@@ -1499,6 +1499,51 @@ MUTATIONS += [
      '  reals("cldfrac", levels(cv(m.o3vmr), nV));', ["radiation_replay_RG_0", "radiation_replay_RG_1800"]),
 ]
 
+# Thompson microphysics (tests/thompson_column): MPAS's -O3 lanes, the folded bin edges of thompson_init, the scheme's
+# rates and tables, the driver / interface (ni, nr, n_microp) and init_thompson_clouddroplets_forMPAS
+TH, THI, THD = "src/physics/mp_thompson.hpp", "src/physics/mp_thompson_init.cpp", "src/physics/mpas_atmphys_microphysics_thompson.cpp"
+MUTATIONS += [
+    # the rain-slope _ZGVbN2vv_pow lanes (MT:1941, 1944, 3021, 3024) and massc (MT:4235) as scalar pow (WRF's -O2)
+    (TH, "  const bool lane = n > 1 && !((n & 1) && i == n - 1);", "  const bool lane = false && n > 1 && !((n & 1) && i == n - 1);",
+     ["thompson_column"]),
+    # rain sedimentation's SLP pair (MT:3251) as scalar pow
+    (TH, "              (::cppmpas::libm::mvec_pow(lamr + fv_r, -P.cre[5]));", "              (::cppmpas::libm::pow(lamr + fv_r, -P.cre[5]));",
+     ["thompson_column"]),
+    # thompson_init's bin edges: n = nb - 1 from the vector exp instead of the folded one
+    (THI, "    xDx[n - 1] = (n == 2 || n >= nb - 1) ?", "    xDx[n - 1] = (n == 2 || n >= nb) ?", ["thompson_column"]),
+    # calc_refl10cm's dBZ loop (MT:5187) without the _ZGVbN2v_log10 lanes (l_diags cases)
+    (TH, "    dBZ[k] = 10. * (lane ? ::cppmpas::libm::mvec_log10(z) : log10(z));", "    dBZ[k] = 10. * log10(z);",
+     ["thompson_column"]),
+    # calc_refl10cm's melting snow and graupel (MT:5136-5175)
+    (TH, "        ze_snow[k] = T.lamda4 / (T.pi5 * T.k_w) * eta;", "        ze_snow[k] = T.lamda4 / (T.pi5 * T.k_w) * eta * 1.01;",
+     ["thompson_column"]),
+    # freezing of rain into graupel from the freezeH2O table (MT:2349)
+    (TH, "        prg_rfz[k] = P.tpg_qrfz[ir] * odts;", "        prg_rfz[k] = P.tpi_qrfz[ir] * odts;", ["thompson_column"]),
+    # the temperature index of the QRacrQS table (MT:2027-2029)
+    (TH, "    idx_t = i_max(1, -idx_t);", "    idx_t = i_max(2, -idx_t);", ["thompson_column"]),
+    # cloud water autoconversion (MT:1980)
+    (TH, "      taud = 0.5 * ((0.5 * Dc_b - 7.5) + fabs(0.5 * Dc_b - 7.5)) + R1;",
+     "      taud = 0.5 * ((0.5 * Dc_b - 7.6) + fabs(0.5 * Dc_b - 7.6)) + R1;", ["thompson_column"]),
+    # deposition growth of ice split into snow with tpi_ide (MT:2416)
+    (TH, "          prs_ide[k] = (1.0 - P.tpi_ide[P.ia(idx_i, idx_i1)]) * pri_ide[k];",
+     "          prs_ide[k] = (0.9 - P.tpi_ide[P.ia(idx_i, idx_i1)]) * pri_ide[k];", ["thompson_column"]),
+    # rain number evaporation (MT:3191)
+    (TH, "      pnr_rev[k] = c_min(nr[k] * 0.99 * orho * odts, prv_rev[k] * nr[k] / rr[k]);",
+     "      pnr_rev[k] = c_min(nr[k] * 0.98 * orho * odts, prv_rev[k] * nr[k] / rr[k]);", ["thompson_column"]),
+    # the driver: n_microp sub-steps (DRV:380), nr back to the state (PI:1026)
+    (THD, "  for (int istep = 1; istep <= m.n_microp; ++istep) {", "  for (int istep = 1; istep < m.n_microp; ++istep) {",
+     ["thompson_column"]),
+    (THD, "      nr(k, i) = P(nr_p, i, k);\n    }\n    for (int k = kts; k <= mp_top_level; ++k) {  // PI:1076-1086",
+     "      nr(k, i) = P(ni_p, i, k);\n    }\n    for (int k = kts; k <= mp_top_level; ++k) {  // PI:1076-1086",
+     ["thompson_column"]),
+    # physics_run_init's 90 s microphysics sub-steps (mpas_atmphys_manager.F:690)
+    (THD, "    dt_microp = 90.;", "    dt_microp = 100.;", ["thompson_column"]),
+    # init_thompson_clouddroplets_forMPAS: land cells (IM:78)
+    (THD, "      nt_c(iCell) = 300.e6;", "      nt_c(iCell) = 301.e6;", ["thompson_column"]),
+    (TH, "        ze_graupel[k] = T.lamda4 / (T.pi5 * T.k_w) * eta;", "        ze_graupel[k] = T.lamda4 / (T.pi5 * T.k_w) * eta * 1.01;",
+     ["thompson_column"]),
+]
+
 MUTATIONS = [(p, o, n, [t for t in ts if t not in EQUIVALENT_ON_SC.get((p, n), [])]) for p, o, n, ts in MUTATIONS]
 
 
