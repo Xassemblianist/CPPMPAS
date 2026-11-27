@@ -91,9 +91,10 @@ GPU_MUTATIONS = [
          "        sw2(k, j) = m.adv_coefs(j, iEdge) - sign1(uhAvg(k, iEdge)) * m.adv_coefs_3rd(j, iEdge);"),
      SC((1, 10), "qv") + SCV),
     # monotonic transport, rk_step 3 (TI:5731-5735): the vertical flux divergence with the wrong sign of one face
-    (AS, "            (scalar_new(k, iCell) + (-(rdnw(k) * (wdtn(k + 1, iCell) - wdtn(k, iCell))))) / rho_zz_new(k, iCell);",
-     dev("            (scalar_new(k, iCell) + (-(rdnw(k) * (wdtn(k + 1, iCell) - wdtn(k, iCell))))) / rho_zz_new(k, iCell);",
-         "            (scalar_new(k, iCell) + (-(rdnw(k) * (wdtn(k + 1, iCell) + wdtn(k, iCell))))) / rho_zz_new(k, iCell);"),
+    # (the divisor is rho_lim since the split transport, TI:5725-5735)
+    (AS, "            (scalar_new(k, iCell) + (-(rdnw(k) * (wdtn(k + 1, iCell) - wdtn(k, iCell))))) / rho_lim(k, iCell);",
+     dev("            (scalar_new(k, iCell) + (-(rdnw(k) * (wdtn(k + 1, iCell) - wdtn(k, iCell))))) / rho_lim(k, iCell);",
+         "            (scalar_new(k, iCell) + (-(rdnw(k) * (wdtn(k + 1, iCell) + wdtn(k, iCell))))) / rho_lim(k, iCell);"),
      SC((1, 10), "qv") + SCV),
     # the limiter's bounds (TI:5374-5392) over five of the six neighbours: only the 30-min state sees it
     (AS, "        for (int j = 1; j <= 6; ++j) {\n          mx = vmax",
@@ -148,8 +149,101 @@ def cpu_mutant(piece):
     return hits[0][:3]
 
 
+# --- the physics on the GPU (RG): each mutant in the device code only, appended after the indices above ---
+PH, DG = "src/physics/", "src/core_atmosphere/diagnostics/"
+RGR = lambda *f: [f"gpu_dycore_RG_restart_{x}" for x in f]
+RGV = ["gpu_dycore_RG_vs_cpu"]
+RGS = lambda f: [f"gpu_dycore_RG_streams_{f}"]
+RG24 = lambda f: [f"gpu_dycore_RG24_{f}"]
+PHYSICS_MUTATIONS = [
+    # MPAS_to_physics' model-top pressure (PI:494-506) without the libmvec log / exp lanes
+    (PH + "mpas_atmphys_interface.cpp", "      if (lane(i - its, n))",
+     dev("      if (lane(i - its, n))", "      if (false && lane(i - its, n))"), RGR("theta_m", "hfx") + RGV),
+    # sfclayer_from_MPAS (SL:422-470): twice the roughness length
+    (PH + "mpas_atmphys_sfclayer.cpp", "    p.znt[I(i)] = m.znt(i);",
+     dev("    p.znt[I(i)] = m.znt(i);", "    p.znt[I(i)] = 2. * m.znt(i);"), RGR("ust", "hfx") + RGV),
+    # Noah's SFLX (ICE = 0 points) skipped
+    (PH + "module_sf_noahdrv.cpp", "    nk(ii, 0);   // returns at once unless ICE = 0 on land (active)",
+     dev("    nk(ii, 0);   // returns at once unless ICE = 0 on land (active)", "    (void)nk;"),
+     RGR("skintemp", "tslb") + RGV),
+    # the sea-ice driver's SFLX skipped
+    (PH + "module_sf_noahdrv.cpp", "  parallel_for(a.its, a.ite, [=] CPPMPAS_LAMBDA(int i) { si(i - ims, 0); });",
+     "  parallel_for(a.its, a.ite, [=] CPPMPAS_LAMBDA(int i) {\n" + dev("    si(i - ims, 0);", "    (void)si;")
+     + "\n  });", RGR("skintemp", "hfx")),
+    # seaice_to_MPAS (seaice.F:387-405): open-water albedo 0.07
+    (PH + "mpas_atmphys_driver_lsm.cpp", "      L.at(L.sfc_albedo_p, i) = x * L.at(L.sfc_albedo_p, i) + (1. - x) * 0.08;",
+     dev("      L.at(L.sfc_albedo_p, i) = x * L.at(L.sfc_albedo_p, i) + (1. - x) * 0.08;",
+         "      L.at(L.sfc_albedo_p, i) = x * L.at(L.sfc_albedo_p, i) + (1. - x) * 0.07;"), RGR("sfc_albedo")),
+    # atmphys_sfc_diagnostics: th2m one kelvin off
+    (PH + "mpas_atmphys_driver_lsm.cpp", "    p.th2m(i) = p.t2m(i) * libm::pow(pc::P0 / p.surface_pressure(i), pc::rcp);",
+     dev("    p.th2m(i) = p.t2m(i) * libm::pow(pc::P0 / p.surface_pressure(i), pc::rcp);",
+         "    p.th2m(i) = p.t2m(i) * libm::pow(pc::P0 / p.surface_pressure(i), pc::rcp) + 1.;"), RGR("th2m")),
+    # YSU's column kernel skipped
+    (PH + "mpas_atmphys_pbl.cpp", "    parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) { k(i - 1, 0); });",
+     "    parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {\n" + dev("      k(i - 1, 0);", "      (void)k;") + "\n    });",
+     RGR("rublten", "rthblten") + RGV),
+    # GWDO's column routine skipped
+    (PH + "mpas_atmphys_gwdo.cpp", "    bl_gwdo::bl_gwdo_run<real>(c, kte, gravity, cp, R_d, ep_1, pii, m.dt_pbl);",
+     dev("    bl_gwdo::bl_gwdo_run<real>(c, kte, gravity, cp, R_d, ep_1, pii, m.dt_pbl);", "    (void)c;"),
+     RGR("dtaux3d", "dusfcg")),
+    # New Tiedtke's cuinin without the libmvec lanes
+    (PH + "module_cu_ntiedtke.cpp", "    c.cuinin_mvec = lane(i - its, im);",
+     dev("    c.cuinin_mvec = lane(i - its, im);", "    c.cuinin_mvec = false && lane(i - its, im);"),
+     RGR("rthcuten", "rqvcuten")),
+    # CV:843-849: the forcing's temperature tendency without the exner factor
+    (PH + "mpas_atmphys_convection.cpp",
+     "          (m.rthdynten(k, i) + m.rthblten(k, i) + m.rthratenlw(k, i) + m.rthratensw(k, i)) * v.pi_p(i, k);",
+     dev("          (m.rthdynten(k, i) + m.rthblten(k, i) + m.rthratenlw(k, i) + m.rthratensw(k, i)) * v.pi_p(i, k);",
+         "          (m.rthdynten(k, i) + m.rthblten(k, i) + m.rthratenlw(k, i) + m.rthratensw(k, i)) * 1.0;"),
+     RGR("rthcuten", "rqvcuten")),
+    # WSM6 without the libmvec lanes of the warm-rain loop (every column the scalar log / exp)
+    (PH + "module_mp_wsm6.cpp", "           sr, i - its, ite - its + 1);",
+     dev("           sr, i - its, ite - its + 1);", "           sr, 0 * (i - its), 1 + 0 * (ite - its + 1));"),
+     RGR("qr", "qv") + RGV),
+    # compute_radar_reflectivity skipped (l_diags)
+    (PH + "mpas_atmphys_microphysics.cpp",
+     "      wsm6::refl10cm_wsm6(*m.radar, qv1d, qr1d, qs1d, qg1d, t1d, p1d, dBZ1d, kte);",
+     dev("      wsm6::refl10cm_wsm6(*m.radar, qv1d, qr1d, qs1d, qg1d, t1d, p1d, dBZ1d, kte);", "      (void)m.radar;"),
+     RG24("diag.2026-10-12_03.00.00")),
+    # compute_relhum (DRV:798-850) in tenths
+    (PH + "mpas_atmphys_microphysics.cpp", "        m.relhum(k, i) = m.relhum(k, i) * 100.;",
+     dev("        m.relhum(k, i) = m.relhum(k, i) * 100.;", "        m.relhum(k, i) = m.relhum(k, i) * 10.;"),
+     RGS("history.2026-10-12_01.00.00")),
+    # physics_get_tend (TD:382-426): the PBL's edge tendency subtracted
+    (PH + "mpas_atmphys_todynamics.cpp",
+     "      for (int k = 1; k <= nV; ++k) tend_u(k, i) = tend_u(k, i) + m.rublten_Edge(k, i) * mass_edge(k, i);",
+     dev("      for (int k = 1; k <= nV; ++k) tend_u(k, i) = tend_u(k, i) + m.rublten_Edge(k, i) * mass_edge(k, i);",
+         "      for (int k = 1; k <= nV; ++k) tend_u(k, i) = tend_u(k, i) - m.rublten_Edge(k, i) * mass_edge(k, i);"),
+     ["gpu_dycore_RG_step1_u"] + RGV),
+    # TI:2777-2783: rthdynten without the qv term
+    (PH + "mpas_atmphys_driver.cpp",
+     "      rthdynten(k, iCell) = fac_m * (rthdynten(k, iCell) - theta_local * rv / rgas * rqvdynten(k, iCell));",
+     dev("      rthdynten(k, iCell) = fac_m * (rthdynten(k, iCell) - theta_local * rv / rgas * rqvdynten(k, iCell));",
+         "      rthdynten(k, iCell) = fac_m * (rthdynten(k, iCell) + 0. * theta_local * rv / rgas * rqvdynten(k, iCell));"),
+     RGR("rthdynten")),
+    # interp_tofixed_pressure: the trapping level one too high
+    (DG + "mpas_isobaric_diagnostics.cpp", "          kupper[icol] = kk;",
+     dev("          kupper[icol] = kk;", "          kupper[icol] = kk > 1 ? kk - 1 : kk;"),
+     RGS("diag.2026-10-12_00.00.00")),
+    # the updraft helicity's vertex-to-cell sums without the kite areas
+    (DG + "mpas_convective_diagnostics.cpp",
+     "            updraft_helicity(k, iCell) = updraft_helicity(k, iCell) + kiteAreasOnVertex(j, i) * vorticity(k, i);",
+     dev("            updraft_helicity(k, iCell) = updraft_helicity(k, iCell) + kiteAreasOnVertex(j, i) * vorticity(k, i);",
+         "            updraft_helicity(k, iCell) = updraft_helicity(k, iCell) + 0. * kiteAreasOnVertex(j, i) * vorticity(k, i);"),
+     RG24("diag.2026-10-12_03.00.00")),
+    # getcape skipped
+    (DG + "mpas_convective_diagnostics.cpp",
+     "      getcape(nVertLevels, p_in.data(), t_in.data(), td_in.data(), cape_out, cin_out);",
+     dev("      getcape(nVertLevels, p_in.data(), t_in.data(), td_in.data(), cape_out, cin_out);", "      (void)p_in;"),
+     RGS("diag.2026-10-12_00.00.00")),
+    # KernelCopy in the CUDA build copies zero tables in place of the scheme's (the CPU build reads the tables directly)
+    (PH + "mpas_atmphys_interface.hpp", "  void set(const T& x) { s.assign(1, x); }", "  void set(const T& x) { (void)x; s.assign(1, T{}); }",
+     ["gpu_dycore_RG_step1_theta_m"] + RGV),
+]
+
+
 def mutants():
-    return [m for m in GPU_MUTATIONS] + [cpu_mutant(p) + (t,) for p, t in CPU_MUTANTS]
+    return [m for m in GPU_MUTATIONS] + [cpu_mutant(p) + (t,) for p, t in CPU_MUTANTS] + PHYSICS_MUTATIONS
 
 
 def build(b):

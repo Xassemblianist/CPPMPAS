@@ -952,7 +952,7 @@ MUTATIONS += [
      ["dycore_MW_output30_uReconstructZonal", "dycore_MW_output30_uReconstructMeridional", "dycore_MW_output60_uReconstructZonal"]),
     (X, "      if (n > a.steps) throw Error(\"--write-at \"", "      if (false) throw Error(\"--write-at \"", ["err_dycore_write_at"]),
     (X, "    for (const auto& w : a.write_fields) (void)field_ref(in, w);", "", ["err_dycore_write_fields"]),
-    (X, "    if (a.pos.size() != 2 || a.steps < 0 || a.namelist.empty() || !a.fields.empty())",
+    (X, "    if (a.pos.size() != 2 || (a.steps < 0 && a.streams.empty()) || a.namelist.empty() || !a.fields.empty())",
      "    if (a.pos.size() != 2 || a.namelist.empty() || !a.fields.empty())", ["err_dycore_no_steps"]),
     # the restart run (src/io/mpas_restart.cpp, the restart branch of atm_mpas_init_block, the CLI)
     (A, "  if (!cfg.config_do_restart || (cfg.config_do_restart && cfg.config_do_DAcycling)) atm_init_coupled_diagnostics(m, s, d);",
@@ -1169,8 +1169,8 @@ MUTATIONS += [
     # WSM6 column check (tests/wsm6_column): the libmvec lanes of MPAS's -O3 build (scalar log / exp everywhere,
     # CPPWRF's kernel as WRF calls it), the max(0, qv) of th_p (PI:665; cells of regime 4 have qv < 0), the
     # background radius above mp_top_level (PI:1010; case 9:41:2:33)
-    ("src/physics/module_mp_wsm6.cpp", "pii.data(), p.data(), delz.data(), rain, rainncv, snow, snowncv, graupel, graupelncv, sr, i - its,\n           ite - its + 1);",
-     "pii.data(), p.data(), delz.data(), rain, rainncv, snow, snowncv, graupel, graupelncv, sr, i - its,\n           1);", ["wsm6_column"]),
+    ("src/physics/module_mp_wsm6.cpp", "    params(nz, delt, th, q, qc, qr, qi, qs, qg, den, pii, p, delz, rain, rainncv, snow, snowncv, graupel, graupelncv,\n           sr, i - its, ite - its + 1);",
+     "    params(nz, delt, th, q, qc, qr, qi, qs, qg, den, pii, p, delz, rain, rainncv, snow, snowncv, graupel, graupelncv,\n           sr, i - its, 1);", ["wsm6_column"]),
     ("src/physics/mpas_atmphys_microphysics.cpp", "P(th_p, i, k) = m.theta_m(k, i) / (1. + R_v / R_d * fmax0(P(qv_p, i, k)));",
      "P(th_p, i, k) = m.theta_m(k, i) / (1. + R_v / R_d * P(qv_p, i, k));", ["wsm6_column"]),
     ("src/physics/mpas_atmphys_microphysics.cpp", "        m.re_snow(k, i) = re_qs_bg;", "        m.re_snow(k, i) = re_qi_bg;", ["wsm6_column"]),
@@ -1243,7 +1243,7 @@ MUTATIONS += [
      "&t.satpsi[lc], &t.satdw[lc], &t.satdk[lc], &t.wltsmc[lc]", ["noah_column"]),
     ("src/physics/mpas_atmphys_driver_lsm.cpp", "real fk = libm::pow((hlice / (pc::gravity * (-psisat)))",
      "real fk = libm::pow((hlice / (9.81 * (-psisat)))", ["noah_column"]),
-    ("src/physics/mpas_atmphys_driver_lsm.cpp", '  if (cfg.config_convection_scheme != "off")  // :460-468',
+    ("src/physics/mpas_atmphys_driver_lsm.cpp", '  if (convection)  // :460-468',
      "  if (false)  // :460-468", ["noah_column"]),
     ("src/physics/mpas_atmphys_driver_lsm.cpp", "      if (xice[ii] < 0.1 && tsk_ice[ii] < 263.15) tsk_ice[ii] = 263.15;",
      "      if (false && tsk_ice[ii] < 263.15) tsk_ice[ii] = 263.15;", ["noah_column"]),
@@ -1264,7 +1264,7 @@ MUTATIONS += [
     ("src/physics/mpas_atmphys_convection.cpp", "    dx_p(i) = m.config_len_disp / (lane(i - its, ite - its + 1) ? libm::mvec_pow", "    dx_p(i) = m.config_len_disp / (false ? libm::mvec_pow", ["cu_gwdo_column"]),
     ("src/physics/mpas_atmphys_convection.cpp", "  if (m.config_do_restart || itimestep > 1) initflag = 0;", "  if (itimestep > 1) initflag = 0;", ["cu_gwdo_column"]),
     ("src/physics/mpas_atmphys_convection.cpp", "          (m.rthdynten(k, i) + m.rthblten(k, i) + m.rthratenlw(k, i) + m.rthratensw(k, i)) * v.pi_p(i, k);", "          (m.rthdynten(k, i) + m.rthblten(k, i) + m.rthratenlw(k, i)) * v.pi_p(i, k);", ["cu_gwdo_column"]),
-    ("src/physics/module_cu_ntiedtke.cpp", "    (*a.pratec)(i) = rn / (real(a.stepcu) * a.dt);", "    (*a.pratec)(i) = rn / a.dt;", ["cu_gwdo_column"]),
+    ("src/physics/module_cu_ntiedtke.cpp", "    a.pratec(i) = rn / (real(a.stepcu) * a.dt);", "    a.pratec(i) = rn / a.dt;", ["cu_gwdo_column"]),
     ("src/physics/mpas_atmphys_convection.cpp", "      m.i_rainc(i) = m.i_rainc(i) + 1;", "      m.i_rainc(i) = m.i_rainc(i);", ["cu_gwdo_column"]),
     # GWDO (bl_ysu_gwdo) and its MPAS driver, column check (tests/cu_gwdo_column): 580 WRF 4.8.0's cg = 1 (MPAS's
     # MMM-physics a4baf7f bl_gwdo.F90:153 has 0.5), 581 WRF 4.8.0's olmin floor on ol (GW:342 has none; regime 4
@@ -1304,7 +1304,7 @@ MUTATIONS += [
      "      o3climatology_from_MPAS(r.rad.curr_julday + 1.0, q, m.nCellsSolve());", RG1("theta_m")),
     ("src/physics/mpas_atmphys_driver.hpp", "    while (ring <= now) ring += interval;", "    while (ring < now) ring += interval;",
      ["dycore_RG_step2_theta_m"]),
-    (DRV, "      rqvdynten(k, i) = config_monotonic ? (scalars2(qv, k, i) - s.scalars(qv, k, i)) / dt : 0.;",
+    (DRV, "      rqvdynten(k, i) = config_monotonic ? (scalars2(qv, k, i) - scalars1_v(qv, k, i)) / dt : 0.;",
      "      rqvdynten(k, i) = 0.;", ["dycore_RG_step2_theta_m"]),
     (LU, "    if (julday < 105 || julday >= 288) isn = 2;", "    if (julday < 105 || julday >= 285) isn = 2;", RG1("theta_m")),
     # SURVIVES (shown once): over water sfc_albbck is read by no scheme after the update (the open-water albedo comes
@@ -1356,8 +1356,8 @@ MUTATIONS += [
     (ISO, "      const real w2 = (height(k + 1, iCell) - height(k, iCell)) / (height(k + 1, iCell) - height(k - 1, iCell));",
      "      const real w2 = (height(k + 1, iCell) - height(k, iCell)) / (height(k + 1, iCell) - height(k, iCell));",
      I0("height_500hPa")),
-    (ISO, "      const real z2 = 0.5 * (height(k + 1, iCell) + height(k + 2, iCell));",
-     "      const real z2 = 0.5 * (height(k + 1, iCell) + height(k + 1, iCell));", I0("height_925hPa")),
+    (ISO, "    const real z2 = 0.5 * (height(k + 1, iCell) + height(k + 2, iCell));",
+     "    const real z2 = 0.5 * (height(k + 1, iCell) + height(k + 1, iCell));", I0("height_925hPa")),
     (ISO, "  const int nPair = nCells - nCells % 2;", "  const int nPair = 0;", I0("height_500hPa")),
     # pressure at vertices (IS:691-700)
     (ISO, "      pressure_v(k, iVert) = pressure_v(k, iVert) / areaTriangle(iVert);",
@@ -1372,9 +1372,9 @@ MUTATIONS += [
     # the interpolated sources (IS:767-902)
     (ISO, "    mass_level(need.relhum, relhum, \"relhum\");", "    mass_level(need.relhum, temperature, \"relhum\");",
      I0("relhum_500hPa")),
-    (ISO, "    mass_level(need.uzonal, uzonal, \"uzonal\");", "    mass_level(need.uzonal, umeridional, \"uzonal\");",
+    (ISO, "    mass_level(need.uzonal, d.uReconstructZonal, \"uzonal\");", "    mass_level(need.uzonal, d.uReconstructMeridional, \"uzonal\");",
      I0("uzonal_500hPa")),
-    (ISO, "    w_level(vvel, \"w\");", "    w_level(height, \"w\");", I0("w_500hPa")),
+    (ISO, "    w_level(s.w, \"w\");", "    w_level(m.zgrid, \"w\");", I0("w_500hPa")),
     # need flags (IS:104-302): a group not computed
     (ISO, "  group(\"umeridional\", need.umeridional);", "  group(\"umeridional\", need.uzonal);", I0("umeridional_500hPa")),
     # compute_slp (IS:1113-1243): virtual temperature, the mm5 correction, t_surf's power, the libmvec lanes
@@ -1388,11 +1388,11 @@ MUTATIONS += [
     (ISO, "        layerMean(iCell) = layerMean(iCell) + w * 0.5 * (field_in(iCell, k) + field_in(iCell, k + 1));",
      "        layerMean(iCell) = layerMean(iCell) + w * 0.5 * (field_in(iCell, k) + field_in(iCell, k));",
      I0("meanT_500_300")),
-    (ISO, "    t_iso_levels(2) = 35000.0;", "    t_iso_levels(2) = 36000.0;", I0("t_iso_levels", "t_isobaric")),
-    (ISO, "    for (int k = 1; k <= 13; ++k) z_iso_levels(k) = 30000.0 + 5000.0 * (k - 1);  // 30000.0 ... 90000.0, exact",
-     "    for (int k = 1; k <= 13; ++k) z_iso_levels(k) = 30000.0 + 5000.0 * k;", I0("z_iso_levels", "z_isobaric")),
-    (ISO, "        press_in(iCell, nVertLevelsP1 + 1 - k) = pressure2(k, iCell) * 100.0;",
-     "        press_in(iCell, nVertLevelsP1 + 1 - k) = pressure2(k, iCell) * 100.1;", I0("z_isobaric")),
+    (ISO, "    t_iso_levels_a(2) = 35000.0;", "    t_iso_levels_a(2) = 36000.0;", I0("t_iso_levels", "t_isobaric")),
+    (ISO, "    for (int k = 1; k <= 13; ++k) z_iso_levels_a(k) = 30000.0 + 5000.0 * (k - 1);  // 30000.0 ... 90000.0, exact",
+     "    for (int k = 1; k <= 13; ++k) z_iso_levels_a(k) = 30000.0 + 5000.0 * k;", I0("z_iso_levels", "z_isobaric")),
+    (ISO, "    flip_in(press_in, pressure2_a, nCells, nVertLevelsP1, 100.0);",
+     "    flip_in(press_in, pressure2_a, nCells, nVertLevelsP1, 100.1);", I0("z_isobaric")),
     # convective diagnostics (mpas_convective_diagnostics.F): t = 0 of RG (diag_RG_conv0_*) and 3 h / 6 h of RG24
     # (diag_RG24_conv_*, label long)
     (CV, "      dewpoint(k, iCell) = dewpoint(k, iCell) + 273.15;", "      dewpoint(k, iCell) = dewpoint(k, iCell) + 273.16;",
@@ -1441,13 +1441,13 @@ MUTATIONS += [
     (CV, "      const real uph = integral_zstaggered(&updraft_helicity(1, iCell), z_agl.data(), 2000.0, 5000.0, nVertLevels);",
      "      const real uph = integral_zstaggered(&updraft_helicity(1, iCell), z_agl.data(), 1000.0, 5000.0, nVertLevels);",
      CV24("updraft_helicity_max")),
-    (CV, "          updraft_helicity(k, iCell) = updraft_helicity(k, iCell) + m.kiteAreasOnVertex(j, i) * vorticity(k, i);",
-     "          updraft_helicity(k, iCell) = updraft_helicity(k, iCell) + m.kiteAreasOnVertex(j, i) * vorticity(k, i) * 1.5;",
+    (CV, "            updraft_helicity(k, iCell) = updraft_helicity(k, iCell) + kiteAreasOnVertex(j, i) * vorticity(k, i);",
+     "            updraft_helicity(k, iCell) = updraft_helicity(k, iCell) + kiteAreasOnVertex(j, i) * vorticity(k, i) * 1.5;",
      CV24("updraft_helicity_max")),
     (CV, "      w_velocity_max(iCell) = maxsd(mx, w_velocity_max(iCell));",
      "      w_velocity_max(iCell) = maxsd(0.5 * mx, w_velocity_max(iCell));", CV24("w_velocity_max")),
-    (CV, "          maxsd(std::sqrt(uzonal(1, iCell) * uzonal(1, iCell) + umeridional(1, iCell) * umeridional(1, iCell)),",
-     "          maxsd(std::sqrt(uzonal(1, iCell) * uzonal(2, iCell) + umeridional(1, iCell) * umeridional(1, iCell)),",
+    (CV, "          maxsd(sqrt(uzonal(1, iCell) * uzonal(1, iCell) + umeridional(1, iCell) * umeridional(1, iCell)),",
+     "          maxsd(sqrt(uzonal(1, iCell) * uzonal(2, iCell) + umeridional(1, iCell) * umeridional(1, iCell)),",
      CV0("wind_speed_level1_max")),
     (CV, "    if (c.field_will_be_written(f)) {\n      auto& a = c.pools->R(f);", "    if (false) {\n      auto& a = c.pools->R(f);",
      CV24("w_velocity_max", "06")),
