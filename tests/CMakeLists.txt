@@ -530,6 +530,14 @@ target_link_libraries(test_gf_column PRIVATE cppmpas)
 add_test(NAME gf_column COMMAND ${T}/gf_column/run_check.sh ${CPPMPAS_MPAS_SRC} ${CPPMPAS_MMM_PHYSICS}
   ${W}/gf_column $<TARGET_FILE:test_gf_column>)
 set_tests_properties(gf_column PROPERTIES FIXTURES_REQUIRED work_dir)
+# The MYNN surface layer (sf_mynn: init_sfclayer, driver_sfclayer with sfclay_mynn, sf_mynn_pre_run and sf_mynn_run)
+# with MPAS_to_physics against MPAS's own code built with the reference compiler and flags
+# (tests/sfmynn_column/run_check.sh); same requirements as wsm6_column (an empty path fails the test).
+add_executable(test_sfmynn_column sfmynn_column/test_sfmynn_column.cpp)
+target_link_libraries(test_sfmynn_column PRIVATE cppmpas)
+add_test(NAME sfmynn_column COMMAND ${T}/sfmynn_column/run_check.sh "${CPPMPAS_MPAS_SRC}" "${CPPMPAS_MMM_PHYSICS}"
+  ${W}/sfmynn_column $<TARGET_FILE:test_sfmynn_column>)
+set_tests_properties(sfmynn_column PROPERTIES FIXTURES_REQUIRED work_dir)
 
 # ---------------------------------------------------------------------------------------------------------------
 # The real-data case RG (mpas842-dbl-rg-004: the x1.10242 mesh, 55 levels, dt = 600 s, the mesoscale_reference physics

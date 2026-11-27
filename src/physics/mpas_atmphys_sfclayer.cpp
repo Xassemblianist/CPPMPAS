@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // See mpas_atmphys_sfclayer.hpp. SL = src/core_atmosphere/physics/mpas_atmphys_driver_sfclayer.F,
-// SR = physics/physics_wrf/module_sf_sfclayrev.F, SP = physics/physics_wrf/sf_sfclayrev_pre.F (MPAS v8.4.2).
+// SR = physics/physics_wrf/module_sf_sfclayrev.F, SP = physics/physics_wrf/sf_sfclayrev_pre.F,
+// MS = physics/physics_wrf/module_sf_mynn.F, MP = physics/physics_wrf/sf_mynn_pre.F (MPAS v8.4.2).
 #include "physics/mpas_atmphys_sfclayer.hpp"
 
 #include <vector>
@@ -8,6 +9,7 @@
 #include "core/error.hpp"
 #include "core/libm.hpp"
 #include "physics/mpas_atmphys_constants.hpp"
+#include "physics/sf_mynn.hpp"
 
 namespace cppmpas::phys {
 
@@ -135,11 +137,114 @@ void sfclayrev_call(const sfclayrev::SFClayRevTables<real>* tables, SfcSet& s, c
   parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) { k(i - its, 0); });  // the views start at column its = 1
 }
 
+// MS:19-389 (sfclay_mynn) for the row its..ite, with sf_mynn_pre_run (MP:62-165) and sf_mynn_run (sf_mynn.hpp): the
+// wrapper copies the arrays to its..ite columns (_hv) and level kts (and kts + 1 of dz8w, u3d, v3d), calls the scheme
+// and copies back; ustm, ck, cka, cd and cda are present (MS:298-310, 373-385), spp_pbl = 0 (f_spp false, MS:231-232).
+// qcg (MS:258) is copied but sf_mynn_run never reads it; th3d and pi3d are not read at all. The local wstar and qstar
+// (MS:215, 368-369) are dropped. One thread per cell i, which sits at ii = i - its of the n = ite - its + 1 lanes of
+// sf_mynn_run's vectorised loop.
+void sfclay_mynn_call(const sfmynn::PsiTables* tables, SfcSet& s, WorkArray& ch, const PhysicsVarsView& v,
+                      const WorkArray& snowh, const WorkArray& psfc, const WorkArray& dx, const WorkArray& pblh,
+                      int itimestep, int its, int ite) {
+  using namespace physics_constants;
+  const SfcSetView p = s.view();
+  real* chp = ch.data();
+  const real *snowh_p = snowh.data(), *psfc_p = psfc.data(), *dx_p = dx.data(), *pblh_p = pblh.data();
+  const sfmynn::SfMynnConsts c{cp, gravity, rcp, R_d, xlv, svp1, svp2, svp3, svpt0, ep_1, ep_2, karman};  // SL:1016-1044
+  const int n = ite - its + 1;
+  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {
+    const std::size_t j = I(i);
+    sfmynn::SfMynnColumnIn in;
+    in.dz1 = v.dz_p(i, 1);  // MP:127-140 (kts = 1)
+    in.u1 = v.u_p(i, 1);
+    in.v1 = v.v_p(i, 1);
+    in.qv1 = v.qv_p(i, 1);
+    in.p1 = v.pres_hyd_p(i, 1);
+    in.t1 = v.t_p(i, 1);
+    in.rho1 = v.rho_p(i, 1);
+    in.dz2 = v.dz_p(i, 2);
+    in.u2 = v.u_p(i, 2);
+    in.v2 = v.v_p(i, 2);
+    in.mavail = p.mavail[j];  // MS:252-261
+    in.pblh = pblh_p[j];
+    in.xland = p.xland[j];
+    in.tsk = p.tsk[j];
+    in.psfcpa = psfc_p[j];
+    in.snowh = snowh_p[j];
+    in.dx = dx_p[j];
+    sfmynn::SfMynnColumnInOut o;
+    o.ust = p.ust[j];  // MS:240-245
+    o.mol = p.mol[j];
+    o.qsfc = p.qsfc[j];
+    o.regime = p.regime[j];  // MS:264-285
+    o.hfx = p.hfx[j];
+    o.qfx = p.qfx[j];
+    o.lh = p.lh[j];
+    o.rmol = p.rmol[j];
+    o.qgh = p.qgh[j];
+    o.znt = p.znt[j];
+    o.zol = p.zol[j];
+    o.cpm = p.cpm[j];
+    o.chs2 = p.chs2[j];
+    o.cqs2 = p.cqs2[j];
+    o.chs = p.chs[j];
+    o.ch = chp[j];
+    o.flhc = p.flhc[j];
+    o.flqc = p.flqc[j];
+    o.gz1oz0 = p.gz1oz0[j];
+    o.wspd = p.wspd[j];
+    o.br = p.br[j];
+    o.psim = p.psim[j];
+    o.psih = p.psih[j];
+    o.u10 = o.v10 = o.th2 = o.t2 = o.q2 = 0.;  // MS:288-295
+    o.ck = o.cka = o.cd = o.cda = 0.;      // MS:298-305
+    o.ustm = p.ustm[j];                     // MS:306-310
+    sfmynn::sf_mynn_column(in, o, c, itimestep, i - its, n, *tables);
+    p.regime[j] = o.regime;  // MS:335-359
+    p.hfx[j] = o.hfx;
+    p.qfx[j] = o.qfx;
+    p.lh[j] = o.lh;
+    p.mol[j] = o.mol;
+    p.rmol[j] = o.rmol;
+    p.qgh[j] = o.qgh;
+    p.qsfc[j] = o.qsfc;
+    p.znt[j] = o.znt;
+    p.zol[j] = o.zol;
+    p.ust[j] = o.ust;
+    p.cpm[j] = o.cpm;
+    p.chs2[j] = o.chs2;
+    p.cqs2[j] = o.cqs2;
+    p.chs[j] = o.chs;
+    chp[j] = o.ch;
+    p.flhc[j] = o.flhc;
+    p.flqc[j] = o.flqc;
+    p.gz1oz0[j] = o.gz1oz0;
+    p.wspd[j] = o.wspd;
+    p.br[j] = o.br;
+    p.psim[j] = o.psim;
+    p.psih[j] = o.psih;
+    p.u10[j] = o.u10;  // MS:362-370
+    p.v10[j] = o.v10;
+    p.th2m[j] = o.th2;
+    p.t2m[j] = o.t2;
+    p.q2[j] = o.q2;
+    p.ck[j] = o.ck;  // MS:373-385
+    p.cka[j] = o.cka;
+    p.cd[j] = o.cd;
+    p.cda[j] = o.cda;
+    p.ustm[j] = o.ustm;
+  });
+}
+
 }  // namespace
 
 void init_sfclayer(const std::string& sfclayer_scheme, sfclayrev::SFClayRevTables<real>& tables) {
   if (sfclayer_scheme == "sf_monin_obukhov_rev") {  // SL:826-827
     sfclayrev::init_sfclayrev_tables_o3(tables);
+    return;
+  }
+  if (sfclayer_scheme == "sf_mynn") {  // SL:829-830: sf_mynn_init -> psi_init(psi_opt = 0)
+    sfmynn::init_sfmynn_tables(tables);
     return;
   }
   if (sfclayer_scheme == "off") return;
@@ -150,8 +255,8 @@ void init_sfclayer(const std::string& sfclayer_scheme, sfclayrev::SFClayRevTable
 void driver_sfclayer(int itimestep, const sfclayrev::SFClayRevTables<real>& tables, SfclayerPools& mp,
                      const PhysicsVars& vp, int its, int ite, SfclayerSeaArrays* sea_out) {
   using namespace physics_constants;
-  (void)itimestep;  // initflag (SL:885-886) is used by sf_mynn only
-  if (mp.sfclayer_scheme != "sf_monin_obukhov_rev")
+  const bool rev = mp.sfclayer_scheme == "sf_monin_obukhov_rev", mynn = mp.sfclayer_scheme == "sf_mynn";
+  if (!rev && !mynn)
     throw Error("driver_sfclayer: config_sfclayer_scheme = '" + mp.sfclayer_scheme + "' has no verified port");
   if (its != 1) throw Error("driver_sfclayer: its /= 1");
   if (vp.ime < ite) throw Error("driver_sfclayer: MPAS_to_physics has not filled its..ite");
@@ -163,7 +268,19 @@ void driver_sfclayer(int itimestep, const sfclayrev::SFClayRevTables<real>& tabl
   SfcSet ps, seas;
   ps.allocate(n);
   if (seaice) seas.allocate(n);
-  WorkArray dx_a(n), hpbl_a(n), sst_a, xice_a, regime_hold_a, waterdepth_a(n), lakedepth_a(n), lakemask_a(n);
+  WorkArray dx_a(n), hpbl_a(n), sst_a, xice_a, regime_hold_a, waterdepth_a, lakedepth_a, lakemask_a;
+  WorkArray snowh_a, ch_a, qcg_a, ch_sea_a;  // SL:215-221 (sf_mynn)
+  if (rev) {  // SL:206-209
+    waterdepth_a.assign(n, 0);
+    lakedepth_a.assign(n, 0);
+    lakemask_a.assign(n, 0);
+  }
+  if (mynn) {
+    snowh_a.assign(n, 0);
+    ch_a.assign(n, 0);
+    qcg_a.assign(n, 0);
+    if (seaice) ch_sea_a.assign(n, 0);
+  }
   if (seaice) {
     sst_a.assign(n, 0);
     xice_a.assign(n, 0);
@@ -173,6 +290,7 @@ void driver_sfclayer(int itimestep, const sfclayrev::SFClayRevTables<real>& tabl
   real *dx_p = dx_a.data(), *hpbl_p = hpbl_a.data(), *sst_p = sst_a.data(), *xice_p = xice_a.data(),
        *regime_hold = regime_hold_a.data(), *waterdepth_p = waterdepth_a.data(), *lakedepth_p = lakedepth_a.data(),
        *lakemask_p = lakemask_a.data();
+  real *snowh_p = snowh_a.data(), *ch_p = ch_a.data(), *qcg_p = qcg_a.data(), *ch_sea = ch_sea_a.data();
 
   // sfclayer_from_MPAS (SL:352-592)
   parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // SL:422-470
@@ -266,44 +384,63 @@ void driver_sfclayer(int itimestep, const sfclayrev::SFClayRevTables<real>& tabl
         sea.tsk[I(i)] = p.tsk[I(i)];
       }
     });
-  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // SL:541-550 (sf_monin_obukhov_rev)
-    p.fh[I(i)] = m.fh(i);
-    p.fm[I(i)] = m.fm(i);
-    if (seaice) {
-      sea.fh[I(i)] = m.fh(i);
-      sea.fm[I(i)] = m.fm(i);
-    }
-  });
-  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // SL:556-562
-    waterdepth_p[I(i)] = 0.;
-    lakedepth_p[I(i)] = 0.;
-    lakemask_p[I(i)] = 0.;
-  });
-
-  // SL:883: dx = sqrt(maxval(areaCell)) is not an argument of sfclayrev; SL:885-886 initflag is sf_mynn's
-
-  // SL:951-1013: sfclayrev; the inputs of level kts (SR:156-165, SP:89-96)
-  WorkArray u1d_a(n), v1d_a(n), t1d_a(n), qv1d_a(n), p1d_a(n), dz1d_a(n), psfc_a(n);
-  {
-    real *u1d = u1d_a.data(), *v1d = v1d_a.data(), *t1d = t1d_a.data(), *qv1d = qv1d_a.data(), *p1d = p1d_a.data(),
-         *dz1d = dz1d_a.data(), *psfc = psfc_a.data();
-    parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {
-      u1d[I(i)] = v.u_p(i, 1);
-      v1d[I(i)] = v.v_p(i, 1);
-      t1d[I(i)] = v.t_p(i, 1);
-      qv1d[I(i)] = v.qv_p(i, 1);
-      p1d[I(i)] = v.pres_hyd_p(i, 1);
-      dz1d[I(i)] = v.dz_p(i, 1);
-      psfc[I(i)] = v.psfc_p(i);
+  if (rev) {
+    parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // SL:541-550 (sf_monin_obukhov_rev)
+      p.fh[I(i)] = m.fh(i);
+      p.fm[I(i)] = m.fm(i);
+      if (seaice) {
+        sea.fh[I(i)] = m.fh(i);
+        sea.fm[I(i)] = m.fm(i);
+      }
+    });
+    parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // SL:556-562
+      waterdepth_p[I(i)] = 0.;
+      lakedepth_p[I(i)] = 0.;
+      lakemask_p[I(i)] = 0.;
     });
   }
-  KernelCopy<sfclayrev::SFClayRevTables<real>> tables_k;
-  const sfclayrev::SFClayRevTables<real>* tk = kernel_ptr(tables, tables_k);
-  sfclayrev_call(tk, ps, u1d_a, v1d_a, t1d_a, qv1d_a, p1d_a, dz1d_a, psfc_a, dx_a, hpbl_a, lakemask_a, waterdepth_a,
-                 its, ite);
-  if (seaice)
-    sfclayrev_call(tk, seas, u1d_a, v1d_a, t1d_a, qv1d_a, p1d_a, dz1d_a, psfc_a, dx_a, hpbl_a, lakemask_a,
-                   waterdepth_a, its, ite);
+  if (mynn)
+    parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // SL:568-587 (sf_mynn)
+      snowh_p[I(i)] = m.snowh(i);
+      qcg_p[I(i)] = m.qcg(i);
+      ch_p[I(i)] = m.ch(i);
+      if (seaice) ch_sea[I(i)] = m.ch(i);
+    });
+
+  // SL:883: dx = sqrt(maxval(areaCell)) is an argument of neither scheme (both take dx_p)
+  int initflag = 1;  // SL:885-886
+  if (m.config_do_restart || itimestep > 1) initflag = 0;
+
+  if (mynn) {  // SL:1014-1077: sfclay_mynn on the *_p set, then on the *_sea set (snowh_p, qcg_p, hpbl_p shared)
+    KernelCopy<sfmynn::PsiTables> tables_k;
+    const sfmynn::PsiTables* tk = kernel_ptr(tables, tables_k);
+    sfclay_mynn_call(tk, ps, ch_a, v, snowh_a, vp.psfc_p.a, dx_a, hpbl_a, initflag, its, ite);
+    if (seaice) sfclay_mynn_call(tk, seas, ch_sea_a, v, snowh_a, vp.psfc_p.a, dx_a, hpbl_a, initflag, its, ite);
+  }
+
+  if (rev) {  // SL:951-1013: sfclayrev; the inputs of level kts (SR:156-165, SP:89-96)
+    WorkArray u1d_a(n), v1d_a(n), t1d_a(n), qv1d_a(n), p1d_a(n), dz1d_a(n), psfc_a(n);
+    {
+      real *u1d = u1d_a.data(), *v1d = v1d_a.data(), *t1d = t1d_a.data(), *qv1d = qv1d_a.data(), *p1d = p1d_a.data(),
+           *dz1d = dz1d_a.data(), *psfc = psfc_a.data();
+      parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {
+        u1d[I(i)] = v.u_p(i, 1);
+        v1d[I(i)] = v.v_p(i, 1);
+        t1d[I(i)] = v.t_p(i, 1);
+        qv1d[I(i)] = v.qv_p(i, 1);
+        p1d[I(i)] = v.pres_hyd_p(i, 1);
+        dz1d[I(i)] = v.dz_p(i, 1);
+        psfc[I(i)] = v.psfc_p(i);
+      });
+    }
+    KernelCopy<sfclayrev::SFClayRevTables<real>> tables_k;
+    const sfclayrev::SFClayRevTables<real>* tk = kernel_ptr(tables, tables_k);
+    sfclayrev_call(tk, ps, u1d_a, v1d_a, t1d_a, qv1d_a, p1d_a, dz1d_a, psfc_a, dx_a, hpbl_a, lakemask_a, waterdepth_a,
+                   its, ite);
+    if (seaice)
+      sfclayrev_call(tk, seas, u1d_a, v1d_a, t1d_a, qv1d_a, p1d_a, dz1d_a, psfc_a, dx_a, hpbl_a, lakemask_a,
+                     waterdepth_a, its, ite);
+  }
 
   // sfclayer_to_MPAS (SL:595-796)
   parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // SL:675-714
@@ -369,18 +506,28 @@ void driver_sfclayer(int itimestep, const sfclayrev::SFClayRevTables<real>& tabl
         m.ustm(i) = mix(p.ustm, sea.ustm);
       }
     });
-  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // SL:755-760
-    m.fh(i) = p.fh[I(i)];
-    m.fm(i) = p.fm[I(i)];
-  });
-  if (seaice)  // SL:761-772
-    parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {
-      const real x = m.xice(i);
-      if (x >= m.xice_threshold && x <= 1.) {
-        m.fh(i) = p.fh[I(i)] * x + (1. - x) * sea.fh[I(i)];
-        m.fm(i) = p.fm[I(i)] * x + (1. - x) * sea.fm[I(i)];
-      }
+  if (rev) {
+    parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // SL:755-760
+      m.fh(i) = p.fh[I(i)];
+      m.fm(i) = p.fm[I(i)];
     });
+    if (seaice)  // SL:761-772
+      parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {
+        const real x = m.xice(i);
+        if (x >= m.xice_threshold && x <= 1.) {
+          m.fh(i) = p.fh[I(i)] * x + (1. - x) * sea.fh[I(i)];
+          m.fm(i) = p.fm[I(i)] * x + (1. - x) * sea.fm[I(i)];
+        }
+      });
+  }
+  if (mynn) {
+    parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) { m.ch(i) = ch_p[I(i)]; });  // SL:776-780
+    if (seaice)  // SL:781-790
+      parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {
+        const real x = m.xice(i);
+        if (x >= m.xice_threshold && x <= 1.) m.ch(i) = ch_p[I(i)] * x + (1. - x) * ch_sea[I(i)];
+      });
+  }
   if (seaice && sea_out) {  // the module arrays the sea-ice driver reads next
     sea_out->chs = seas.chs;
     sea_out->chs2 = seas.chs2;

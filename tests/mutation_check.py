@@ -1602,6 +1602,67 @@ MUTATIONS += [
     ("src/physics/cu_gf.hpp", "    if (kstop > kte) kernel_fail", "    if (kstop > kte + 2) kernel_fail", ["gf_column"]),
 ]
 
+# MYNN surface layer (sf_mynn) and its MPAS driver, column check (tests/sfmynn_column): the -O3 lanes of sf_mynn_run's
+# first loop (all pairs, the odd tail), charnock_1955, fairall_etal_2003 (restar <= 2), zilitinkevich_1995's czil,
+# andreas_2002 (the ren2 cap, the transitional regime), li_etal_2010's z0/zt cap, zolrib's convergence test, the table
+# ends of the lookups (stable: MPAS's <= 1000 against WRF 4.8's < 1000; unstable), wstar's 4000 m cap, the sub-grid
+# wind, the br limits of the first and later steps, the 10 m wind from the second level, the 2 m theta fallback, the
+# q2 cap, ch, the ust floor over land, sf_mynn_pre_run's first-step ust and qsfc, initflag with config_do_restart, the
+# ice saturation, qgh, the vector psi tables of sf_mynn_init, the viscosity, the regime 1 / 2 threshold, the unstable
+# psih cap (survives, shown once) and the unstable psih's z_t term, ustm over water, wmin, the snow threshold, the
+# second level of dz8w, and the sea-ice call / blend of ch. Indices 706-741.
+SFM, SLC = "src/physics/sf_mynn.hpp", "src/physics/mpas_atmphys_sfclayer.cpp"
+SFT = ["sfmynn_column"]
+MUTATIONS += [
+    (SFM, "const real thgb = tsk * sfclayrev::vm::pow(real(100.) / psfc, rovcp, ii, n);",
+     "const real thgb = tsk * libm::pow(real(100.) / psfc, rovcp);", SFT),
+    (SFM, "const real thcon = sfclayrev::vm::pow(real(100.) / pl, rovcp, ii, n);",
+     "const real thcon = sfclayrev::vm::pow(real(100.) / pl, rovcp, ii, n + 1);", SFT),
+    (SFM, "const real czc = czo2 + real(0.007) * c_min(", "const real czc = czo2 + real(0.0075) * c_min(", SFT),
+    (SFM, "  if (ren <= real(2.)) {\n    zt = real(5.5e-5) * libm::pow(ren, real(-0.60));",
+     "  if (ren <= real(2.)) {\n    zt = real(5.5e-5) * libm::pow(ren, real(-0.61));", SFT),
+    (SFM, "  const real czil = 0.085;  // :1054", "  const real czil = 0.075;  // :1054", SFT),
+    (SFM, "  if (ren2 > real(1000.)) ren2 = real(1000.);", "  if (ren2 > real(900.)) ren2 = real(900.);", SFT),
+    (SFM, "bt1_s = 0.0, bt1_t = -0.55, bt1_r = -0.565,", "bt1_s = 0.0, bt1_t = -0.56, bt1_r = -0.565,", SFT),
+    (SFM, "  if (z0zt > real(100.0)) z0zt2 = real(100.);", "  if (z0zt > real(90.0)) z0zt2 = real(90.);", SFT),
+    (SFM, "  while (c_abs(zolold - res) > real(0.01) && n < nmax) {", "  while (c_abs(zolold - res) > real(0.001) && n < nmax) {",
+     SFT),
+    (SFM, "  if (nzol + 1 <= 1000) {\n    if (nzol < 0) kernel_fail(\"sf_mynn: psim_stable reads",
+     "  if (nzol + 1 < 1000) {\n    if (nzol < 0) kernel_fail(\"sf_mynn: psim_stable reads", SFT),
+    (SFM, "  if (nzol + 1 <= 1000) {\n    if (nzol < 0) kernel_fail(\"sf_mynn: psim_unstable reads",
+     "  if (nzol + 1 <= 900) {\n    if (nzol < 0) kernel_fail(\"sf_mynn: psim_unstable reads", SFT),
+    (SFM, "c_min(real(1.5) * pblh, real(4000.))", "c_min(real(1.5) * pblh, real(3000.))", SFT),
+    (SFM, "const real vsgd = real(0.32) * libm::pow(", "const real vsgd = real(0.33) * libm::pow(", SFT),
+    (SFM, "    o.br = c_max(o.br, real(-2.0));", "    o.br = c_max(o.br, real(-2.5));", SFT),
+    (SFM, "    o.br = c_max(o.br, real(-4.0));", "    o.br = c_max(o.br, real(-3.5));", SFT),
+    (SFM, "      o.u10 = u1d2;", "      o.u10 = u1d;", SFT),
+    (SFM, "    o.th2 = thgb + real(2.) * (th1d - thgb) / za;", "    o.th2 = thgb + real(2.5) * (th1d - thgb) / za;", SFT),
+    (SFM, "  o.q2 = c_min(o.q2, real(1.05) * qv1d);", "  o.q2 = c_min(o.q2, real(1.04) * qv1d);", SFT),
+    (SFM, "  o.ch = o.flhc / (o.cpm * rho1d);", "  o.ch = o.chs;", SFT),
+    (SFM, "    o.ust = c_max(o.ust, real(0.005));", "    o.ust = c_max(o.ust, real(0.006));", SFT),
+    (SFM, "    o.ust = c_max(real(0.04) * std::sqrt(", "    o.ust = c_max(real(0.05) * std::sqrt(", SFT),
+    (SFM, "    o.qsfc = qv1d / (real(1.) + qv1d);", "    o.qsfc = qv1d;", SFT),
+    (SLC, "  if (m.config_do_restart || itimestep > 1) initflag = 0;", "  if (itimestep > 1) initflag = 0;", SFT),
+    (SFM, "real(4648) * (real(1.) / real(273.15) - real(1.) / tsk)", "real(4650) * (real(1.) / real(273.15) - real(1.) / tsk)",
+     SFT),
+    (SFM, "  o.qgh = ep2 * e1 / (pl - e1);", "  o.qgh = ep2 * e1 / (pl - ep3 * e1);", SFT),
+    (SLC, "    sfmynn::init_sfmynn_tables(tables);", "    sfclayrev::init_sfclayrev_tables(tables);", SFT),
+    (SFM, "(real(1.) + real(6.542e-3) * tc1d", "(real(1.) + real(6.54e-3) * tc1d", SFT),
+    (SFM, "    if (o.br > real(0.2))\n", "    if (o.br > real(0.25))\n", SFT),
+    # SURVIVES (shown once): the unstable psih cap (SM:717) does not bind on these columns (psih reaches 0.85 of
+    # 0.9 gz1ozt at most, with za = 3 m, z0 = 2.5 m and br at its -2 limit); replaced by the zolzt term next to it
+    (SFM, "    o.psih = c_min(o.psih, real(0.9) * gz1ozt);", "    o.psih = c_min(o.psih, real(0.8) * gz1ozt);", SFT),
+    (SFM, "    o.psih = psih_unstable(zolza, tb) - psih_unstable(zolzt, tb);",
+     "    o.psih = psih_unstable(zolza, tb) - psih_unstable(zolz0, tb);", SFT),
+    (SFM, "  o.ustm = real(0.5) * o.ustm + real(0.5) * karman * wspdi / psix;",
+     "  o.ustm = real(0.5) * o.ustm + real(0.5) * karman * o.wspd / psix;", SFT),
+    (SFM, "  o.wspd = c_max(o.wspd, wmin);", "  o.wspd = c_max(o.wspd, real(0.2));", SFT),
+    (SFM, "    if (snowh >= real(0.1))", "    if (snowh >= real(0.08))", SFT),
+    (SLC, "    in.dz2 = v.dz_p(i, 2);", "    in.dz2 = v.dz_p(i, 1);", SFT),
+    (SLC, "    if (seaice) sfclay_mynn_call(tk, seas, ch_sea_a,", "    if (seaice) sfclay_mynn_call(tk, seas, ch_a,", SFT),
+    (SLC, "m.ch(i) = ch_p[I(i)] * x + (1. - x) * ch_sea[I(i)];", "m.ch(i) = ch_p[I(i)] * x + (1. - x) * ch_p[I(i)];", SFT),
+]
+
 MUTATIONS = [(p, o, n, [t for t in ts if t not in EQUIVALENT_ON_SC.get((p, n), [])]) for p, o, n, ts in MUTATIONS]
 
 
