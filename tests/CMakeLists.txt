@@ -523,6 +523,13 @@ target_link_libraries(test_cu_gwdo_column PRIVATE cppmpas)
 add_test(NAME cu_gwdo_column COMMAND ${T}/cu_gwdo_column/run_check.sh ${CPPMPAS_MPAS_SRC} ${CPPMPAS_MMM_PHYSICS}
   ${W}/cu_gwdo_column $<TARGET_FILE:test_cu_gwdo_column>)
 set_tests_properties(cu_gwdo_column PROPERTIES FIXTURES_REQUIRED work_dir)
+# Grell-Freitas (cu_grell_freitas) and its MPAS driver, with MPAS_to_physics and physics_get_tend, against MPAS's own
+# code built with the reference compiler and flags (tests/gf_column/run_check.sh); same requirements as wsm6_column.
+add_executable(test_gf_column gf_column/test_gf_column.cpp)
+target_link_libraries(test_gf_column PRIVATE cppmpas)
+add_test(NAME gf_column COMMAND ${T}/gf_column/run_check.sh ${CPPMPAS_MPAS_SRC} ${CPPMPAS_MMM_PHYSICS}
+  ${W}/gf_column $<TARGET_FILE:test_gf_column>)
+set_tests_properties(gf_column PROPERTIES FIXTURES_REQUIRED work_dir)
 
 # ---------------------------------------------------------------------------------------------------------------
 # The real-data case RG (mpas842-dbl-rg-004: the x1.10242 mesh, 55 levels, dt = 600 s, the mesoscale_reference physics

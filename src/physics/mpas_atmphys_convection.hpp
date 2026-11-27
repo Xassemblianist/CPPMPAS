@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
-// MPAS-Atmosphere's convection driver for New Tiedtke (physics/mpas_atmphys_driver_convection.F, CV), statement by
-// statement, on the arrays of the MPAS pools (Fortran layout, 1-based) and the module arrays of
+// MPAS-Atmosphere's convection driver for New Tiedtke and Grell-Freitas (physics/mpas_atmphys_driver_convection.F,
+// CV), statement by statement, on the arrays of the MPAS pools (Fortran layout, 1-based) and the module arrays of
 // mpas_atmphys_interface.hpp. One rank, one thread: its..ite = 1..nCellsSolve, kts..kte = 1..nVertLevels, jts = jte = 1.
 //
 // driver_convection = CV:405-621 with config_convection_scheme = 'cu_ntiedtke': allocate_convection (CV:103-265),
@@ -9,8 +9,12 @@
 // module_cu_ntiedtke.hpp), convection_to_MPAS (CV:863-988). update_convection_step1 (CV:991-1058) does nothing for
 // cu_ntiedtke; update_convection_step2 (CV:1061-1099) accumulates rainc. physics_driver (mpas_atmphys_driver.F:344-369)
 // calls update_convection_step1, then driver_convection when l_conv, then update_convection_step2.
-// Refused: every other config_convection_scheme ('cu_kain_fritsch', 'cu_tiedtke', 'cu_grell_freitas'), its /= 1,
-// more than 100 levels.
+// With config_convection_scheme = 'cu_grell_freitas': allocate_convection's GF arrays (CV:146-176), convection_from_MPAS
+// (CV:668-679, 683-750), the cu_grell_freitas call (CV:482-514; module_cu_gf.hpp, with dt = dt_dyn and the closures
+// config_gfconv_closure_deep / _shallow) and convection_to_MPAS (CV:899-910, 914-947); update_convection_step1 does
+// nothing for it either. GF reads the PBL's kpbl, hfx, qfx, rthblten, rqvblten (from bl_mynn in convection_permitting),
+// the radiation's gsw, rthratenlw, rthratensw and the dynamics' rthdynten, rqvdynten.
+// Refused: every other config_convection_scheme ('cu_kain_fritsch', 'cu_tiedtke'), its /= 1, more than 100 levels.
 //
 // Reference object code (bin/atmosphere_model, sha256 524a1cf4...): driver_convection (convection_from_MPAS and
 // convection_to_MPAS inlined), update_convection_step1 and update_convection_step2 have no FMA and no ymm register;
@@ -45,6 +49,12 @@ struct ConvectionArrays {
   // tend_physics
   FView<const real> rqvdynten, rqvblten, rthdynten, rthblten, rthratenlw, rthratensw;
   FView<real> rthcuten, rqvcuten, rqccuten, rqicuten, rucuten, rvcuten;
+  // Grell-Freitas only (CV:683-750, 914-947): configs, mesh and diag_physics
+  int config_gfconv_closure_deep = 0, config_gfconv_closure_shallow = 0;
+  FView<const real> areaCell, zgrid, gsw;
+  FView<const int> kpbl;
+  FView<real> cubot, cutop, xmb_total, xmb_shallow, qc_cu, qi_cu;
+  FView<int> k22_shallow, kbcon_shallow, ktop_shallow, ktop_deep;
   // mpas_atmphys_vars
   real dt_dyn = 0;               // mpas_atmphys_vars.F:161 (dt); cudt = dt_cu / 60 (CV:464) is Kain-Fritsch's
   int n_cu = 1;                  // mpas_atmphys_manager.F:701-702: nint(dt_cu / dt_dyn), at least 1
@@ -56,7 +66,7 @@ struct ConvectionPools : ConvectionArrays {
   std::string convection_scheme;
 };
 
-// CV:991-1058 (nothing for cu_ntiedtke; other schemes are refused)
+// CV:991-1058 (nothing for cu_ntiedtke and cu_grell_freitas; other schemes are refused)
 void update_convection_step1(const ConvectionPools& m, int its, int ite);
 // CV:405-621 on cells its..ite (its = 1). v: MPAS_to_physics' arrays.
 void driver_convection(int itimestep, ConvectionPools& m, const PhysicsVars& v, int its, int ite);

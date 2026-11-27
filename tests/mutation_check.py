@@ -1544,6 +1544,29 @@ MUTATIONS += [
      ["thompson_column"]),
 ]
 
+# Grell-Freitas (cu_grell_freitas) and its MPAS driver, column check (tests/gf_column): satvap's ice threshold,
+# kfinalzu, the downdraft levadj, the cubic of pef, mbdt, cup_env_clev's overwrite of gamma_cup read by xaa0, neg_check's
+# moisture limit, the shallow tun_lim, the k22 = kpbl reset, the shallow heating limit, dhdt's pi, hbot's start value,
+# rthraten's sum, the scalar pow of dx_p and the ktop_deep copy
+GFK, CVD = "src/physics/cu_gf.hpp", "src/physics/mpas_atmphys_convection.cpp"
+MUTATIONS += [
+    (GFK, '  if (temp < -20.) {  // ice saturation', '  if (temp < -25.) {  // ice saturation', ["gf_column"]),
+    (GFK, '        kfinalzu = k - 3;\n        break;  // go to 411', '        kfinalzu = k - 2;\n        break;  // go to 411', ["gf_column"]),
+    (GFK, '  const int levadj = 5;  // GF:733-737', '  const int levadj = 4;  // GF:733-737', ["gf_column"]),
+    (GFK, '- .00496 * (vshear * vshear * vshear));', '- .00496 * (vshear * vshear));', ["gf_column"]),
+    (GFK, '  const real mbdt_ens1 = (real(1) - 3.) * dtime * 1.e-3 + dtime * 5.E-03;', '  const real mbdt_ens1 = (real(1) - 3.) * dtime * 1.e-3 + dtime * 4.E-03;', ["gf_column"]),
+    (GFK, '  const real xaa0 = cup_up_aa0(xz, xzu, xdby, gamma_cup, xt_cup, kbcon, ktop, ierr, ktf);\n  if (ierr == 0) {  // nens = 1', '  const real xaa0 = cup_up_aa0(xz, xzu, xdby, gammao_cup, xt_cup, kbcon, ktop, ierr, ktf);\n  if (ierr == 0) {  // nens = 1', ["gf_column"]),
+    (GFK, '          const real qmem2 = (thresh - q[k]) / dt;', '          const real qmem2 = (thresh - q[k]) / (2. * dt);', ["gf_column"]),
+    (GFK, '  const int tun_lim = 7;', '  const int tun_lim = 6;', ["gf_column"]),
+    (GFK, '      k22 = kpbl;', '      k22 = kpbl - 1;', ["gf_column"]),
+    (GFK, '    if (trash > 100.) xmb = xmb * 100. / trash;', '    if (trash > 150.) xmb = xmb * 100. / trash;', ["gf_column"]),
+    (GFK, '    c.dhdt[k] = in.cp * in.rthblten[k] * in.pi[k] + in.xlv * in.rqvblten[k];', '    c.dhdt[k] = in.cp * in.rthblten[k] + in.xlv * in.rqvblten[k];', ["gf_column"]),
+    (GFK, '  out.hbot = real(kte);', '  out.hbot = real(kte - 1);', ["gf_column"]),
+    (CVD, '      rthraten_p(i, k) = m.rthratenlw(k, i) + m.rthratensw(k, i);', '      rthraten_p(i, k) = m.rthratenlw(k, i);', ["gf_column"]),
+    (CVD, '    dx_p(i) = m.config_len_disp / libm::pow(m.meshDensity(i), 0.25);  // scalar pow@plt (header)', '    dx_p(i) = m.config_len_disp / libm::mvec_pow(m.meshDensity(i), 0.25);  // scalar pow@plt (header)', ["gf_column"]),
+    (CVD, '    m.ktop_deep(i) = ktop_deep_p(i);', '    m.ktop_deep(i) = 0;', ["gf_column"]),
+]
+
 MUTATIONS = [(p, o, n, [t for t in ts if t not in EQUIVALENT_ON_SC.get((p, n), [])]) for p, o, n, ts in MUTATIONS]
 
 
