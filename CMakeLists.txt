@@ -80,6 +80,8 @@ add_library(cppmpas STATIC
   src/physics/mpas_atmphys_driver_lsm.cpp
   src/physics/mpas_atmphys_lsm_noahinit.cpp
   src/physics/mpas_atmphys_control.cpp
+  src/physics/mpas_atmphys_landuse.cpp
+  src/physics/mpas_atmphys_driver.cpp
   src/operators/vector_operations.cpp
   src/operators/vector_reconstruct.cpp
   src/io/netcdf_file.cpp

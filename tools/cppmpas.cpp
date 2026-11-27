@@ -7,7 +7,11 @@
 //   cppmpas init      <init> <out> --fields a,b,... [--namelist namelist.atmosphere] [--scalars ...] [--file-id ID]
 //                     [--unverified]
 //   cppmpas run       <init> <outdir> --namelist namelist.atmosphere --steps N [--scalars ...] [--file-id ID]
-//                     [--every K] [--write-at N1,N2,... --write-fields a,b,...]
+//                     [--every K] [--write-at N1,N2,... --write-fields a,b,...] [--tables DIR --rrtmg DIR]
+// With config_physics_suite = 'mesoscale_reference', run reads the input stream's physics fields and runs MPAS's
+// physics (physics/mpas_atmphys_driver.hpp): --tables names the directory with LANDUSE.TBL, VEGPARM.TBL, SOILPARM.TBL,
+// GENPARM.TBL and OZONE_*.TBL (the reference build's tables), --rrtmg the one with rrtmg_lw_tables.bin and
+// rrtmg_sw_tables.bin (the RRTMG tables MPAS's initialisation computes, physics/mpas_atmphys_radiation.hpp).
 // init runs what atm_core_init does to the fields of a cold start (core_atmosphere/atm_init.hpp: len_disp, the
 // compatibility checks, atm_mpas_init_block, xtime) on an init file and writes the
 // given fields as MPAS writes them to a history / restart file (global order, Registry layout).
@@ -37,6 +41,7 @@
 #include "io/mpas_restart.hpp"
 #include "io/mpas_writer.hpp"
 #include "io/registry.hpp"
+#include "physics/mpas_atmphys_driver.hpp"
 
 using namespace cppmpas;
 
@@ -70,7 +75,7 @@ struct Args {
   std::vector<std::string> pos;
   bool init = false, unverified = false;
   std::vector<std::string> scalars{"qv"}, fields;
-  std::string file_id, namelist;
+  std::string file_id, namelist, tables, rrtmg;
   long steps = -1, every = 1;
   std::vector<long> write_at;
   std::vector<std::string> write_fields;
@@ -90,6 +95,8 @@ Args parse(int argc, char** argv) {
     else if (s == "--fields") a.fields = split(next());
     else if (s == "--file-id") a.file_id = next();
     else if (s == "--namelist") a.namelist = next();
+    else if (s == "--tables") a.tables = next();
+    else if (s == "--rrtmg") a.rrtmg = next();
     else if (s == "--steps") {
       a.steps = whole(s, next());
     } else if (s == "--every") {
@@ -267,8 +274,28 @@ int run(int argc, char** argv) {
     MpasInput& in = rst.in;
     const std::string xtime_read = in.state.xtime;
     std::vector<std::string> log;
+    // the physics configuration: physics_namelist_check runs in atm_setup_packages, before the fields are read
+    phys::PhysicsRun pr;
+    pr.cfg = phys::read_physics_config(a.namelist, cfg, log);
+    const bool physics = pr.cfg.config_physics_suite != "none";
+    if (physics) {
+      if (cfg.config_do_restart) throw Error("run: a restart with the physics suite has no verified port");
+      if (a.tables.empty() || a.rrtmg.empty()) throw Error("run: the physics suite needs --tables and --rrtmg");
+      phys::check_physics_supported(pr.cfg);
+      const std::map<std::string, int> dims = {{"nLags", pr.cfg.input_soil_temperature_lag},
+                                               {"nOznLevels", pr.cfg.noznlev},
+                                               {"nAerLevels", pr.cfg.naerlev},
+                                               {"cam_dim1", pr.cfg.camdim1},
+                                               {"nMonths", pr.cfg.months},
+                                               {"nSoilLevels", pr.cfg.num_soil_layers}};
+      read_input_pools(a.pos[0], in, phys::physics_packages(pr.cfg), dims);
+      for (const auto& w : in.warnings) std::cerr << "MPAS warning: " << w << "\n";
+      pr.table_dir = a.tables;
+      pr.rrtmg_lw_tables = a.rrtmg + "/rrtmg_lw_tables.bin";
+      pr.rrtmg_sw_tables = a.rrtmg + "/rrtmg_sw_tables.bin";
+    }
     atm_core_init(in.mesh, in.state, in.diag, cfg, log);
-    for (const auto& l : log) std::cerr << "MPAS log: " << l << "\n";
+    pr.cfg.config_len_disp = cfg.config_len_disp;  // as atm_core_init left it (mpas_atm_core.F:155-201)
     const DycoreConfig dcfg = read_dycore_config(a.namelist, cfg);
     check_dycore_supported(dcfg, in.mesh, in.state);  // before any file is written
     // the input stream, too, is read at the start time (the restart reader checks its own)
@@ -276,8 +303,36 @@ int run(int argc, char** argv) {
     DycoreFields f;
     allocate_dycore_fields(in.mesh, in.state, f);
     if (cfg.config_do_restart) restart_dycore_fields(rst, f);
-    microphysics_init(a.namelist, in.mesh, dcfg.config_dt, f.mp);  // mpas_atm_core.F:565-597 (SC: Kessler)
     const std::string start = in.state.xtime.substr(0, 19);
+    int itimestep = 1;
+    phys::DycorePhysicsArrays pa;
+    if (physics) {
+      phys::physics_compatibility_check(pr.cfg, in.mesh, in.pools);  // mpas_atm_core.F:1597-1603
+      phys::physics_core_init(pr, in.mesh, in.state, in.diag, in.pools, start, log);  // mpas_atm_core.F:565-597
+      pa.rthdynten = &f.rthdynten;
+      pa.tend_ru_physics = &f.tend_ru_physics;
+      pa.tend_rtheta_physics = &f.tend_rtheta_physics;
+      pa.tend_rho_physics = &f.tend_rho_physics;
+      pa.tend_scalars = &f.tend_scalars;
+      pa.rt_diabatic_tend = &f.rt_diabatic_tend;
+      Mesh& mesh = in.mesh;
+      RegistryPools& pools = in.pools;
+      f.phys.get_tend = [&](const State& s, Diag& d, DycoreFields& ff) {
+        phys::physics_get_tend_for_dynamics(pr, mesh, s, d, pools, ff.rho_zz2, pa);
+      };
+      f.phys.dyn_tend_for_convection = [&](const State& s, DycoreFields& ff, real dt) {
+        phys::dynamics_tendencies_for_convection(pr, mesh, s, pools, ff.scalars2, ff.theta_m2, dt,
+                                                 dcfg.config_monotonic, pa);
+      };
+      f.phys.microphysics = [&](State& s, Diag& d, DycoreFields& ff) {
+        phys::microphysics_for_dynamics(pr, mesh, s, d, pools, ff.theta_m2, ff.rho_zz2, ff.scalars2, ff.w2, itimestep,
+                                        pa);
+      };
+    } else {
+      microphysics_init(a.namelist, in.mesh, dcfg.config_dt, f.mp);  // mpas_atm_core.F:565-597 (SC: Kessler)
+    }
+    for (const auto& l : log) std::cerr << "MPAS log: " << l << "\n";
+    log.clear();
     std::vector<std::string> fields = {"xtime", "Time", "u", "w", "rho_zz", "theta_m", "rho", "theta", "pressure_p"};
     for (const auto& sn : in.state.scalar_names) fields.push_back(sn);
     if (a.write_at.empty() != a.write_fields.empty()) throw Error("--write-at and --write-fields go together");
@@ -302,6 +357,15 @@ int run(int argc, char** argv) {
     write_step(0);
     const long long dt_s = static_cast<long long>(dcfg.config_dt);
     for (long n = 1; n <= a.steps; ++n) {
+      itimestep = static_cast<int>(n);  // atm_core_run's itimestep (mpas_atm_core.F:722, 832)
+      if (physics) {  // mpas_atm_core.F:1031-1037 (xtime_s = s + s_n / s_d of now - start)
+        const long long now_s = (n - 1) * dt_s;
+        const std::string now = add_seconds(start, now_s);
+        phys::physics_timetracker(pr, in.mesh, in.pools, now, now_s, dcfg.config_dt, log);
+        phys::physics_driver(pr, in.mesh, in.state, in.diag, in.pools, itimestep, static_cast<real>(now_s), pa);
+        for (const auto& l : log) std::cerr << "MPAS log: " << l << "\n";
+        log.clear();
+      }
       atm_timestep(dcfg, in.mesh, in.state, in.diag, f, dcfg.config_dt, add_seconds(start, n * dt_s));
       shift_time_levels(in.state, f);  // mpas_atm_core.F:823
       write_step(n);

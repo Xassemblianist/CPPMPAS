@@ -45,9 +45,9 @@ inline real vmin(real a, real b) { return b < a ? b : a; }
 constexpr real eps = 1.e-20;  // TI:5175
 constexpr int SCALE_IN = 1, SCALE_OUT = 2;  // TI:5174
 
-// TI:4683-4939, advance_density = .false. (weight_time_new = 1, TI:4749-4757); edges 1..nEdges, cells 1..nCells
+// TI:4683-4939; edges 1..nEdges, cells 1..nCells. advance_density: config_split_dynamics_transport (TI:3049)
 void atm_advance_scalars_work(const DycoreConfig& cfg, const Mesh& m, const State& s, DycoreFields& f, real dt,
-                              FArray<real>& horiz_flux_arr) {
+                              FArray<real>& horiz_flux_arr, int rk_step, bool advance_density) {
   const int nVertLevels = m.nVertLevels;
   const int num_scalars = s.scalars.extent(0);
   const auto &scalar_old = s.scalars, &rho_zz_old = s.rho_zz, &rho_zz_new = f.rho_zz2;
@@ -57,15 +57,35 @@ void atm_advance_scalars_work(const DycoreConfig& cfg, const Mesh& m, const Stat
   const auto &fnm = m.fzm, &fnp = m.fzp, &rdnw = m.rdzw;
   const real coef_3rd_order = cfg.config_coef_3rd_order;
 
-  const real weight_time_new = 1.;                     // :4750
+  real weight_time_new = 1.;  // :4749-4756
+  if (!advance_density) {
+    weight_time_new = 1.;                     // :4750
+  } else {
+    if (rk_step == 1 && cfg.config_time_integration_order == 3) weight_time_new = 1. / 3;
+    if (rk_step == 1 && cfg.config_time_integration_order == 2) weight_time_new = 1. / 2;
+    if (rk_step == 2) weight_time_new = 1. / 2;
+    if (rk_step == 3) weight_time_new = 1.;
+  }
   const real weight_time_old = 1. - weight_time_new;  // :4757
 
   std::vector<real> scalar_weight2(static_cast<std::size_t>(nVertLevels) * 10 + 1);
   auto sw2 = [&](int k, int j) -> real& { return scalar_weight2[static_cast<std::size_t>(j - 1) * nVertLevels + k]; };
   int ica[11];
   for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge) {  // :4762-4844 (no LBCs: the full flux of :4764-4823)
-    if (m.nAdvCellsForEdge(iEdge) != 10)
-      throw Error("atm_advance_scalars: an edge with nAdvCellsForEdge != 10 (TI:4801-4821) is not ported");
+    if (m.nAdvCellsForEdge(iEdge) != 10) {  // :4801-4821 (case default: the edges next to a pentagon)
+      for (int k = 1; k <= nVertLevels; ++k)
+        for (int iScalar = 1; iScalar <= num_scalars; ++iScalar) horiz_flux_arr(iScalar, k, iEdge) = 0.0;
+      for (int j = 1; j <= m.nAdvCellsForEdge(iEdge); ++j) {
+        const int iAdvCell = m.advCellsForEdge(j, iEdge);
+        for (int k = 1; k <= nVertLevels; ++k)
+          for (int iScalar = 1; iScalar <= num_scalars; ++iScalar) {
+            const real scalar_weight = m.adv_coefs(j, iEdge) + sign1(uhAvg(k, iEdge)) * m.adv_coefs_3rd(j, iEdge);
+            horiz_flux_arr(iScalar, k, iEdge) =
+                horiz_flux_arr(iScalar, k, iEdge) + scalar_weight * scalar_new(iScalar, k, iAdvCell);
+          }
+      }
+      continue;
+    }
     for (int j = 1; j <= 10; ++j)  // :4772-4776
       for (int k = 1; k <= nVertLevels; ++k)
         sw2(k, j) = m.adv_coefs(j, iEdge) + sign1(uhAvg(k, iEdge)) * m.adv_coefs_3rd(j, iEdge);
@@ -123,11 +143,12 @@ void atm_advance_scalars_work(const DycoreConfig& cfg, const Mesh& m, const Stat
 
 struct MonoWork {
   FArray<real> scalar_old, scalar_new, s_max, s_min, flux_arr, wdtn, flux_upwind_tmp, flux_tmp, scale_arr;
+  FArray<real> rho_zz_int;  // module array of TI:71, allocated by advance_scalars (TI:3009-3014)
 };
 
-// TI:5106-5783, advance_density = .false.; cells / edges are the whole ranges
+// TI:5106-5783; cells / edges are the whole ranges. advance_density: config_split_dynamics_transport (TI:3059)
 void atm_advance_scalars_mono_work(const DycoreConfig& cfg, const Mesh& m, State& s, DycoreFields& f, real dt,
-                                   MonoWork& w) {
+                                   MonoWork& w, bool advance_density) {
   const int nVertLevels = m.nVertLevels, nCells = m.nCells, nCellsSolve = m.nCellsSolve();
   const int num_scalars = s.scalars.extent(0);
   auto &scalars_old = s.scalars, &scalars_new = f.scalars2, &scalar_tend = f.tend_scalars;
@@ -145,7 +166,23 @@ void atm_advance_scalars_mono_work(const DycoreConfig& cfg, const Mesh& m, State
             scalars_old(iScalar, k, iCell) + dt * scalar_tend(iScalar, k, iCell) / rho_zz_old(k, iCell);
         scalar_tend(iScalar, k, iCell) = 0.0;
       }
-  // :5223 halo exchange 'dynamics:scalars_old': no-op on one rank; :5235-5278 advance_density not taken
+  // :5223 halo exchange 'dynamics:scalars_old': no-op on one rank
+  auto& rho_zz_int = w.rho_zz_int;
+  if (advance_density) {  // :5235-5278
+    for (int iCell = 1; iCell <= nCellsSolve; ++iCell) {
+      for (int k = 1; k <= nVertLevels; ++k) rho_zz_int(k, iCell) = 0.0;
+      for (int i = 1; i <= m.nEdgesOnCell(iCell); ++i) {
+        const int iEdge = m.edgesOnCell(i, iCell);
+        for (int k = 1; k <= nVertLevels; ++k)
+          rho_zz_int(k, iCell) = rho_zz_int(k, iCell) - m.edgesOnCell_sign(i, iCell) * uhAvg(k, iEdge) *
+                                                            m.dvEdge(iEdge) * m.invAreaCell(iCell);
+      }
+    }
+    for (int iCell = 1; iCell <= nCellsSolve; ++iCell)
+      for (int k = 1; k <= nVertLevels; ++k)
+        rho_zz_int(k, iCell) =
+            rho_zz_old(k, iCell) + dt * (rho_zz_int(k, iCell) - rdnw(k) * (wwAvg(k + 1, iCell) - wwAvg(k, iCell)));
+  }
 
   std::vector<real> flux_upwind_arr(nVertLevels + 2);
   int ica[11];
@@ -181,8 +218,14 @@ void atm_advance_scalars_mono_work(const DycoreConfig& cfg, const Mesh& m, State
       wdtn(k, iCell) = wwAvg(k, iCell) * (fnm(k) * scalar_new(k, iCell) + fnp(k) * scalar_new(k - 1, iCell));
       s_max(k, iCell) = vmax(scalar_old(k, iCell), scalar_old(k - 1, iCell));
       s_min(k, iCell) = vmin(scalar_old(k, iCell), scalar_old(k - 1, iCell));
-      if (m.nEdgesOnCell(iCell) != 6)
-        throw Error("atm_advance_scalars_mono: a cell with nEdgesOnCell != 6 (TI:5394-5404) is not ported");
+      if (m.nEdgesOnCell(iCell) != 6) {  // :5394-5404 (case default: the pentagons)
+        for (int i = 1; i <= m.nEdgesOnCell(iCell); ++i)
+          for (k = 1; k <= nVertLevels; ++k) {
+            s_max(k, iCell) = vmax(s_max(k, iCell), scalar_old(k, m.cellsOnCell(i, iCell)));
+            s_min(k, iCell) = vmin(s_min(k, iCell), scalar_old(k, m.cellsOnCell(i, iCell)));
+          }
+        continue;
+      }
       for (k = 1; k <= nVertLevels; ++k) {  // :5374-5392
         real mx = s_max(k, iCell), mn = s_min(k, iCell);
         for (int j = 1; j <= 6; ++j) {
@@ -198,8 +241,18 @@ void atm_advance_scalars_mono_work(const DycoreConfig& cfg, const Mesh& m, State
       const int cell1 = m.cellsOnEdge(1, iEdge);
       const int cell2 = m.cellsOnEdge(2, iEdge);
       if (cell1 <= nCellsSolve || cell2 <= nCellsSolve) {
-        if (m.nAdvCellsForEdge(iEdge) != 10)
-          throw Error("atm_advance_scalars_mono: an edge with nAdvCellsForEdge != 10 (TI:5450-5463) is not ported");
+        if (m.nAdvCellsForEdge(iEdge) != 10) {  // :5450-5463 (case default)
+          for (int k = 1; k <= nVertLevels; ++k) flux_arr(k, iEdge) = 0.0;
+          for (int i = 1; i <= m.nAdvCellsForEdge(iEdge); ++i) {
+            const int iCell = m.advCellsForEdge(i, iEdge);
+            for (int k = 1; k <= nVertLevels; ++k) {
+              const real scalar_weight =
+                  uhAvg(k, iEdge) * (m.adv_coefs(i, iEdge) + sign1(uhAvg(k, iEdge)) * m.adv_coefs_3rd(i, iEdge));
+              flux_arr(k, iEdge) = flux_arr(k, iEdge) + scalar_weight * scalar_new(k, iCell);
+            }
+          }
+          continue;
+        }
         for (int jj = 1; jj <= 10; ++jj) {  // :5429-5433
           ica[jj] = m.advCellsForEdge(jj, iEdge);
           swa[jj][1] = m.adv_coefs(jj, iEdge) + m.adv_coefs_3rd(jj, iEdge);
@@ -265,12 +318,14 @@ void atm_advance_scalars_mono_work(const DycoreConfig& cfg, const Mesh& m, State
         }
       }
 
-    for (int iCell = 1; iCell <= nCellsSolve; ++iCell)  // :5600-5615 (advance_density = .false.)
+    // :5585-5615: rho_zz_int with advance_density, else rho_zz_new
+    const FArray<real>& rho_lim = advance_density ? rho_zz_int : rho_zz_new;
+    for (int iCell = 1; iCell <= nCellsSolve; ++iCell)
       for (int k = 1; k <= nVertLevels; ++k) {
-        real scale_factor = (s_max(k, iCell) * rho_zz_new(k, iCell) - scalar_new(k, iCell)) /
+        real scale_factor = (s_max(k, iCell) * rho_lim(k, iCell) - scalar_new(k, iCell)) /
                             (scale_arr(k, SCALE_IN, iCell) + eps);
         scale_arr(k, SCALE_IN, iCell) = fmin1(fmax0(scale_factor));
-        scale_factor = (s_min(k, iCell) * rho_zz_new(k, iCell) - scalar_new(k, iCell)) /
+        scale_factor = (s_min(k, iCell) * rho_lim(k, iCell) - scalar_new(k, iCell)) /
                        (scale_arr(k, SCALE_OUT, iCell) - eps);
         scale_arr(k, SCALE_OUT, iCell) = fmin1(fmax0(scale_factor));
       }
@@ -315,9 +370,9 @@ void atm_advance_scalars_mono_work(const DycoreConfig& cfg, const Mesh& m, State
         for (int k = 1; k <= nVertLevels; ++k)
           scalar_new(k, iCell) = scalar_new(k, iCell) - m.edgesOnCell_sign(i, iCell) * flux_arr(k, iEdge) * m.invAreaCell(iCell);
       }
-      for (int k = 1; k <= nVertLevels; ++k)  // :5731-5735
+      for (int k = 1; k <= nVertLevels; ++k)  // :5725-5735 (rho_zz_int with advance_density)
         scalar_new(k, iCell) =
-            (scalar_new(k, iCell) + (-(rdnw(k) * (wdtn(k + 1, iCell) - wdtn(k, iCell))))) / rho_zz_new(k, iCell);
+            (scalar_new(k, iCell) + (-(rdnw(k) * (wdtn(k + 1, iCell) - wdtn(k, iCell))))) / rho_lim(k, iCell);
     }
 
     for (int iCell = 1; iCell <= nCells; ++iCell)  // :5770-5777 (bdyMaskCell = 0 <= nSpecZone)
@@ -331,12 +386,7 @@ void check_advance_scalars_supported(const DycoreConfig& cfg, const Mesh& m) {
   auto no = [](const std::string& what) { throw Error("advance_scalars: " + what + " has no verified port"); };
   if (!cfg.config_monotonic) no("config_monotonic = false (the non-monotonic rk_step 3, TI:3044)");
   if (cfg.config_positive_definite) no("config_positive_definite = true");
-  if (cfg.config_split_dynamics_transport) no("config_split_dynamics_transport = true (advance_density)");
   if (cfg.config_apply_lbcs) no("config_apply_lbcs = true");
-  for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge)
-    if (m.nAdvCellsForEdge(iEdge) != 10) no("an edge with nAdvCellsForEdge != 10 (TI:4801, 5450)");
-  for (int iCell = 1; iCell <= m.nCells; ++iCell)
-    if (m.nEdgesOnCell(iCell) != 6) no("a cell with nEdgesOnCell != 6 (TI:5394)");
   if (m.nVertLevels < 4) no("nVertLevels < 4");
 }
 
@@ -348,7 +398,8 @@ void advance_scalars(const DycoreConfig& cfg, const Mesh& m, State& s, DycoreFie
   const int num_scalars = s.scalars.extent(0);
   if (rk_step < 3) {  // :3021-3029, 3044-3049
     FArray<real> horiz_flux_array({num_scalars, nVertLevels, nEdges + 1}, 0.0);
-    atm_advance_scalars_work(cfg, m, s, f, rk_timestep[rk_step], horiz_flux_array);
+    atm_advance_scalars_work(cfg, m, s, f, rk_timestep[rk_step], horiz_flux_array, rk_step,
+                             cfg.config_split_dynamics_transport);
   } else {  // :2993-3005, 3031-3039, 3050-3059 (the scratch arrays' garbage elements zeroed)
     MonoWork w;
     w.scalar_old.allocate({nVertLevels, nCells + 1}, 0.0);
@@ -360,7 +411,11 @@ void advance_scalars(const DycoreConfig& cfg, const Mesh& m, State& s, DycoreFie
     w.flux_upwind_tmp.allocate({nVertLevels, nEdges + 1}, 0.0);
     w.flux_tmp.allocate({nVertLevels, nEdges + 1}, 0.0);
     w.scale_arr.allocate({nVertLevels, 2, nCells + 1}, 0.0);  // halo_scratch 'scale' (mpas_allocate_scratch_field)
-    atm_advance_scalars_mono_work(cfg, m, s, f, rk_timestep[rk_step], w);
+    if (cfg.config_split_dynamics_transport)
+      w.rho_zz_int.allocate({nVertLevels, nCells + 1}, 0.0);  // TI:3010-3011 (garbage column zeroed)
+    else
+      w.rho_zz_int.allocate({1, 1}, 0.0);
+    atm_advance_scalars_mono_work(cfg, m, s, f, rk_timestep[rk_step], w, cfg.config_split_dynamics_transport);
   }
 }
 

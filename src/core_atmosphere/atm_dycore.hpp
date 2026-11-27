@@ -16,6 +16,7 @@
 // transport of qv, qc, qr (atm_advance_scalars.hpp), vertical mixing of the perturbation from the initial state
 // (config_mix_full = .false., atm_dissipation_perturbation.cpp) and Kessler microphysics at the end of the step
 // (atm_microphysics.hpp). Every other configuration is refused by check_dycore_supported.
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -88,6 +89,14 @@ struct DycoreFields {
   SolveDiagWork sdw;
   int moist_start = 1, moist_end = 1, index_qv = 1;
   MicrophysicsFields mp;  // the Kessler path (atm_microphysics.hpp); inactive unless microphysics_init set it
+  // The physics suite's coupling (physics/mpas_atmphys_driver.hpp), set by the caller with a physics suite:
+  // TI:2141-2151 physics_get_tend, TI:2758-2788 the dynamics tendencies of the convection, TI:2806-2817
+  // driver_microphysics. Unset: the suite 'none' (zero physics tendencies, the Kessler path of mp above).
+  struct PhysicsHooks {
+    std::function<void(const State&, Diag&, DycoreFields&)> get_tend;
+    std::function<void(const State&, DycoreFields&, real)> dyn_tend_for_convection;
+    std::function<void(State&, Diag&, DycoreFields&)> microphysics;
+  } phys;
 };
 void allocate_dycore_fields(const Mesh& mesh, const State& state, DycoreFields& f);
 

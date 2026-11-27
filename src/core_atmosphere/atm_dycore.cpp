@@ -118,7 +118,8 @@ void check_dycore_supported(const DycoreConfig& c, const Mesh& m, const State& s
   if (c.config_time_integration != "SRK3") no("config_time_integration = '" + c.config_time_integration + "'");  // TI:1828
   if (c.config_time_integration_order != 2)  // TI:2066, 2210 (order 3 not verified)
     no("config_time_integration_order = " + std::to_string(c.config_time_integration_order));
-  if (c.config_split_dynamics_transport) no("config_split_dynamics_transport = true");  // TI:2054, 2674
+  // split dynamics-transport (TI:2054-2061, 2674-2700): RG's dynamics_split_steps = 3
+  if (c.config_split_dynamics_transport && c.config_dynamics_split_steps < 1) no("config_dynamics_split_steps < 1");
   if (c.config_scalar_advection) check_advance_scalars_supported(c, m);  // TI:2504-2507 (SC)
   if (c.config_positive_definite) no("config_positive_definite = true");
   if (c.config_horiz_mixing != "2d_fixed" && c.config_horiz_mixing != "2d_smagorinsky")  // TI:6346, 6354
@@ -140,20 +141,30 @@ void check_dycore_supported(const DycoreConfig& c, const Mesh& m, const State& s
   if (!(c.config_v_theta_eddy_visc2 >= 0.0)) no("config_v_theta_eddy_visc2 < 0");
   if (c.config_apply_lbcs) no("config_apply_lbcs = true");
   if (c.config_IAU_option != "off") no("config_IAU_option = '" + c.config_IAU_option + "' (TI:2168)");
-  if (c.config_physics_suite != "none") no("config_physics_suite = '" + c.config_physics_suite + "'");
-  // mpas_atmphys_control.F:157-165: with the suite 'none', 'suite' is 'off'
+  // the physics suite: 'none' (the schemes the dycore runs itself: Kessler) or 'mesoscale_reference' with every
+  // scheme 'suite' (physics/mpas_atmphys_control.hpp check_physics_supported; atm_srk3 needs the physics hooks)
   const auto off = [](const std::string& x) { return x == "suite" || x == "off"; };
-  const bool kessler = c.config_microp_scheme == "mp_kessler";  // TI:2806 (SC, atm_microphysics.cpp)
-  if (!off(c.config_microp_scheme) && !kessler) no("config_microp_scheme = '" + c.config_microp_scheme + "' (TI:2806)");
-  if (!off(c.config_convection_scheme)) no("config_convection_scheme = '" + c.config_convection_scheme + "'");
-  if (!off(c.config_pbl_scheme)) no("config_pbl_scheme = '" + c.config_pbl_scheme + "'");
-  if (!off(c.config_radt_lw_scheme) || !off(c.config_radt_sw_scheme) || !off(c.config_radt_cld_scheme))
-    no("radiation schemes");
-  // a land-surface or surface-layer scheme makes moist_physics true (mpas_atmphys_control.F:310-318) and runs the
-  // physics driver (mpas_atm_core.F:1034-1037); gwdo and oml1d run in it
-  if (!off(c.config_lsm_scheme)) no("config_lsm_scheme = '" + c.config_lsm_scheme + "'");
-  if (!off(c.config_sfclayer_scheme)) no("config_sfclayer_scheme = '" + c.config_sfclayer_scheme + "'");
-  if (!off(c.config_gwdo_scheme)) no("config_gwdo_scheme = '" + c.config_gwdo_scheme + "'");
+  const bool suite = c.config_physics_suite == "mesoscale_reference";
+  if (c.config_physics_suite != "none" && !suite) no("config_physics_suite = '" + c.config_physics_suite + "'");
+  const bool kessler = !suite && c.config_microp_scheme == "mp_kessler";  // TI:2806 (SC, atm_microphysics.cpp)
+  if (suite) {
+    for (const std::string* x : {&c.config_microp_scheme, &c.config_convection_scheme, &c.config_pbl_scheme,
+                                 &c.config_radt_lw_scheme, &c.config_radt_sw_scheme, &c.config_radt_cld_scheme,
+                                 &c.config_lsm_scheme, &c.config_sfclayer_scheme, &c.config_gwdo_scheme})
+      if (*x != "suite") no("a scheme other than 'suite' with config_physics_suite = 'mesoscale_reference'");
+  } else {
+    // mpas_atmphys_control.F:180-190: with the suite 'none', 'suite' is 'off'
+    if (!off(c.config_microp_scheme) && !kessler) no("config_microp_scheme = '" + c.config_microp_scheme + "' (TI:2806)");
+    if (!off(c.config_convection_scheme)) no("config_convection_scheme = '" + c.config_convection_scheme + "'");
+    if (!off(c.config_pbl_scheme)) no("config_pbl_scheme = '" + c.config_pbl_scheme + "'");
+    if (!off(c.config_radt_lw_scheme) || !off(c.config_radt_sw_scheme) || !off(c.config_radt_cld_scheme))
+      no("radiation schemes");
+    // a land-surface or surface-layer scheme makes moist_physics true (mpas_atmphys_control.F:310-318) and runs the
+    // physics driver (mpas_atm_core.F:1034-1037); gwdo and oml1d run in it
+    if (!off(c.config_lsm_scheme)) no("config_lsm_scheme = '" + c.config_lsm_scheme + "'");
+    if (!off(c.config_sfclayer_scheme)) no("config_sfclayer_scheme = '" + c.config_sfclayer_scheme + "'");
+    if (!off(c.config_gwdo_scheme)) no("config_gwdo_scheme = '" + c.config_gwdo_scheme + "'");
+  }
   if (c.config_oml1d) no("config_oml1d = true");
   // add_seconds is the gregorian clock (Registry.xml:79-82)
   if (c.config_calendar_type != "gregorian") no("config_calendar_type = '" + c.config_calendar_type + "'");
@@ -161,12 +172,16 @@ void check_dycore_supported(const DycoreConfig& c, const Mesh& m, const State& s
   if (!(c.config_dt > 0.0) || c.config_dt != std::floor(c.config_dt) || c.config_dt > 86400.0)
     no("config_dt that is not a whole number of seconds in 1..86400");
   if (c.config_number_of_sub_steps < 2) no("config_number_of_sub_steps < 2");
-  const std::vector<std::string> want = kessler ? std::vector<std::string>{"qv", "qc", "qr"} : std::vector<std::string>{"qv"};
-  if (s.scalar_names != want) no(kessler ? "scalars other than qv, qc, qr with Kessler" : "scalars other than qv alone");
+  const std::vector<std::string> want = suite     ? std::vector<std::string>{"qv", "qc", "qr", "qi", "qs", "qg"}
+                                        : kessler ? std::vector<std::string>{"qv", "qc", "qr"}
+                                                  : std::vector<std::string>{"qv"};
+  if (s.scalar_names != want)
+    no(suite ? "scalars other than qv, qc, qr, qi, qs, qg with mesoscale_reference"
+             : kessler ? "scalars other than qv, qc, qr with Kessler" : "scalars other than qv alone");
   if (s.scalar_names.size() > 1 && !c.config_scalar_advection) no("moist scalars without scalar advection");
-  // odd nVertLevels: the last level of the rk_step-3 Exner pow is scalar pow@plt (TI:4439), never exercised
-  if (m.nVertLevels < 4 || m.nVertLevels % 2 != 0) no("nVertLevels = " + std::to_string(m.nVertLevels) +
-                                                      " (only an even nVertLevels >= 4 is verified)");
+  // an odd nVertLevels (RG: 55) takes the scalar pow@plt of the last level of the rk_step-3 Exner pow (TI:4439):
+  // verified by RG only
+  if (m.nVertLevels < 4) no("nVertLevels = " + std::to_string(m.nVertLevels) + " (< 4)");
   // the reference_u term (TI:6546-6550) calls sincos / libmvec lanes (coriolis_reference below) whose values enter
   // only through u_init, v_init and fEdge: with fEdge = 0 (MW) or u_init = v_init = 0 (JW) the term is +-0 whatever
   // the lanes give; a non-zero term is not verified
@@ -261,7 +276,7 @@ template <class T> bool has(const FArray<T>& a, std::initializer_list<int> ext, 
 void check_arrays(const Mesh& m, const State* s, const Diag* d, const DycoreFields& f) {
   auto bad = [](const std::string& what) { throw Error("dycore: " + what); };
   const int nL = m.nVertLevels;
-  if (nL < 4 || nL % 2 != 0) bad("nVertLevels = " + std::to_string(nL) + " (only an even nVertLevels >= 4 is verified)");
+  if (nL < 4) bad("nVertLevels = " + std::to_string(nL) + " (< 4)");
   if (m.nCells < 1 || m.nEdges < 1 || m.nVertices < 1 || m.vertexDegree != 3 || m.maxEdges < 1 || m.maxEdges2 < 1)
     bad("mesh dimensions");
   const int nC = m.nCells + 1, nE = m.nEdges + 1, nV = m.nVertices + 1, mE = m.maxEdges, mE2 = m.maxEdges2;
@@ -985,25 +1000,44 @@ void atm_recover_large_step_variables(const Mesh& m, State& s, Diag& d, DycoreFi
   }
 }
 
-// TI:7668-7832 (dynamics_split = 1 when config_split_dynamics_transport = .false.)
+// TI:7668-7832
 void atm_rk_dynamics_substep_finish(const Mesh& m, State& s, Diag& d, DycoreFields& f, int dynamics_substep,
                                     int dynamics_split) {
   check_arrays(m, &s, &d, f);
-  // dynamics_split = 1 (config_split_dynamics_transport = .false., TI:2053-2061): the only substep is 1
-  if (dynamics_split != 1 || dynamics_substep != 1)
-    throw Error("atm_rk_dynamics_substep_finish: dynamics substeps (TI:7735-7803) are not ported");
+  if (dynamics_split < 1 || dynamics_substep < 1 || dynamics_substep > dynamics_split)
+    throw Error("atm_rk_dynamics_substep_finish: dynamics_substep outside 1..dynamics_split");
   const int nVertLevels = m.nVertLevels;
   for (int k = 1; k <= nVertLevels; ++k) s.theta_m(k, m.nCells + 1) = 0.0;  // :7730
   const real inv_dynamics_split = 1.0 / static_cast<real>(dynamics_split);  // :7733
-  if (dynamics_substep < dynamics_split)
-    throw Error("atm_rk_dynamics_substep_finish: dynamics substeps (TI:7735-7767) are not ported");
+  if (dynamics_substep < dynamics_split) {  // :7735-7767
+    for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge)
+      for (int k = 1; k <= nVertLevels; ++k) {
+        f.ru_save(k, iEdge) = d.ru(k, iEdge);
+        s.u(k, iEdge) = f.u2(k, iEdge);
+      }
+    for (int iCell = 1; iCell <= m.nCells; ++iCell)
+      for (int k = 1; k <= nVertLevels; ++k) {
+        f.rtheta_p_save(k, iCell) = d.rtheta_p(k, iCell);
+        f.rho_p_save(k, iCell) = d.rho_p(k, iCell);
+        s.theta_m(k, iCell) = f.theta_m2(k, iCell);
+        s.rho_zz(k, iCell) = f.rho_zz2(k, iCell);
+      }
+    for (int iCell = 1; iCell <= m.nCells; ++iCell)
+      for (int k = 1; k <= nVertLevels + 1; ++k) {
+        f.rw_save(k, iCell) = d.rw(k, iCell);
+        s.w(k, iCell) = f.w2(k, iCell);
+      }
+  }
   if (dynamics_substep == 1) {  // :7769-7785
     for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge)
       for (int k = 1; k <= nVertLevels; ++k) f.ruAvg_split(k, iEdge) = f.ruAvg(k, iEdge);
     for (int iCell = 1; iCell <= m.nCells; ++iCell)
       for (int k = 1; k <= nVertLevels + 1; ++k) f.wwAvg_split(k, iCell) = f.wwAvg(k, iCell);
-  } else {
-    throw Error("atm_rk_dynamics_substep_finish: dynamics substeps (TI:7786-7803) are not ported");
+  } else {  // :7786-7803
+    for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge)
+      for (int k = 1; k <= nVertLevels; ++k) f.ruAvg_split(k, iEdge) = f.ruAvg(k, iEdge) + f.ruAvg_split(k, iEdge);
+    for (int iCell = 1; iCell <= m.nCells; ++iCell)
+      for (int k = 1; k <= nVertLevels + 1; ++k) f.wwAvg_split(k, iCell) = f.wwAvg(k, iCell) + f.wwAvg_split(k, iCell);
   }
   if (dynamics_substep == dynamics_split) {  // :7805-7829
     for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge)
@@ -1020,6 +1054,8 @@ void atm_rk_dynamics_substep_finish(const Mesh& m, State& s, Diag& d, DycoreFiel
 void atm_srk3(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreFields& f, real dt) {
   check_dycore_supported(cfg, m, s);
   check_arrays(m, &s, &d, f);
+  if (cfg.config_physics_suite != "none" && (!f.phys.get_tend || !f.phys.microphysics))
+    throw Error("atm_srk3: config_physics_suite = '" + cfg.config_physics_suite + "' without the physics coupling");
   const int nVertLevels = m.nVertLevels;
   for (int k = 1; k <= nVertLevels; ++k) f.qtot(k, m.nCells + 1) = 0.0;  // :2023-2028
   // :2031-2047 scratch physics tendencies, garbage column zeroed
@@ -1028,9 +1064,15 @@ void atm_srk3(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreF
     f.tend_rho_physics(k, m.nCells + 1) = 0.0;
     f.tend_ru_physics(k, m.nEdges + 1) = 0.0;
   }
-  // :2053-2061 (config_split_dynamics_transport = .false.)
-  const int dynamics_split = 1;
-  const real dt_dynamics = dt;
+  // :2053-2061
+  int dynamics_split = cfg.config_dynamics_split_steps;
+  real dt_dynamics = dt;
+  if (cfg.config_split_dynamics_transport) {
+    dt_dynamics = dt / static_cast<real>(dynamics_split);
+  } else {
+    dynamics_split = 1;
+    dt_dynamics = dt;
+  }
   const int number_of_sub_steps = cfg.config_number_of_sub_steps;  // :2064
   real rk_timestep[4], rk_sub_timestep[4];
   int number_sub_steps[4];
@@ -1047,7 +1089,11 @@ void atm_srk3(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreF
   // :2105 halo exchange: no-op on one rank
   atm_rk_integration_setup(m, s, d, f);  // :2113
   atm_compute_moist_coefficients(m, f);  // :2129
-  physics_get_tend(m, s, f);             // :2141-2151 (pre/post_physics_get_tend are OpenACC-only)
+  // :2141-2151 (pre/post_physics_get_tend are OpenACC-only): the physics' tendencies, or none (suite 'none')
+  if (f.phys.get_tend)
+    f.phys.get_tend(s, d, f);
+  else
+    physics_get_tend(m, s, f);
   // :2168 IAU off
   for (int dynamics_substep = 1; dynamics_substep <= dynamics_split; ++dynamics_substep) {  // :2178
     atm_compute_vert_imp_coefs(m, s, d, f, rk_sub_timestep[1]);  // :2184-2193
@@ -1061,7 +1107,8 @@ void atm_srk3(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreF
         f.delsq_vorticity(k, m.nVertices + 1) = 0.0;
         f.dpdz(k, m.nCells + 1) = 0.0;
       }
-      atm_compute_dyn_tend(cfg, m, s, d, f, rk_step, dt);  // :2250 (dt: the full time step)
+      atm_compute_dyn_tend(cfg, m, s, d, f, rk_step, dt);  // :2250 (dt: the full time step; dynamics_substep only
+                                                           // enters LES and scalar mixing, both refused)
       atm_set_smlstep_pert_variables(m, f);                // :2291
       for (int small_step = 1; small_step <= number_sub_steps[rk_step]; ++small_step) {  // :2359-2408
         atm_advance_acoustic_step(m, s, d, f, rk_sub_timestep[rk_step], small_step);    // :2372
@@ -1080,12 +1127,23 @@ void atm_srk3(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreF
     }
     atm_rk_dynamics_substep_finish(m, s, d, f, dynamics_substep, dynamics_split);  // :2645
   }
+  if (cfg.config_scalar_advection && cfg.config_split_dynamics_transport) {  // :2674-2700
+    rk_timestep[1] = dt / 3.;
+    rk_timestep[2] = dt / 2.;
+    rk_timestep[3] = dt;
+    if (cfg.config_time_integration_order == 2) rk_timestep[1] = dt / 2.;
+    for (int rk_step = 1; rk_step <= 3; ++rk_step) advance_scalars(cfg, m, s, f, rk_step, rk_timestep);
+  }
   // :2744 mpas_reconstruct of u at time level 2
   mpas_reconstruct_2d(m, f.u2, d.uReconstructX, d.uReconstructY, d.uReconstructZ, d.uReconstructZonal,
                       d.uReconstructMeridional);
+  // :2758-2788 rqvdynten, rthdynten for cu_grell_freitas / cu_ntiedtke
+  if (f.phys.dyn_tend_for_convection) f.phys.dyn_tend_for_convection(s, f, dt);
   clamp_negative_scalars(f.scalars2);  // :2799-2800
   // :2806-2817 microphysics (pre_ / post_microphysics are OpenACC-only) on time level 2
-  if (cfg.config_microp_scheme != "off" && cfg.config_microp_scheme != "suite") {
+  if (f.phys.microphysics) {
+    f.phys.microphysics(s, d, f);
+  } else if (cfg.config_microp_scheme != "off" && cfg.config_microp_scheme != "suite") {
     if (!f.mp.active) throw Error("atm_srk3: config_microp_scheme = '" + cfg.config_microp_scheme + "' without microphysics_init");
     driver_microphysics(m, s, f.theta_m2, f.rho_zz2, f.scalars2, d, f.rt_diabatic_tend, f.mp);
   }
