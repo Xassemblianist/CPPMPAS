@@ -9,7 +9,7 @@ namespace cppmpas {
 
 // mpas_geometry_utils.F:131-154. In the reference (inlined into mpas_sphere_angle as well) 2.0*r is r+r and
 // r*2.0*asin(...) is asin(...)*(r+r): both exact rewrites.
-real mpas_arc_length(real ax, real ay, real az, real bx, real by, real bz) {
+CPPMPAS_HD real mpas_arc_length(real ax, real ay, real az, real bx, real by, real bz) {
   const real cx = bx - ax;  // :140-142
   const real cy = by - ay;
   const real cz = bz - az;
@@ -19,7 +19,8 @@ real mpas_arc_length(real ax, real ay, real az, real bx, real by, real bz) {
 }
 
 // mpas_geometry_utils.F:27-72
-real mpas_sphere_angle(real ax, real ay, real az, real bx, real by, real bz, real cx, real cy, real cz) {
+CPPMPAS_HD real mpas_sphere_angle(real ax, real ay, real az, real bx, real by, real bz, real cx, real cy,
+                                  real cz) {
   const real a = mpas_arc_length(bx, by, bz, cx, cy, cz);  // :46-48
   const real b = mpas_arc_length(ax, ay, az, cx, cy, cz);
   const real c = mpas_arc_length(ax, ay, az, bx, by, bz);
@@ -49,8 +50,8 @@ real mpas_sphere_angle(real ax, real ay, real az, real bx, real by, real bz, rea
 
 // mpas_geometry_utils.F:81-121. x**2.0 is x*x (gcc folds pow(x, 2.0)). In atm_initialize_deformation_weights the
 // result is overwritten before use (mpas_atm_core.F:1807 vs 1821), but the call is made, as in the reference.
-real mpas_plane_angle(real ax, real ay, real az, real bx, real by, real bz, real cx, real cy, real cz, real u, real v,
-                      real w) {
+CPPMPAS_HD real mpas_plane_angle(real ax, real ay, real az, real bx, real by, real bz, real cx, real cy, real cz,
+                                 real u, real v, real w) {
   const real ABx = bx - ax;  // :98-101
   const real ABy = by - ay;
   const real ABz = bz - az;
@@ -71,7 +72,7 @@ real mpas_plane_angle(real ax, real ay, real az, real bx, real by, real bz, real
 }
 
 // mpas_vector_operations.F:861-889
-real mpas_fix_periodicity(real pxi, real xci, real xiRef) {
+CPPMPAS_HD real mpas_fix_periodicity(real pxi, real xci, real xiRef) {
   const real dist = pxi - xci;
   if (std::fabs(dist) > xiRef * 0.5) return pxi - (dist / std::fabs(dist)) * xiRef;
   return pxi;

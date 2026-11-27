@@ -29,7 +29,26 @@ template <class T> struct FView {
   CPPMPAS_HD T& operator()(int i, int j) const { return p[offset(i, j)]; }
   CPPMPAS_HD T& operator()(int i, int j, int k) const { return p[offset(i, j, k)]; }
   CPPMPAS_HD T& operator()(int i, int j, int k, int l) const { return p[offset(i, j, k, l)]; }
+  // element i counted from 0 (a work array that was a 0-based std::vector)
+  CPPMPAS_HD T& operator[](std::ptrdiff_t i) const { return p[i]; }
+  CPPMPAS_HD T* data() const { return p; }
 };
+
+// The storage of an FArray: host memory in the CPU build; CUDA managed memory in the CUDA build, so the reader, the
+// writer and the host-side checks use the arrays the kernels use, and nothing is copied by hand.
+#if defined(CPPMPAS_USE_CUDA)
+template <class T> struct ManagedAllocator {
+  using value_type = T;
+  ManagedAllocator() = default;
+  template <class U> ManagedAllocator(const ManagedAllocator<U>&) noexcept {}
+  T* allocate(std::size_t n) { return static_cast<T*>(gpu::managed_alloc(n * sizeof(T))); }
+  void deallocate(T* q, std::size_t) noexcept { gpu::managed_free(q); }
+  template <class U> bool operator==(const ManagedAllocator<U>&) const noexcept { return true; }
+};
+template <class T> using FStorage = std::vector<T, ManagedAllocator<T>>;
+#else
+template <class T> using FStorage = std::vector<T>;
+#endif
 
 template <class T> class FArray {
  public:
@@ -69,6 +88,7 @@ template <class T> class FArray {
   const T& operator()(int i, int j, int k, int l) const { return data_[off(i, j, k, l)]; }
   FView<T> view() { return FView<T>{data_.data(), extent(0), extent(1), extent(2)}; }
   FView<const T> view() const { return FView<const T>{data_.data(), extent(0), extent(1), extent(2)}; }
+  FView<const T> cview() const { return view(); }  // read-only, also of an array the caller may write
 
  private:
   std::size_t off(int i, int j, int k, int l) const {
@@ -77,7 +97,7 @@ template <class T> class FArray {
            e0 * (static_cast<std::size_t>(j - 1) + e1 * (static_cast<std::size_t>(k - 1) + e2 * (l - 1)));
   }
   std::vector<int> ext_;
-  std::vector<T> data_;
+  FStorage<T> data_;
 };
 
 }  // namespace cppmpas

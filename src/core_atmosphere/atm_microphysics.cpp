@@ -7,14 +7,20 @@
 // (0x1e8d80) and microphysics_to_mpas (0x1e39d0) have no FMA, no ymm register and no libmvec call; the only libm
 // call is one pow@plt in microphysics_to_mpas (the exner of PI:926, in the i loop innermost of PI:903-905: scalar
 // pow for every cell). The max(0._RKIND, qv) of PI:723 is a maxsd with qv as the destination ("qv > 0 ? qv : 0").
+//
+// The loops of driver_microphysics over the cells (i) are kernels (core/backend.hpp), one thread per column with the
+// k loops inside, and kessler is CPPWRF's column kernel launched one thread per column as CPPWRF launches it
+// (CPPWRF 7fac5bf src/phys/mp_kessler/kessler.cpp: column_for over the (i, j) columns); its libmvec lanes depend
+// only on the column's index (vm::lane(i - i0, ni)), so every column takes the reference's lane in either build.
+// The (ims:ime, kms:kme) work arrays are FArrays, in the managed memory of the CUDA build.
 #include "core_atmosphere/atm_microphysics.hpp"
 
 #include <cstdlib>
-#include <vector>
 
 #include "core/error.hpp"
 #include "core/libm.hpp"
 #include "core/namelist.hpp"
+#include "core/views.hpp"
 #include "physics/mp_kessler.hpp"
 
 namespace cppmpas {
@@ -37,7 +43,7 @@ constexpr real rho_w = 1000.0;       // :54
 constexpr real svp1 = 0.6112, svp2 = 17.67, svp3 = 29.65, svpt0 = 273.15;  // :55-58
 constexpr real xlv = 2.50e6;         // :59
 
-inline real fmax0(real x) { return x > 0.0 ? x : 0.0; }  // max(0._RKIND, x): maxsd, x the destination
+CPPMPAS_HD inline real fmax0(real x) { return x > 0.0 ? x : 0.0; }  // max(0._RKIND, x): maxsd, x the destination
 
 std::string option(const std::string& namelist_path, const char* key) {
   const auto kv = effective_namelist(namelist_path);
@@ -74,7 +80,8 @@ void microphysics_init(const std::string& namelist_path, const Mesh& m, real dt,
   mp.tend_sfc_pressure.allocate({nC}, 0.0);
   mp.dt_dyn = dt;               // MGR:707
   mp.dt_microp = mp.dt_dyn;     // MGR:708 (n_microp = 1: not Thompson, MGR:710-716)
-  for (int iCell = 1; iCell <= m.nCellsSolve(); ++iCell) mp.i_rainnc(iCell) = 0;  // INIT:268-273
+  const auto i_rainnc = mp.i_rainnc.view();
+  parallel_for(1, m.nCellsSolve(), [=] CPPMPAS_LAMBDA(int iCell) { i_rainnc(iCell) = 0; });  // INIT:268-273
   const real config_microphysics_top = std::strtod(option(namelist_path, "config_microphysics_top").c_str(), nullptr);
   mp.mp_top_level = 0;  // INIT:276-282
   real layer_height = 0.5 / m.rdzw(1);
@@ -88,8 +95,8 @@ void microphysics_init(const std::string& namelist_path, const Mesh& m, real dt,
                 "no verified port");
 }
 
-void driver_microphysics(const Mesh& m, State& s, FArray<real>& theta_m, FArray<real>& rho_zz, FArray<real>& scalars,
-                         Diag& d, FArray<real>& rt_diabatic_tend, MicrophysicsFields& mp) {
+void driver_microphysics(const Mesh& m, State& s, FArray<real>& theta_m_a, FArray<real>& rho_zz_a,
+                         FArray<real>& scalars_a, Diag& d, FArray<real>& rt_diabatic_tend_a, MicrophysicsFields& mp) {
   if (!mp.active) return;
   // module dims of physics_run_init (MGR:661-669): its..ite = 1..nCellsSolve, kts..kte = 1..nVertLevels,
   // kms..kme = 1..nVertLevels+1, jts = jte = 1
@@ -101,25 +108,34 @@ void driver_microphysics(const Mesh& m, State& s, FArray<real>& theta_m, FArray<
     if (s.scalar_names[q] == "qr") index_qr = static_cast<int>(q) + 1;
   }
   if (!index_qv || !index_qc || !index_qr) throw Error("driver_microphysics: Kessler needs qv, qc and qr");
-  const auto &zz = m.zz, &zgrid = m.zgrid;
-  auto &exner = d.exner, &pressure_p = d.pressure_p, &rtheta_p = d.rtheta_p;
-  const auto &pressure_b = d.pressure_base, &exner_b = d.exner_base, &rtheta_b = d.rtheta_base;
+  const auto zz = m.zz.cview(), zgrid = m.zgrid.cview();
+  const auto exner = d.exner.view(), pressure_p = d.pressure_p.view(), rtheta_p = d.rtheta_p.view();
+  const auto pressure_b = d.pressure_base.cview(), exner_b = d.exner_base.cview(), rtheta_b = d.rtheta_base.cview();
+  const auto scalars = scalars_a.view(), theta_m = theta_m_a.view();
+  const auto rho_zz = rho_zz_a.cview();
+  const auto rt_diabatic_tend = rt_diabatic_tend_a.view();
+  const auto mp_rainncv = mp.rainncv.view(), mp_rainnc = mp.rainnc.view(), mp_precipw = mp.precipw.view();
+  const auto mp_dtheta_dt_mp = mp.dtheta_dt_mp.view(), mp_tend_sfc_pressure = mp.tend_sfc_pressure.view();
+  const auto surface_pressure = s.surface_pressure.view();
 
   // allocate_microphysics (DRV:98-127): (ims:ime, kms:kme, jms:jme), i fastest
-  const std::size_t n3 = static_cast<std::size_t>(ite) * kme;
-  std::vector<real> rho_p(n3), th_p(n3), pi_p(n3), pres_p(n3), z_p(n3), dz_p(n3), qv_p(n3), qc_p(n3),
-      qr_p(n3), rainnc_p(ite), rainncv_p(ite);
-  auto P = [&](std::vector<real>& a, int i, int k) -> real& { return a[static_cast<std::size_t>(k - 1) * ite + (i - 1)]; };
+  FArray<real> rho_p_a({ite, kme}), th_p_a({ite, kme}), pi_p_a({ite, kme}), pres_p_a({ite, kme}), z_p_a({ite, kme}),
+      dz_p_a({ite, kme}), qv_p_a({ite, kme}), qc_p_a({ite, kme}), qr_p_a({ite, kme}), rainnc_p_a({ite}),
+      rainncv_p_a({ite});
+  const auto rho_p = rho_p_a.view(), th_p = th_p_a.view(), pi_p = pi_p_a.view(), pres_p = pres_p_a.view(),
+             z_p = z_p_a.view(), dz_p = dz_p_a.view(), qv_p = qv_p_a.view(), qc_p = qc_p_a.view(),
+             qr_p = qr_p_a.view(), rainnc_p = rainnc_p_a.view(), rainncv_p = rainncv_p_a.view();
+#define P(a, i, k) a(i, k)
 
-  for (int i = 1; i <= ite; ++i) {  // precip_from_MPAS (DRV:530-541)
+  parallel_for(1, ite, [=] CPPMPAS_LAMBDA(int i) {  // precip_from_MPAS (DRV:530-541)
     rainncv_p[i - 1] = 0.0;
     rainnc_p[i - 1] = 0.0;
-  }
-  for (int i = 1; i <= ite; ++i) mp.rainncv(i) = 0.0;
+  });
+  parallel_for(1, ite, [=] CPPMPAS_LAMBDA(int i) { mp_rainncv(i) = 0.0; });
 
   // microphysics_from_MPAS (PI:711-731); w_p (PI:731) is read only by Thompson and WSM6
-  for (int k = 1; k <= kte; ++k)
-    for (int i = 1; i <= ite; ++i) {
+  parallel_for(1, ite, [=] CPPMPAS_LAMBDA(int i) {
+    for (int k = 1; k <= kte; ++k) {
       P(qv_p, i, k) = scalars(index_qv, k, i);
       P(qc_p, i, k) = scalars(index_qc, k, i);
       P(qr_p, i, k) = scalars(index_qr, k, i);
@@ -130,6 +146,7 @@ void driver_microphysics(const Mesh& m, State& s, FArray<real>& theta_m, FArray<
       P(z_p, i, k) = zgrid(k, i);
       P(dz_p, i, k) = zgrid(k + 1, i) - zgrid(k, i);
     }
+  });
 
   {  // DRV:371-385
     using phys::kessler::View2;
@@ -159,50 +176,52 @@ void driver_microphysics(const Mesh& m, State& s, FArray<real>& theta_m, FArray<
     kk.i0 = 0;
     kk.ni = ite;
     kk.es_cap = true;  // MPAS's module_mp_kessler.F:219
-    for (int i = 0; i < ite; ++i) kk(i, 0);
+    parallel_for(0, ite - 1, [=] CPPMPAS_LAMBDA(int i) { kk(i, 0); });  // one thread per column
   }
 
   // l_diags (compute_relhum, DRV:467-482) only at output times: relhum is not ported (no compared stream has it)
-  for (int i = 1; i <= ite; ++i) {  // precip_to_MPAS (DRV:605-633), l_acrain = .false.
-    mp.precipw(i) = 0.0;
-  }
-  for (int i = 1; i <= ite; ++i) {
+  parallel_for(1, ite, [=] CPPMPAS_LAMBDA(int i) {  // precip_to_MPAS (DRV:605-633), l_acrain = .false.
+    mp_precipw(i) = 0.0;
+  });
+  parallel_for(1, ite, [=] CPPMPAS_LAMBDA(int i) {
     for (int k = 1; k <= kte; ++k) {
       const real rho_a = P(rho_p, i, k) / (1.0 + P(qv_p, i, k));
-      mp.precipw(i) = mp.precipw(i) + P(qv_p, i, k) * rho_a * P(dz_p, i, k);
+      mp_precipw(i) = mp_precipw(i) + P(qv_p, i, k) * rho_a * P(dz_p, i, k);
     }
-    mp.rainncv(i) = rainnc_p[i - 1];
-    mp.rainnc(i) = mp.rainnc(i) + mp.rainncv(i);
-  }
+    mp_rainncv(i) = rainnc_p[i - 1];
+    mp_rainnc(i) = mp_rainnc(i) + mp_rainncv(i);
+  });
 
   const int mp_top_level = mp.mp_top_level;  // microphysics_to_MPAS (PI:903-934)
   const real dt_dyn = mp.dt_dyn;
-  for (int k = 1; k <= mp_top_level; ++k)
-    for (int i = 1; i <= ite; ++i) {
+  parallel_for(1, ite, [=] CPPMPAS_LAMBDA(int i) {
+    for (int k = 1; k <= mp_top_level; ++k) {
       rt_diabatic_tend(k, i) = theta_m(k, i);
-      mp.dtheta_dt_mp(k, i) = theta_m(k, i) / (1.0 + rvord * scalars(index_qv, k, i));
+      mp_dtheta_dt_mp(k, i) = theta_m(k, i) / (1.0 + rvord * scalars(index_qv, k, i));
       scalars(index_qv, k, i) = P(qv_p, i, k);
       scalars(index_qc, k, i) = P(qc_p, i, k);
       scalars(index_qr, k, i) = P(qr_p, i, k);
       theta_m(k, i) = P(th_p, i, k) * (1.0 + rvord * P(qv_p, i, k));
       rt_diabatic_tend(k, i) = (theta_m(k, i) - rt_diabatic_tend(k, i)) / dt_dyn;
-      mp.dtheta_dt_mp(k, i) = (theta_m(k, i) / (1.0 + rvord * scalars(index_qv, k, i)) - mp.dtheta_dt_mp(k, i)) / (dt_dyn);
+      mp_dtheta_dt_mp(k, i) = (theta_m(k, i) / (1.0 + rvord * scalars(index_qv, k, i)) - mp_dtheta_dt_mp(k, i)) / (dt_dyn);
       rtheta_p(k, i) = rho_zz(k, i) * theta_m(k, i) - rtheta_b(k, i);
       exner(k, i) = libm::pow(zz(k, i) * (R_d / P0) * (rtheta_p(k, i) + rtheta_b(k, i)), rcv);
       pressure_p(k, i) = zz(k, i) * R_d * (exner(k, i) * rtheta_p(k, i) + (exner(k, i) - exner_b(k, i)) * rtheta_b(k, i));
     }
+  });
   if (kte > mp_top_level) throw Error("microphysics_to_MPAS: kte > mp_top_level (PI:938-946) is not ported");
 
-  for (int i = 1; i <= ite; ++i) {  // PI:950-964
+  parallel_for(1, ite, [=] CPPMPAS_LAMBDA(int i) {  // PI:950-964
     const real tem1 = zgrid(2, i) - zgrid(1, i);
     const real tem2 = zgrid(3, i) - zgrid(2, i);
     const real rho1 = rho_zz(1, i) * zz(1, i) * (1. + P(qv_p, i, 1));
     const real rho2 = rho_zz(2, i) * zz(2, i) * (1. + P(qv_p, i, 2));
-    mp.tend_sfc_pressure(i) = s.surface_pressure(i);
-    s.surface_pressure(i) = 0.5 * gravity * (zgrid(2, i) - zgrid(1, i)) * (rho1 - 0.5 * (rho2 - rho1) * tem1 / (tem1 + tem2));
-    s.surface_pressure(i) = s.surface_pressure(i) + pressure_p(1, i) + pressure_b(1, i);
-    mp.tend_sfc_pressure(i) = (s.surface_pressure(i) - mp.tend_sfc_pressure(i)) / dt_dyn;
-  }
+    mp_tend_sfc_pressure(i) = surface_pressure(i);
+    surface_pressure(i) = 0.5 * gravity * (zgrid(2, i) - zgrid(1, i)) * (rho1 - 0.5 * (rho2 - rho1) * tem1 / (tem1 + tem2));
+    surface_pressure(i) = surface_pressure(i) + pressure_p(1, i) + pressure_b(1, i);
+    mp_tend_sfc_pressure(i) = (surface_pressure(i) - mp_tend_sfc_pressure(i)) / dt_dyn;
+  });
+#undef P
 }
 
 }  // namespace cppmpas

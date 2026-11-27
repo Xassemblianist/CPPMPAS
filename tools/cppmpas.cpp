@@ -11,7 +11,11 @@
 // With config_physics_suite = 'mesoscale_reference', run reads the input stream's physics fields and runs MPAS's
 // physics (physics/mpas_atmphys_driver.hpp): --tables names the directory with LANDUSE.TBL, VEGPARM.TBL, SOILPARM.TBL,
 // GENPARM.TBL and OZONE_*.TBL (the reference build's tables), --rrtmg the one with rrtmg_lw_tables.bin and
-// rrtmg_sw_tables.bin (the RRTMG tables MPAS's initialisation computes, physics/mpas_atmphys_radiation.hpp).
+// rrtmg_sw_tables.bin (the RRTMG tables MPAS's initialisation computes, physics/mpas_atmphys_radiation.hpp). The
+// physics runs on the host between the dycore's kernels.
+//   cppmpas device    (the backend: "cpu", or the CUDA device and a check that kernels run on it)
+// The CUDA build of this file is cppmpas_gpu: the same commands with every kernel on the GPU (core/backend.hpp); it
+// exits with status 77 (CTest's skip code) and a SKIP message when there is no usable CUDA device.
 // init runs what atm_core_init does to the fields of a cold start (core_atmosphere/atm_init.hpp: len_disp, the
 // compatibility checks, atm_mpas_init_block, xtime) on an init file and writes the
 // given fields as MPAS writes them to a history / restart file (global order, Registry layout).
@@ -29,12 +33,15 @@
 // constituents; character fields as their StrLen characters.
 #include <algorithm>
 #include <cstdio>
+#include <initializer_list>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <vector>
 
+#include "core/backend.hpp"
 #include "core/namelist.hpp"
+#include "core/views.hpp"
 #include "core_atmosphere/atm_dycore.hpp"
 #include "core_atmosphere/atm_init.hpp"
 #include "io/mpas_reader.hpp"
@@ -203,7 +210,10 @@ int run(int argc, char** argv) {
               << m.nVertLevels << "\n"
               << "on_a_sphere " << m.on_a_sphere << " sphere_radius " << m.sphere_radius << " is_periodic "
               << m.is_periodic << "\n";
-    for (auto [label, o] : {std::pair{"cells", &m.cell_order}, {"edges", &m.edge_order}, {"vertices", &m.vertex_order}}) {
+    // explicit element type: nvcc 12 cannot deduce a braced list of std::pair
+    using Order = std::pair<const char*, decltype(&m.cell_order)>;
+    for (auto [label, o] : std::initializer_list<Order>{{"cells", &m.cell_order}, {"edges", &m.edge_order},
+                                                        {"vertices", &m.vertex_order}}) {
       std::cout << label << " local order " << (o->identity() ? "= file order" : "!= file order") << ", first:";
       for (int i = 1; i <= std::min(12, o->n()); ++i) std::cout << " " << o->local_to_file[i];
       std::cout << "\n";
@@ -278,6 +288,9 @@ int run(int argc, char** argv) {
     phys::PhysicsRun pr;
     pr.cfg = phys::read_physics_config(a.namelist, cfg, log);
     const bool physics = pr.cfg.config_physics_suite != "none";
+#if defined(CPPMPAS_USE_CUDA)
+    if (physics) throw Error("run: the physics suite runs on the host only; the GPU build (cppmpas_gpu) refuses it");
+#endif
     if (physics) {
       if (cfg.config_do_restart) throw Error("run: a restart with the physics suite has no verified port");
       if (a.tables.empty() || a.rrtmg.empty()) throw Error("run: the physics suite needs --tables and --rrtmg");
@@ -373,6 +386,28 @@ int run(int argc, char** argv) {
       shift_time_levels(in.state, f);  // mpas_atm_core.F:823
       write_step(n);
     }
+  } else if (cmd == "device") {
+    if (!a.pos.empty()) throw Error("usage: cppmpas device");
+#if defined(CPPMPAS_USE_CUDA)
+    std::cout << "backend cuda: " << gpu::describe() << "\n";
+#else
+    std::cout << "backend cpu\n";
+#endif
+    // a kernel writes the architecture it was compiled for (0 for the host): the backend that runs the kernels
+    FArray<int> arch({64}, -1);
+    const auto av = arch.view();
+    parallel_for(1, 64, [=] CPPMPAS_LAMBDA(int i) {
+#if defined(__CUDA_ARCH__)
+      av(i) = __CUDA_ARCH__;
+#else
+      av(i) = 0;
+#endif
+    });
+    for (int i = 1; i <= 64; ++i)
+      if (arch(i) != arch(1)) throw Error("device check: the kernel's threads disagree");
+    if (arch(1) < 0) throw Error("device check: the kernel did not run");
+    std::cout << "kernels run on " << (arch(1) > 0 ? "the GPU, sm_" + std::to_string(arch(1) / 10) : std::string("the CPU"))
+              << "\n";
   } else if (cmd == "dump") {
     if (a.pos.size() != 2) throw Error("usage: cppmpas dump <in> <out.nc> [--init] [--scalars ...]");
     MpasInput in = load(a, a.pos[0]);
@@ -386,6 +421,15 @@ int run(int argc, char** argv) {
 }  // namespace
 
 int main(int argc, char** argv) {
+#if defined(CPPMPAS_USE_CUDA)
+  {
+    std::string why;
+    if (!gpu::init(why)) {
+      std::cerr << "cppmpas_gpu: SKIP: no usable CUDA device (" << why << ")\n";
+      return gpu::kNoDeviceExit;
+    }
+  }
+#endif
   try {
     return run(argc, argv);
   } catch (const std::exception& e) {

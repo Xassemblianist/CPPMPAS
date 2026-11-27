@@ -2,6 +2,9 @@
 // atm_srk3 and the routines it calls (src/core_atmosphere/dynamics/mpas_atm_time_integration.F, TI) on the path of
 // the mountain-wave and JW baroclinic-wave references; see atm_dycore.hpp. Statement by statement: MPAS's loop order, operation order and
 // parenthesisation (Fortran evaluates a*b*c/d as ((a*b)*c)/d, -a*b as -(a*b)), integer powers as multiplies.
+// Every loop over cells / edges / vertices is a kernel (core/backend.hpp parallel_for): one thread per element, the k
+// loop and the neighbour loops inside the thread in MPAS's order; the work arrays MPAS allocates per routine are the
+// thread's own (Column), so the CPU and the GPU build run the same statements on the same values.
 //
 // Reference object code (objdump -d of bin/atmosphere_model, mpas-build asset 153c7206..., gfortran 14.2 -O3, no
 // -march): no FMA and no ymm register in any of these routines; their only libm / libmvec calls are
@@ -26,6 +29,7 @@
 #include "core/libm.hpp"
 #include "core_atmosphere/atm_advance_scalars.hpp"
 #include "core_atmosphere/atm_dissipation.hpp"
+#include "core_atmosphere/atm_views.hpp"
 #include "operators/vector_reconstruct.hpp"
 
 namespace cppmpas {
@@ -40,18 +44,16 @@ constexpr real rvord = rv / rgas;
 constexpr real gravity = 9.80616;
 constexpr real prandtl = 1.0;
 
-template <class T> void fill_all(FArray<T>& a, T v) { std::fill(a.data(), a.data() + a.size(), v); }
-
 // flux4 / flux3 statement functions (TI:6303-6308): ua*(...)/12.0 is (ua*(...))/12.0
-inline real flux4(real q_im2, real q_im1, real q_i, real q_ip1, real ua) {
+CPPMPAS_HD inline real flux4(real q_im2, real q_im1, real q_i, real q_ip1, real ua) {
   return ua * (7. * (q_i + q_im1) - (q_ip1 + q_im2)) / 12.0;
 }
-inline real flux3(real q_im2, real q_im1, real q_i, real q_ip1, real ua, real coef3) {
+CPPMPAS_HD inline real flux3(real q_im2, real q_im1, real q_i, real q_ip1, real ua, real coef3) {
   return flux4(q_im2, q_im1, q_i, q_ip1, ua) + coef3 * std::fabs(ua) * ((q_ip1 - q_im2) - 3. * (q_i - q_im1)) / 12.0;
 }
 
 // sign(1.0_RKIND, x) is copysign(1.0, x) in gfortran (-0.0 gives -1.0)
-inline real sign1(real x) { return std::copysign(1.0, x); }
+CPPMPAS_HD inline real sign1(real x) { return std::copysign(1.0, x); }
 
 }  // namespace
 
@@ -179,6 +181,7 @@ void check_dycore_supported(const DycoreConfig& c, const Mesh& m, const State& s
     no(suite ? "scalars other than qv, qc, qr, qi, qs, qg with mesoscale_reference"
              : kessler ? "scalars other than qv, qc, qr with Kessler" : "scalars other than qv alone");
   if (s.scalar_names.size() > 1 && !c.config_scalar_advection) no("moist scalars without scalar advection");
+  // odd nVertLevels: the last level of the rk_step-3 Exner pow is scalar pow@plt (TI:4439), never exercised
   // an odd nVertLevels (RG: 55) takes the scalar pow@plt of the last level of the rk_step-3 Exner pow (TI:4439):
   // verified by RG only
   if (m.nVertLevels < 4) no("nVertLevels = " + std::to_string(m.nVertLevels) + " (< 4)");
@@ -371,13 +374,16 @@ void check_dycore_arrays(const Mesh& m, const State& s, const Diag& d, const Dyc
 void atm_rk_integration_setup(const Mesh& m, State& s, Diag& d, DycoreFields& f) {
   check_arrays(m, &s, &d, f);
   const int nVertLevels = m.nVertLevels, num_scalars = s.scalars.extent(0);
-  for (int k = 1; k <= nVertLevels; ++k) f.theta_m2(k, m.nCells + 1) = 0.0;  // :3139
-  for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge)  // :3144-3150
+  parallel_for(1, nVertLevels, [=, m = view(m), f = view(f)] CPPMPAS_LAMBDA(int k) {
+    f.theta_m2(k, m.nCells + 1) = 0.0;  // :3139
+  });
+  parallel_for(1, m.nEdges, [=, s = view(s), d = view(d), f = view(f)] CPPMPAS_LAMBDA(int iEdge) {  // :3144-3150
     for (int k = 1; k <= nVertLevels; ++k) {
       f.ru_save(k, iEdge) = d.ru(k, iEdge);
       f.u2(k, iEdge) = s.u(k, iEdge);
     }
-  for (int iCell = 1; iCell <= m.nCells; ++iCell)  // :3153-3162
+  });
+  parallel_for(1, m.nCells, [=, s = view(s), d = view(d), f = view(f)] CPPMPAS_LAMBDA(int iCell) {  // :3153-3162
     for (int k = 1; k <= nVertLevels; ++k) {
       f.rtheta_p_save(k, iCell) = d.rtheta_p(k, iCell);
       f.rho_p_save(k, iCell) = d.rho_p(k, iCell);
@@ -385,32 +391,37 @@ void atm_rk_integration_setup(const Mesh& m, State& s, Diag& d, DycoreFields& f)
       f.rho_zz2(k, iCell) = s.rho_zz(k, iCell);
       f.rho_zz_old_split(k, iCell) = s.rho_zz(k, iCell);
     }
-  for (int iCell = 1; iCell <= m.nCells; ++iCell)  // :3165-3171
+  });
+  parallel_for(1, m.nCells, [=, s = view(s), d = view(d), f = view(f)] CPPMPAS_LAMBDA(int iCell) {  // :3165-3171
     for (int k = 1; k <= nVertLevels + 1; ++k) {
       f.rw_save(k, iCell) = d.rw(k, iCell);
       f.w2(k, iCell) = s.w(k, iCell);
     }
-  for (int iCell = 1; iCell <= m.nCells; ++iCell)  // :3174-3181
+  });
+  parallel_for(1, m.nCells, [=, s = view(s), f = view(f)] CPPMPAS_LAMBDA(int iCell) {  // :3174-3181
     for (int k = 1; k <= nVertLevels; ++k)
       for (int j = 1; j <= num_scalars; ++j) f.scalars2(j, k, iCell) = s.scalars(j, k, iCell);
+  });
 }
 
 // TI:3188-3283 (scalars of time level 2)
 void atm_compute_moist_coefficients(const Mesh& m, DycoreFields& f) {
   check_arrays(m, nullptr, nullptr, f);
   const int nVertLevels = m.nVertLevels;
-  const auto& scalars = f.scalars2;
-  for (int iCell = 1; iCell <= m.nCells; ++iCell)  // :3237-3246
+  const auto scalars = f.scalars2.cview();
+  parallel_for(1, m.nCells, [=, f = view(f)] CPPMPAS_LAMBDA(int iCell) {  // :3237-3246
     for (int k = 1; k <= nVertLevels; ++k) {
       f.qtot(k, iCell) = 0.0;
       for (int iq = f.moist_start; iq <= f.moist_end; ++iq) f.qtot(k, iCell) = f.qtot(k, iCell) + scalars(iq, k, iCell);
     }
-  for (int iCell = 1; iCell <= m.nCells; ++iCell)  // :3252-3258
+  });
+  parallel_for(1, m.nCells, [=, f = view(f)] CPPMPAS_LAMBDA(int iCell) {  // :3252-3258
     for (int k = 2; k <= nVertLevels; ++k) {
       const real qtotal = 0.5 * (f.qtot(k, iCell) + f.qtot(k - 1, iCell));
       f.cqw(k, iCell) = 1.0 / (1.0 + qtotal);
     }
-  for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge) {  // :3265-3279
+  });
+  parallel_for(1, m.nEdges, [=, m = view(m), f = view(f)] CPPMPAS_LAMBDA(int iEdge) {  // :3265-3279
     const int cell1 = m.cellsOnEdge(1, iEdge);
     const int cell2 = m.cellsOnEdge(2, iEdge);
     if (cell1 <= m.nCellsSolve() || cell2 <= m.nCellsSolve()) {  // :3268 (always true on one rank)
@@ -421,7 +432,7 @@ void atm_compute_moist_coefficients(const Mesh& m, DycoreFields& f) {
         f.cqu(k, iEdge) = 1.0 / (1.0 + qtotal);
       }
     }
-  }
+  });
 }
 
 // physics_get_tend with every scheme off (src/core_atmosphere/physics/mpas_atmphys_todynamics.F:98-279, work routine
@@ -435,30 +446,36 @@ void physics_get_tend(const Mesh& m, const State& s, DycoreFields& f) {
   fill_all(f.tend_ru_physics, 0.0);      // :214
   fill_all(f.tend_rtheta_physics, 0.0);  // :215
   fill_all(f.tend_rho_physics, 0.0);     // :216
-  for (int i = 1; i <= m.nCellsSolve(); ++i)  // :489-495, tend_th = 0 (:210-211)
+  parallel_for(1, m.nCellsSolve(), [=, s = view(s), f = view(f)] CPPMPAS_LAMBDA(int i) {  // :489-495, tend_th = 0 (:210-211)
     for (int k = 1; k <= nVertLevels; ++k) {
       const real coeff = (1. + R_v_R_d * s.scalars(f.index_qv, k, i));
       real tend_th = 0.0;
       tend_th = coeff * tend_th + R_v_R_d * s.theta_m(k, i) * f.tend_scalars(f.index_qv, k, i) / coeff;
       f.tend_rtheta_physics(k, i) = f.tend_rtheta_physics(k, i) + tend_th;
     }
+  });
 }
 
 // TI:3286-3507 (t = theta_m of time level 2, dts = rk_sub_timestep(1))
 void atm_compute_vert_imp_coefs(const Mesh& m, const State& s, const Diag& d, DycoreFields& f, real dts) {
   check_arrays(m, &s, &d, f);
   const int nVertLevels = m.nVertLevels;
-  const auto &zz = m.zz, &fzm = m.fzm, &fzp = m.fzp, &rdzu = m.rdzu, &rdzw = m.rdzw;
-  const auto &etp = m.etp, &ewp = m.ewp;
-  const auto &p = d.exner, &pb = d.exner_base, &rt = d.rtheta_p, &rtb = d.rtheta_base, &rb = s.rho_base;
-  const auto& t = f.theta_m2;
-  auto &cofwr = f.cofwr, &cofwz = f.cofwz, &coftz = f.coftz, &cofwt = f.cofwt, &cofrz = f.cofrz;
-  auto &a_tri = f.a_tri, &alpha_tri = f.alpha_tri, &gamma_tri = f.gamma_tri, &cqw = f.cqw;
+  fits_column(nVertLevels, "atm_compute_vert_imp_coefs");
+  const auto zz = m.zz.cview(), fzm = m.fzm.cview(), fzp = m.fzp.cview(), rdzu = m.rdzu.cview(), rdzw = m.rdzw.cview();
+  const auto etp = m.etp.cview(), ewp = m.ewp.cview();
+  const auto p = d.exner.cview(), pb = d.exner_base.cview(), rt = d.rtheta_p.cview(), rtb = d.rtheta_base.cview(),
+             rb = s.rho_base.cview();
+  const auto t = f.theta_m2.cview();
+  auto cofwr = f.cofwr.view(), cofwz = f.cofwz.view(), coftz = f.coftz.view(), cofwt = f.cofwt.view(),
+       cofrz = f.cofrz.view();
+  auto a_tri = f.a_tri.view(), alpha_tri = f.alpha_tri.view(), gamma_tri = f.gamma_tri.view(), cqw = f.cqw.view();
   constexpr real rcv = rgas / (cp - rgas);  // :3422
   constexpr real c2 = cp * rcv;             // :3423
-  std::vector<real> b_tri(nVertLevels + 1), c_tri(nVertLevels + 1);
-  for (int k = 1; k <= nVertLevels; ++k) cofrz(k) = rdzw(k);  // :3428-3430
-  for (int iCell = 1; iCell <= m.nCellsSolve(); ++iCell) {    // :3435-3502
+  parallel_for(1, nVertLevels, [=] CPPMPAS_LAMBDA(int k) {
+    cofrz(k) = rdzw(k);  // :3428-3430
+  });
+  parallel_for(1, m.nCellsSolve(), [=, f = view(f)] CPPMPAS_LAMBDA(int iCell) {    // :3435-3502
+    Column<real> b_tri(nVertLevels + 1), c_tri(nVertLevels + 1);
     for (int k = 2; k <= nVertLevels; ++k) cofwr(k, iCell) = .5 * gravity * (fzm(k) * zz(k, iCell) + fzp(k) * zz(k - 1, iCell));
     coftz(1, iCell) = 0.0;
     for (int k = 2; k <= nVertLevels; ++k) {  // :3445-3449
@@ -495,7 +512,7 @@ void atm_compute_vert_imp_coefs(const Mesh& m, const State& s, const Diag& d, Dy
       alpha_tri(k, iCell) = 1. / (1.0 + (dts * dts) * (b_tri[k] - a_tri(k, iCell) * gamma_tri(k - 1, iCell)));
       gamma_tri(k, iCell) = (dts * dts) * c_tri[k] * alpha_tri(k, iCell);
     }
-  }
+  });
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -523,14 +540,19 @@ void atm_compute_dyn_tend(const DycoreConfig& cfg, const Mesh& m, const State& s
   check_arrays(m, &s, &d, f);
   if (rk_step < 1 || rk_step > 3) throw Error("atm_compute_dyn_tend: rk_step outside 1..3");
   const int nVertLevels = m.nVertLevels;
-  const auto &rho_zz = f.rho_zz2, &u = f.u2, &w = f.w2, &theta_m = f.theta_m2;
-  const auto& theta_m_save = s.theta_m;  // time level 1 (TI:5934)
-  const auto &rb = s.rho_base, &rr_save = f.rho_p_save, &ru = d.ru, &ru_save = f.ru_save, &rw = d.rw;
-  const auto &rw_save = f.rw_save, &ke = d.ke, &pv_edge = d.pv_edge, &pp = d.pressure_p, &rho_edge = d.rho_edge;
-  const auto &zz = m.zz, &fzm = m.fzm, &fzp = m.fzp, &rdzw = m.rdzw, &rdzu = m.rdzu;
-  auto &tend_u = f.tend_u, &tend_w = f.tend_w, &tend_theta = f.tend_theta, &tend_rho = f.tend_rho;
-  auto &tend_u_euler = f.tend_u_euler, &tend_w_euler = f.tend_w_euler, &tend_theta_euler = f.tend_theta_euler;
-  auto &h_divergence = f.h_divergence, &dpdz = f.dpdz, &eddy_visc_horz = f.eddy_visc_horz;
+  fits_column(nVertLevels, "atm_compute_dyn_tend");
+  const auto rho_zz = f.rho_zz2.cview(), u = f.u2.cview(), w = f.w2.cview(), theta_m = f.theta_m2.cview();
+  const auto theta_m_save = s.theta_m.cview();  // time level 1 (TI:5934)
+  const auto rb = s.rho_base.cview(), rr_save = f.rho_p_save.cview(), ru = d.ru.cview(), ru_save = f.ru_save.cview(),
+             rw = d.rw.cview();
+  const auto rw_save = f.rw_save.cview(), ke = d.ke.cview(), pv_edge = d.pv_edge.cview(), pp = d.pressure_p.cview(),
+             rho_edge = d.rho_edge.cview();
+  const auto zz = m.zz.cview(), fzm = m.fzm.cview(), fzp = m.fzp.cview(), rdzw = m.rdzw.cview(), rdzu = m.rdzu.cview();
+  auto tend_u = f.tend_u.view(), tend_w = f.tend_w.view(), tend_theta = f.tend_theta.view(),
+       tend_rho = f.tend_rho.view();
+  auto tend_u_euler = f.tend_u_euler.view(), tend_w_euler = f.tend_w_euler.view(),
+       tend_theta_euler = f.tend_theta_euler.view();
+  auto h_divergence = f.h_divergence.view(), dpdz = f.dpdz.view(), eddy_visc_horz = f.eddy_visc_horz.view();
   const real coef_3rd_order = cfg.config_coef_3rd_order;
 
   const real prandtl_inv = 1.0 / prandtl;  // :6322
@@ -540,15 +562,17 @@ void atm_compute_dyn_tend(const DycoreConfig& cfg, const Mesh& m, const State& s
   real h_mom_eddy_visc4 = cfg.config_h_mom_eddy_visc4, h_theta_eddy_visc4 = cfg.config_h_theta_eddy_visc4;
 
   if (rk_step == 1) {  // :6329-6410
-    for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge)
+    parallel_for(1, m.nEdges, [=] CPPMPAS_LAMBDA(int iEdge) {
       for (int k = 1; k <= nVertLevels; ++k) tend_u_euler(k, iEdge) = 0.0;
+    });
     if (cfg.config_les_model != "none") throw Error("atm_compute_dyn_tend: LES models (TI:6371-6388) are not ported");
     if (cfg.config_horiz_mixing == "2d_smagorinsky") {  // :6346-6352 (v: the diagnostics of the last rk_step 3)
-      smagorinsky_2d(m, eddy_visc_horz, u, d.v, cfg.config_smagorinsky_coef, cfg.config_len_disp, invDt,
+      smagorinsky_2d(m, f.eddy_visc_horz, f.u2, d.v, cfg.config_smagorinsky_coef, cfg.config_len_disp, invDt,
                      cfg.config_visc4_2dsmag, h_mom_eddy_visc4, h_theta_eddy_visc4);
     } else if (cfg.config_horiz_mixing == "2d_fixed") {  // :6354-6367
-      for (int iCell = 1; iCell <= m.nCells; ++iCell)
+      parallel_for(1, m.nCells, [=, cfg = view(cfg)] CPPMPAS_LAMBDA(int iCell) {
         for (int k = 1; k <= nVertLevels; ++k) eddy_visc_horz(k, iCell) = cfg.config_h_theta_eddy_visc2;
+      });
       h_mom_eddy_visc4 = cfg.config_h_mom_eddy_visc4;
       h_theta_eddy_visc4 = cfg.config_h_theta_eddy_visc4;
     } else {
@@ -557,30 +581,31 @@ void atm_compute_dyn_tend(const DycoreConfig& cfg, const Mesh& m, const State& s
     if (cfg.config_mpas_cam_coef > 0.0) throw Error("atm_compute_dyn_tend: the CAM top filter (TI:6390) is not ported");
   }
 
-  for (int iCell = 1; iCell <= m.nCells; ++iCell) {  // :6417-6434
+  parallel_for(1, m.nCells, [=, m = view(m)] CPPMPAS_LAMBDA(int iCell) {  // :6417-6434
     for (int k = 1; k <= nVertLevels; ++k) h_divergence(k, iCell) = 0.0;
     for (int i = 1; i <= m.nEdgesOnCell(iCell); ++i) {
       const int iEdge = m.edgesOnCell(i, iCell);
       const real edge_sign = m.edgesOnCell_sign(i, iCell) * m.dvEdge(iEdge);
       for (int k = 1; k <= nVertLevels; ++k) h_divergence(k, iCell) = h_divergence(k, iCell) + edge_sign * ru(k, iEdge);
     }
-  }
-  for (int iCell = 1; iCell <= m.nCells; ++iCell) {  // :6441-6447
+  });
+  parallel_for(1, m.nCells, [=, m = view(m)] CPPMPAS_LAMBDA(int iCell) {  // :6441-6447
     const real r = m.invAreaCell(iCell);
     for (int k = 1; k <= nVertLevels; ++k) h_divergence(k, iCell) = h_divergence(k, iCell) * r;
-  }
+  });
 
   if (rk_step == 1) {  // :6455-6472
-    for (int iCell = 1; iCell <= m.nCells; ++iCell)
+    parallel_for(1, m.nCells, [=, f = view(f)] CPPMPAS_LAMBDA(int iCell) {
       for (int k = 1; k <= nVertLevels; ++k) {
         tend_rho(k, iCell) = -h_divergence(k, iCell) - rdzw(k) * (rw(k + 1, iCell) - rw(k, iCell)) +
                              f.tend_rho_physics(k, iCell);
         dpdz(k, iCell) = -(gravity * (rb(k, iCell) * (f.qtot(k, iCell)) + rr_save(k, iCell) * (1. + f.qtot(k, iCell))));
       }
+    });
   }
 
-  std::vector<real> wduz(nVertLevels + 2), q(nVertLevels + 1);
-  for (int iEdge = 1; iEdge <= m.nEdgesSolve(); ++iEdge) {  // :6482-6573
+  parallel_for(1, m.nEdgesSolve(), [=, m = view(m), s = view(s), f = view(f)] CPPMPAS_LAMBDA(int iEdge) {  // :6482-6573
+    Column<real> wduz(nVertLevels + 2), q(nVertLevels + 1);
     const int cell1 = m.cellsOnEdge(1, iEdge);
     const int cell2 = m.cellsOnEdge(2, iEdge);
     if (rk_step == 1) {  // :6489-6497
@@ -633,7 +658,7 @@ void atm_compute_dyn_tend(const DycoreConfig& cfg, const Mesh& m, const State& s
     for (k = 1; k <= nVertLevels; ++k)  // :6556-6571 (CURVATURE is not defined in the reference build)
       tend_u(k, iEdge) = tend_u(k, iEdge) + rho_edge(k, iEdge) * (q[k] - (ke(k, cell2) - ke(k, cell1)) * m.invDcEdge(iEdge)) -
                          u(k, iEdge) * 0.5 * (h_divergence(k, cell1) + h_divergence(k, cell2));
-  }
+  });
 
   DissipationArgs da;
   da.config_mix_full = cfg.config_mix_full;
@@ -645,16 +670,18 @@ void atm_compute_dyn_tend(const DycoreConfig& cfg, const Mesh& m, const State& s
   da.prandtl_inv = prandtl_inv;
   da.state_init = &s;  // u_init, v_init, t_init (config_mix_full = .false., DM:850-882, 1442-1466)
   if (rk_step == 1)  // :6582-6601
-    u_dissipation_3d(m, da, eddy_visc_horz, f.delsq_u, f.delsq_vorticity, f.delsq_divergence, u, d.divergence, d.vorticity, rho_edge, tend_u_euler);
+    u_dissipation_3d(m, da, f.eddy_visc_horz, f.delsq_u, f.delsq_vorticity, f.delsq_divergence, f.u2, d.divergence,
+                     d.vorticity, d.rho_edge, f.tend_u_euler);
 
   if (cfg.config_rayleigh_damp_u) throw Error("atm_compute_dyn_tend: Rayleigh damping of u (TI:6608) is not ported");
-  for (int iEdge = 1; iEdge <= m.nEdgesSolve(); ++iEdge)  // :6635-6642
+  parallel_for(1, m.nEdgesSolve(), [=, f = view(f)] CPPMPAS_LAMBDA(int iEdge) {  // :6635-6642
     for (int k = 1; k <= nVertLevels; ++k)
       tend_u(k, iEdge) = tend_u(k, iEdge) + tend_u_euler(k, iEdge) + f.tend_ru_physics(k, iEdge);
+  });
 
   // ----------- rhs for w
-  std::vector<real> ru_edge_w(nVertLevels + 1), flux_arr(nVertLevels + 1);
-  for (int iCell = 1; iCell <= m.nCellsSolve(); ++iCell) {  // :6654-6697
+  parallel_for(1, m.nCellsSolve(), [=, m = view(m)] CPPMPAS_LAMBDA(int iCell) {  // :6654-6697
+    Column<real> ru_edge_w(nVertLevels + 1), flux_arr(nVertLevels + 1);
     for (int k = 1; k <= nVertLevels + 1; ++k) tend_w(k, iCell) = 0.0;
     for (int i = 1; i <= m.nEdgesOnCell(iCell); ++i) {
       const int iEdge = m.edgesOnCell(i, iCell);
@@ -670,12 +697,12 @@ void atm_compute_dyn_tend(const DycoreConfig& cfg, const Mesh& m, const State& s
       for (int k = 2; k <= nVertLevels; ++k)
         tend_w(k, iCell) = tend_w(k, iCell) - m.edgesOnCell_sign(i, iCell) * ru_edge_w[k] * flux_arr[k];
     }
-  }
+  });
   if (rk_step == 1)  // :6725-6740
-    w_dissipation_3d(m, da, f.delsq_w, w, rho_edge, rho_zz, eddy_visc_horz, tend_w_euler);
+    w_dissipation_3d(m, da, f.delsq_w, f.w2, d.rho_edge, f.rho_zz2, f.eddy_visc_horz, f.tend_w_euler);
 
-  std::vector<real> wdwz(nVertLevels + 2);
-  for (int iCell = 1; iCell <= m.nCellsSolve(); ++iCell) {  // :6755-6790
+  parallel_for(1, m.nCellsSolve(), [=, m = view(m), f = view(f)] CPPMPAS_LAMBDA(int iCell) {  // :6755-6790
+    Column<real> wdwz(nVertLevels + 2);
     wdwz[1] = 0.0;
     int k = 2;
     wdwz[k] = 0.25 * (rw(k, iCell) + rw(k - 1, iCell)) * (w(k, iCell) + w(k - 1, iCell));
@@ -693,12 +720,14 @@ void atm_compute_dyn_tend(const DycoreConfig& cfg, const Mesh& m, const State& s
             tend_w_euler(k, iCell) - f.cqw(k, iCell) * (rdzu(k) * (pp(k, iCell) - pp(k - 1, iCell)) -
                                                         (fzm(k) * dpdz(k, iCell) + fzp(k) * dpdz(k - 1, iCell)));
     }
-  }
-  for (int iCell = 1; iCell <= m.nCellsSolve(); ++iCell)  // :6797-6803
+  });
+  parallel_for(1, m.nCellsSolve(), [=] CPPMPAS_LAMBDA(int iCell) {  // :6797-6803
     for (int k = 2; k <= nVertLevels; ++k) tend_w(k, iCell) = tend_w(k, iCell) + tend_w_euler(k, iCell);
+  });
 
   // ----------- rhs for theta
-  for (int iCell = 1; iCell <= m.nCellsSolve(); ++iCell) {  // :6814-6848
+  parallel_for(1, m.nCellsSolve(), [=, m = view(m)] CPPMPAS_LAMBDA(int iCell) {  // :6814-6848
+    Column<real> flux_arr(nVertLevels + 1);
     for (int k = 1; k <= nVertLevels; ++k) tend_theta(k, iCell) = 0.0;
     for (int i = 1; i <= m.nEdgesOnCell(iCell); ++i) {
       const int iEdge = m.edgesOnCell(i, iCell);
@@ -713,9 +742,9 @@ void atm_compute_dyn_tend(const DycoreConfig& cfg, const Mesh& m, const State& s
       for (int k = 1; k <= nVertLevels; ++k)
         tend_theta(k, iCell) = tend_theta(k, iCell) - m.edgesOnCell_sign(i, iCell) * ru(k, iEdge) * flux_arr[k];
     }
-  }
+  });
   if (rk_step > 1) {  // :6853-6874
-    for (int iCell = 1; iCell <= m.nCellsSolve(); ++iCell)
+    parallel_for(1, m.nCellsSolve(), [=, m = view(m)] CPPMPAS_LAMBDA(int iCell) {
       for (int i = 1; i <= m.nEdgesOnCell(iCell); ++i) {
         const int iEdge = m.edgesOnCell(i, iCell);
         const int cell1 = m.cellsOnEdge(1, iEdge);
@@ -726,12 +755,14 @@ void atm_compute_dyn_tend(const DycoreConfig& cfg, const Mesh& m, const State& s
           tend_theta(k, iCell) = tend_theta(k, iCell) - flux;
         }
       }
+    });
   }
   if (rk_step == 1)  // :6881-6903
-    scalar_dissipation_3d_les(m, da, f.delsq_theta, theta_m, rho_edge, rho_zz, eddy_visc_horz, tend_theta_euler);
+    scalar_dissipation_3d_les(m, da, f.delsq_theta, f.theta_m2, d.rho_edge, f.rho_zz2, f.eddy_visc_horz,
+                              f.tend_theta_euler);
 
-  std::vector<real> wdtz(nVertLevels + 2);
-  for (int iCell = 1; iCell <= m.nCellsSolve(); ++iCell) {  // :6913-6939
+  parallel_for(1, m.nCellsSolve(), [=, m = view(m), f = view(f)] CPPMPAS_LAMBDA(int iCell) {  // :6913-6939
+    Column<real> wdtz(nVertLevels + 2);
     wdtz[1] = 0.0;
     int k = 2;
     wdtz[k] = rw(k, iCell) * (fzm(k) * theta_m(k, iCell) + fzp(k) * theta_m(k - 1, iCell));
@@ -750,10 +781,11 @@ void atm_compute_dyn_tend(const DycoreConfig& cfg, const Mesh& m, const State& s
       f.rthdynten(k, iCell) = (tend_theta(k, iCell) - tend_rho(k, iCell) * theta_m(k, iCell)) / rho_zz(k, iCell);
       tend_theta(k, iCell) = tend_theta(k, iCell) + rho_zz(k, iCell) * f.rt_diabatic_tend(k, iCell);
     }
-  }
-  for (int iCell = 1; iCell <= m.nCellsSolve(); ++iCell)  // :6944-6950
+  });
+  parallel_for(1, m.nCellsSolve(), [=, f = view(f)] CPPMPAS_LAMBDA(int iCell) {  // :6944-6950
     for (int k = 1; k <= nVertLevels; ++k)
       tend_theta(k, iCell) = tend_theta(k, iCell) + tend_theta_euler(k, iCell) + f.tend_rtheta_physics(k, iCell);
+  });
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -761,9 +793,9 @@ void atm_compute_dyn_tend(const DycoreConfig& cfg, const Mesh& m, const State& s
 void atm_set_smlstep_pert_variables(const Mesh& m, DycoreFields& f) {
   check_arrays(m, nullptr, nullptr, f);
   const int nVertLevels = m.nVertLevels;
-  const auto& u_tend = f.tend_u;
-  auto& w_tend = f.tend_w;
-  for (int iCell = 1; iCell <= m.nCellsSolve(); ++iCell) {
+  const auto u_tend = f.tend_u.cview();
+  auto w_tend = f.tend_w.view();
+  parallel_for(1, m.nCellsSolve(), [=, m = view(m)] CPPMPAS_LAMBDA(int iCell) {
     for (int i = 1; i <= m.nEdgesOnCell(iCell); ++i) {  // :3622-3631
       const int iEdge = m.edgesOnCell(i, iCell);
       for (int k = 2; k <= nVertLevels; ++k) {
@@ -774,7 +806,7 @@ void atm_set_smlstep_pert_variables(const Mesh& m, DycoreFields& f) {
     }
     for (int k = 2; k <= nVertLevels; ++k)  // :3634-3636
       w_tend(k, iCell) = (m.fzm(k) * m.zz(k, iCell) + m.fzp(k) * m.zz(k - 1, iCell)) * w_tend(k, iCell);
-  }
+  });
 }
 
 // TI:3645-4109: rho_zz and w of time level 2, theta_m of time level 1 (TI:3713-3718); specZoneMask* = 0
@@ -783,23 +815,27 @@ void atm_advance_acoustic_step(const Mesh& m, const State& s, const Diag& d, Dyc
   check_arrays(m, &s, &d, f);
   if (small_step < 1) throw Error("atm_advance_acoustic_step: small_step < 1");
   const int nVertLevels = m.nVertLevels;
-  const auto &rho_zz = f.rho_zz2, &w = f.w2, &theta_m = s.theta_m;
-  const auto &zz = m.zz, &fzm = m.fzm, &fzp = m.fzp, &rdzw = m.rdzw, &dss = m.dss;
-  const auto &etp = m.etp, &etm = m.etm, &ewp = m.ewp, &ewm = m.ewm;
-  const auto &exner = d.exner, &rw = d.rw, &rw_save = f.rw_save;
-  const auto &cqu = f.cqu, &cofwt = f.cofwt, &coftz = f.coftz, &cofrz = f.cofrz, &cofwr = f.cofwr, &cofwz = f.cofwz;
-  const auto &a_tri = f.a_tri, &alpha_tri = f.alpha_tri, &gamma_tri = f.gamma_tri;
-  const auto &tend_ru = f.tend_u, &tend_rho = f.tend_rho, &tend_rt = f.tend_theta, &tend_rw = f.tend_w;
-  auto &ru_p = f.ru_p, &rw_p = f.rw_p, &rtheta_pp = f.rtheta_pp, &rtheta_pp_old = f.rtheta_pp_old;
-  auto &ruAvg = f.ruAvg, &wwAvg = f.wwAvg, &rho_pp = f.rho_pp;
+  fits_column(nVertLevels, "atm_advance_acoustic_step");
+  const auto rho_zz = f.rho_zz2.cview(), w = f.w2.cview(), theta_m = s.theta_m.cview();
+  const auto zz = m.zz.cview(), fzm = m.fzm.cview(), fzp = m.fzp.cview(), rdzw = m.rdzw.cview(), dss = m.dss.cview();
+  const auto etp = m.etp.cview(), etm = m.etm.cview(), ewp = m.ewp.cview(), ewm = m.ewm.cview();
+  const auto exner = d.exner.cview(), rw = d.rw.cview(), rw_save = f.rw_save.cview();
+  const auto cqu = f.cqu.cview(), cofwt = f.cofwt.cview(), coftz = f.coftz.cview(), cofrz = f.cofrz.cview(),
+             cofwr = f.cofwr.cview(), cofwz = f.cofwz.cview();
+  const auto a_tri = f.a_tri.cview(), alpha_tri = f.alpha_tri.cview(), gamma_tri = f.gamma_tri.cview();
+  const auto tend_ru = f.tend_u.cview(), tend_rho = f.tend_rho.cview(), tend_rt = f.tend_theta.cview(),
+             tend_rw = f.tend_w.cview();
+  auto ru_p = f.ru_p.view(), rw_p = f.rw_p.view(), rtheta_pp = f.rtheta_pp.view(),
+       rtheta_pp_old = f.rtheta_pp_old.view();
+  auto ruAvg = f.ruAvg.view(), wwAvg = f.wwAvg.view(), rho_pp = f.rho_pp.view();
   constexpr real rcv = rgas / (cp - rgas);  // :3876
   constexpr real c2 = cp * rcv;             // :3877
 
   if (small_step != 1) {  // :3881-3921
-    for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge) {
+    parallel_for(1, m.nEdges, [=, m = view(m)] CPPMPAS_LAMBDA(int iEdge) {
       const int cell1 = m.cellsOnEdge(1, iEdge);
       const int cell2 = m.cellsOnEdge(2, iEdge);
-      if (!(cell1 <= m.nCellsSolve() || cell2 <= m.nCellsSolve())) continue;  // :3901 (always true on one rank)
+      if (!(cell1 <= m.nCellsSolve() || cell2 <= m.nCellsSolve())) return;  // :3901 (always true on one rank)
       for (int k = 1; k <= nVertLevels; ++k) {
         real pgrad = ((rtheta_pp(k, cell2) - rtheta_pp(k, cell1)) * m.invDcEdge(iEdge)) / (.5 * (zz(k, cell2) + zz(k, cell1)));
         pgrad = cqu(k, iEdge) * 0.5 * c2 * (exner(k, cell1) + exner(k, cell2)) * pgrad;
@@ -807,26 +843,28 @@ void atm_advance_acoustic_step(const Mesh& m, const State& s, const Diag& d, Dyc
         ru_p(k, iEdge) = ru_p(k, iEdge) + dts * (tend_ru(k, iEdge) - (1.0 - m.specZoneMaskEdge(iEdge)) * pgrad);
       }
       for (int k = 1; k <= nVertLevels; ++k) ruAvg(k, iEdge) = ruAvg(k, iEdge) + ru_p(k, iEdge);
-    }
+    });
   } else {  // :3924-3950
-    for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge) {
+    parallel_for(1, m.nEdges, [=, m = view(m)] CPPMPAS_LAMBDA(int iEdge) {
       const int cell1 = m.cellsOnEdge(1, iEdge);
       const int cell2 = m.cellsOnEdge(2, iEdge);
-      if (!(cell1 <= m.nCellsSolve() || cell2 <= m.nCellsSolve())) continue;  // :3934 (always true on one rank)
+      if (!(cell1 <= m.nCellsSolve() || cell2 <= m.nCellsSolve())) return;  // :3934 (always true on one rank)
       for (int k = 1; k <= nVertLevels; ++k) ru_p(k, iEdge) = dts * tend_ru(k, iEdge);
       for (int k = 1; k <= nVertLevels; ++k) ruAvg(k, iEdge) = ru_p(k, iEdge);
-    }
+    });
   }
   if (small_step == 1) {  // :3954-3972
-    for (int iCell = 1; iCell <= m.nCells; ++iCell)
+    parallel_for(1, m.nCells, [=] CPPMPAS_LAMBDA(int iCell) {
       for (int k = 1; k <= nVertLevels; ++k) rtheta_pp_old(k, iCell) = 0.0;
+    });
   } else {
-    for (int iCell = 1; iCell <= m.nCells; ++iCell)
+    parallel_for(1, m.nCells, [=] CPPMPAS_LAMBDA(int iCell) {
       for (int k = 1; k <= nVertLevels; ++k) rtheta_pp_old(k, iCell) = rtheta_pp(k, iCell);
+    });
   }
 
-  std::vector<real> ts(nVertLevels + 1), rs(nVertLevels + 1);
-  for (int iCell = 1; iCell <= m.nCellsSolve(); ++iCell) {  // :3978-4105
+  parallel_for(1, m.nCellsSolve(), [=, m = view(m)] CPPMPAS_LAMBDA(int iCell) {  // :3978-4105
+    Column<real> ts(nVertLevels + 1), rs(nVertLevels + 1);
     if (small_step == 1) {
       for (int k = 1; k <= nVertLevels; ++k) {
         wwAvg(k, iCell) = 0.0;
@@ -838,7 +876,7 @@ void atm_advance_acoustic_step(const Mesh& m, const State& s, const Diag& d, Dyc
       rw_p(nVertLevels + 1, iCell) = 0.0;
     }
     if (m.specZoneMaskCell(iCell) != 0.0)
-      throw Error("atm_advance_acoustic_step: specified-zone cells (TI:4093-4103) are not ported");
+      return kernel_fail("atm_advance_acoustic_step: specified-zone cells (TI:4093-4103) are not ported");
     for (int k = 1; k <= nVertLevels; ++k) {
       ts[k] = 0.0;
       rs[k] = 0.0;
@@ -888,27 +926,27 @@ void atm_advance_acoustic_step(const Mesh& m, const State& s, const Diag& d, Dyc
       rtheta_pp(k, iCell) = ts[k] - dts * rdzw(k) * (ewp(k + 1) * coftz(k + 1, iCell) * rw_p(k + 1, iCell) -
                                                      ewp(k) * coftz(k, iCell) * rw_p(k, iCell));
     }
-  }
+  });
 }
 
 // TI:4112-4193 (theta_m of time level 1)
 void atm_divergence_damping_3d(const DycoreConfig& cfg, const Mesh& m, const State& s, DycoreFields& f, real dts) {
   check_arrays(m, &s, nullptr, f);
   const int nVertLevels = m.nVertLevels;
-  const auto& theta_m = s.theta_m;
+  const auto theta_m = s.theta_m.cview();
   const real rdts = 1.0 / dts;                                                   // :4153
   const real coef_divdamp = 2.0 * cfg.config_smdiv * cfg.config_len_disp * rdts;  // :4154
-  for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge) {  // :4162-4188
+  parallel_for(1, m.nEdges, [=, m = view(m), f = view(f)] CPPMPAS_LAMBDA(int iEdge) {  // :4162-4188
     const int cell1 = m.cellsOnEdge(1, iEdge);
     const int cell2 = m.cellsOnEdge(2, iEdge);
-    if (!(cell1 <= m.nCellsSolve() || cell2 <= m.nCellsSolve())) continue;  // :4168 (always true on one rank)
+    if (!(cell1 <= m.nCellsSolve() || cell2 <= m.nCellsSolve())) return;  // :4168 (always true on one rank)
     for (int k = 1; k <= nVertLevels; ++k) {
       const real divCell1 = -(f.rtheta_pp(k, cell1) - f.rtheta_pp_old(k, cell1));
       const real divCell2 = -(f.rtheta_pp(k, cell2) - f.rtheta_pp_old(k, cell2));
       f.ru_p(k, iEdge) = f.ru_p(k, iEdge) + coef_divdamp * (divCell2 - divCell1) * (1.0 - m.specZoneMaskEdge(iEdge)) /
                                                 (theta_m(k, cell1) + theta_m(k, cell2));
     }
-  }
+  });
 }
 
 // TI:4196-4527 (state of time level 2; bdyMaskCell = 0 <= nRelaxZone for every cell)
@@ -918,20 +956,23 @@ void atm_recover_large_step_variables(const Mesh& m, State& s, Diag& d, DycoreFi
   // as atm_srk3 passes them (TI:2427): ns = 0 would make invNs infinite
   if (rk_step < 1 || rk_step > 3 || ns < 1) throw Error("atm_recover_large_step_variables: rk_step outside 1..3 or ns < 1");
   const int nVertLevels = m.nVertLevels;
-  auto &rho_zz = f.rho_zz2, &w = f.w2, &theta_m = f.theta_m2, &u = f.u2;
-  auto &rw = d.rw, &rtheta_p = d.rtheta_p, &rho_p = d.rho_p, &ru = d.ru, &exner = d.exner, &pressure_p = d.pressure_p;
-  auto &wwAvg = f.wwAvg, &ruAvg = f.ruAvg;
-  const auto &zz = m.zz, &fzm = m.fzm, &fzp = m.fzp;
-  const auto &rtheta_base = d.rtheta_base, &exner_base = d.exner_base, &rho_base = s.rho_base;
+  auto rho_zz = f.rho_zz2.view(), w = f.w2.view(), theta_m = f.theta_m2.view(), u = f.u2.view();
+  auto rw = d.rw.view(), rtheta_p = d.rtheta_p.view(), rho_p = d.rho_p.view(), ru = d.ru.view(),
+       exner = d.exner.view(), pressure_p = d.pressure_p.view();
+  auto wwAvg = f.wwAvg.view(), ruAvg = f.ruAvg.view();
+  const auto zz = m.zz.cview(), fzm = m.fzm.cview(), fzp = m.fzp.cview();
+  const auto rtheta_base = d.rtheta_base.cview(), exner_base = d.exner_base.cview(), rho_base = s.rho_base.cview();
   constexpr real rcv = rgas / (cp - rgas);  // :4382
   constexpr real p0 = 1.0e+05;              // :4383
   constexpr real rgas_p0 = rgas / p0;       // (rgas/p0) of :4439, folded
   const real cf1 = m.cf1(1), cf2 = m.cf2(1), cf3 = m.cf3(1);
 
-  for (int k = 1; k <= nVertLevels; ++k) rho_zz(k, m.nCells + 1) = 1.0;  // :4389-4391
+  parallel_for(1, nVertLevels, [=, m = view(m)] CPPMPAS_LAMBDA(int k) {
+    rho_zz(k, m.nCells + 1) = 1.0;  // :4389-4391
+  });
   const real invNs = 1 / static_cast<real>(ns);                         // :4397
 
-  for (int iCell = 1; iCell <= m.nCells; ++iCell) {  // :4401-4427
+  parallel_for(1, m.nCells, [=, f = view(f)] CPPMPAS_LAMBDA(int iCell) {  // :4401-4427
     for (int k = 1; k <= nVertLevels; ++k) {
       rho_p(k, iCell) = f.rho_p_save(k, iCell) + f.rho_pp(k, iCell);
       rho_zz(k, iCell) = rho_p(k, iCell) + rho_base(k, iCell);
@@ -945,10 +986,10 @@ void atm_recover_large_step_variables(const Mesh& m, State& s, Diag& d, DycoreFi
     }
     rw(nVertLevels + 1, iCell) = 0.0;
     w(nVertLevels + 1, iCell) = 0.0;
-  }
+  });
 
   if (rk_step == 3) {  // :4430-4445
-    for (int iCell = 1; iCell <= m.nCells; ++iCell) {
+    parallel_for(1, m.nCells, [=, f = view(f)] CPPMPAS_LAMBDA(int iCell) {
       auto lane = [&](int k, bool vector) {
         rtheta_p(k, iCell) = f.rtheta_p_save(k, iCell) + f.rtheta_pp(k, iCell) -
                              dt * rho_zz(k, iCell) * f.rt_diabatic_tend(k, iCell);
@@ -964,16 +1005,17 @@ void atm_recover_large_step_variables(const Mesh& m, State& s, Diag& d, DycoreFi
         lane(k + 1, true);
       }
       if (k <= nVertLevels) lane(k, false);
-    }
+    });
   } else {  // :4447-4456
-    for (int iCell = 1; iCell <= m.nCells; ++iCell)
+    parallel_for(1, m.nCells, [=, f = view(f)] CPPMPAS_LAMBDA(int iCell) {
       for (int k = 1; k <= nVertLevels; ++k) {
         rtheta_p(k, iCell) = f.rtheta_p_save(k, iCell) + f.rtheta_pp(k, iCell);
         theta_m(k, iCell) = (rtheta_p(k, iCell) + rtheta_base(k, iCell)) / rho_zz(k, iCell);
       }
+    });
   }
 
-  for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge) {  // :4467-4479
+  parallel_for(1, m.nEdges, [=, m = view(m), f = view(f)] CPPMPAS_LAMBDA(int iEdge) {  // :4467-4479
     const int cell1 = m.cellsOnEdge(1, iEdge);
     const int cell2 = m.cellsOnEdge(2, iEdge);
     for (int k = 1; k <= nVertLevels; ++k) {
@@ -981,9 +1023,9 @@ void atm_recover_large_step_variables(const Mesh& m, State& s, Diag& d, DycoreFi
       ru(k, iEdge) = f.ru_save(k, iEdge) + f.ru_p(k, iEdge);
       u(k, iEdge) = 2. * ru(k, iEdge) / (rho_zz(k, cell1) + rho_zz(k, cell2));
     }
-  }
+  });
 
-  for (int iCell = 1; iCell <= m.nCells; ++iCell) {  // :4486-4523
+  parallel_for(1, m.nCells, [=, m = view(m)] CPPMPAS_LAMBDA(int iCell) {  // :4486-4523
     for (int i = 1; i <= m.nEdgesOnCell(iCell); ++i) {
       const int iEdge = m.edgesOnCell(i, iCell);
       real flux = (cf1 * ru(1, iEdge) + cf2 * ru(2, iEdge) + cf3 * ru(3, iEdge));
@@ -997,7 +1039,7 @@ void atm_recover_large_step_variables(const Mesh& m, State& s, Diag& d, DycoreFi
     }
     w(1, iCell) = w(1, iCell) / (cf1 * rho_zz(1, iCell) + cf2 * rho_zz(2, iCell) + cf3 * rho_zz(3, iCell));
     for (int k = 2; k <= nVertLevels; ++k) w(k, iCell) = w(k, iCell) / (fzm(k) * rho_zz(k, iCell) + fzp(k) * rho_zz(k - 1, iCell));
-  }
+  });
 }
 
 // TI:7668-7832
@@ -1007,45 +1049,57 @@ void atm_rk_dynamics_substep_finish(const Mesh& m, State& s, Diag& d, DycoreFiel
   if (dynamics_split < 1 || dynamics_substep < 1 || dynamics_substep > dynamics_split)
     throw Error("atm_rk_dynamics_substep_finish: dynamics_substep outside 1..dynamics_split");
   const int nVertLevels = m.nVertLevels;
-  for (int k = 1; k <= nVertLevels; ++k) s.theta_m(k, m.nCells + 1) = 0.0;  // :7730
+  parallel_for(1, nVertLevels, [=, m = view(m), s = view(s)] CPPMPAS_LAMBDA(int k) {
+    s.theta_m(k, m.nCells + 1) = 0.0;  // :7730
+  });
   const real inv_dynamics_split = 1.0 / static_cast<real>(dynamics_split);  // :7733
   if (dynamics_substep < dynamics_split) {  // :7735-7767
-    for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge)
+    parallel_for(1, m.nEdges, [=, s = view(s), d = view(d), f = view(f)] CPPMPAS_LAMBDA(int iEdge) {
       for (int k = 1; k <= nVertLevels; ++k) {
         f.ru_save(k, iEdge) = d.ru(k, iEdge);
         s.u(k, iEdge) = f.u2(k, iEdge);
       }
-    for (int iCell = 1; iCell <= m.nCells; ++iCell)
+    });
+    parallel_for(1, m.nCells, [=, s = view(s), d = view(d), f = view(f)] CPPMPAS_LAMBDA(int iCell) {
       for (int k = 1; k <= nVertLevels; ++k) {
         f.rtheta_p_save(k, iCell) = d.rtheta_p(k, iCell);
         f.rho_p_save(k, iCell) = d.rho_p(k, iCell);
         s.theta_m(k, iCell) = f.theta_m2(k, iCell);
         s.rho_zz(k, iCell) = f.rho_zz2(k, iCell);
       }
-    for (int iCell = 1; iCell <= m.nCells; ++iCell)
+    });
+    parallel_for(1, m.nCells, [=, s = view(s), d = view(d), f = view(f)] CPPMPAS_LAMBDA(int iCell) {
       for (int k = 1; k <= nVertLevels + 1; ++k) {
         f.rw_save(k, iCell) = d.rw(k, iCell);
         s.w(k, iCell) = f.w2(k, iCell);
       }
+    });
   }
   if (dynamics_substep == 1) {  // :7769-7785
-    for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge)
+    parallel_for(1, m.nEdges, [=, f = view(f)] CPPMPAS_LAMBDA(int iEdge) {
       for (int k = 1; k <= nVertLevels; ++k) f.ruAvg_split(k, iEdge) = f.ruAvg(k, iEdge);
-    for (int iCell = 1; iCell <= m.nCells; ++iCell)
+    });
+    parallel_for(1, m.nCells, [=, f = view(f)] CPPMPAS_LAMBDA(int iCell) {
       for (int k = 1; k <= nVertLevels + 1; ++k) f.wwAvg_split(k, iCell) = f.wwAvg(k, iCell);
+    });
   } else {  // :7786-7803
-    for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge)
+    parallel_for(1, m.nEdges, [=, f = view(f)] CPPMPAS_LAMBDA(int iEdge) {
       for (int k = 1; k <= nVertLevels; ++k) f.ruAvg_split(k, iEdge) = f.ruAvg(k, iEdge) + f.ruAvg_split(k, iEdge);
-    for (int iCell = 1; iCell <= m.nCells; ++iCell)
+    });
+    parallel_for(1, m.nCells, [=, f = view(f)] CPPMPAS_LAMBDA(int iCell) {
       for (int k = 1; k <= nVertLevels + 1; ++k) f.wwAvg_split(k, iCell) = f.wwAvg(k, iCell) + f.wwAvg_split(k, iCell);
+    });
   }
   if (dynamics_substep == dynamics_split) {  // :7805-7829
-    for (int iEdge = 1; iEdge <= m.nEdges; ++iEdge)
+    parallel_for(1, m.nEdges, [=, f = view(f)] CPPMPAS_LAMBDA(int iEdge) {
       for (int k = 1; k <= nVertLevels; ++k) f.ruAvg(k, iEdge) = f.ruAvg_split(k, iEdge) * inv_dynamics_split;
-    for (int iCell = 1; iCell <= m.nCells; ++iCell)
+    });
+    parallel_for(1, m.nCells, [=, f = view(f)] CPPMPAS_LAMBDA(int iCell) {
       for (int k = 1; k <= nVertLevels + 1; ++k) f.wwAvg(k, iCell) = f.wwAvg_split(k, iCell) * inv_dynamics_split;
-    for (int iCell = 1; iCell <= m.nCells; ++iCell)
+    });
+    parallel_for(1, m.nCells, [=, s = view(s), f = view(f)] CPPMPAS_LAMBDA(int iCell) {
       for (int k = 1; k <= nVertLevels; ++k) s.rho_zz(k, iCell) = f.rho_zz_old_split(k, iCell);
+    });
   }
 }
 
@@ -1057,13 +1111,15 @@ void atm_srk3(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreF
   if (cfg.config_physics_suite != "none" && (!f.phys.get_tend || !f.phys.microphysics))
     throw Error("atm_srk3: config_physics_suite = '" + cfg.config_physics_suite + "' without the physics coupling");
   const int nVertLevels = m.nVertLevels;
-  for (int k = 1; k <= nVertLevels; ++k) f.qtot(k, m.nCells + 1) = 0.0;  // :2023-2028
+  parallel_for(1, nVertLevels, [=, m = view(m), f = view(f)] CPPMPAS_LAMBDA(int k) {
+    f.qtot(k, m.nCells + 1) = 0.0;  // :2023-2028
+  });
   // :2031-2047 scratch physics tendencies, garbage column zeroed
-  for (int k = 1; k <= nVertLevels; ++k) {
+  parallel_for(1, nVertLevels, [=, m = view(m), f = view(f)] CPPMPAS_LAMBDA(int k) {
     f.tend_rtheta_physics(k, m.nCells + 1) = 0.0;
     f.tend_rho_physics(k, m.nCells + 1) = 0.0;
     f.tend_ru_physics(k, m.nEdges + 1) = 0.0;
-  }
+  });
   // :2053-2061
   int dynamics_split = cfg.config_dynamics_split_steps;
   real dt_dynamics = dt;
@@ -1089,7 +1145,8 @@ void atm_srk3(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreF
   // :2105 halo exchange: no-op on one rank
   atm_rk_integration_setup(m, s, d, f);  // :2113
   atm_compute_moist_coefficients(m, f);  // :2129
-  // :2141-2151 (pre/post_physics_get_tend are OpenACC-only): the physics' tendencies, or none (suite 'none')
+  // :2141-2151 (pre/post_physics_get_tend are OpenACC-only): the physics' tendencies (on the host), or none (the
+  // suite 'none')
   if (f.phys.get_tend)
     f.phys.get_tend(s, d, f);
   else
@@ -1099,16 +1156,15 @@ void atm_srk3(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreF
     atm_compute_vert_imp_coefs(m, s, d, f, rk_sub_timestep[1]);  // :2184-2193
     for (int rk_step = 1; rk_step <= 3; ++rk_step) {              // :2207
       // :2227-2245 delsq_* and dpdz are re-allocated per rk_step with the garbage column zeroed
-      for (int k = 1; k <= nVertLevels; ++k) {
+      parallel_for(1, nVertLevels, [=, m = view(m), f = view(f)] CPPMPAS_LAMBDA(int k) {
         f.delsq_theta(k, m.nCells + 1) = 0.0;
         f.delsq_w(k, m.nCells + 1) = 0.0;
         f.delsq_divergence(k, m.nCells + 1) = 0.0;
         f.delsq_u(k, m.nEdges + 1) = 0.0;
         f.delsq_vorticity(k, m.nVertices + 1) = 0.0;
         f.dpdz(k, m.nCells + 1) = 0.0;
-      }
-      atm_compute_dyn_tend(cfg, m, s, d, f, rk_step, dt);  // :2250 (dt: the full time step; dynamics_substep only
-                                                           // enters LES and scalar mixing, both refused)
+      });
+      atm_compute_dyn_tend(cfg, m, s, d, f, rk_step, dt);  // :2250 (dt: the full time step)
       atm_set_smlstep_pert_variables(m, f);                // :2291
       for (int small_step = 1; small_step <= number_sub_steps[rk_step]; ++small_step) {  // :2359-2408
         atm_advance_acoustic_step(m, s, d, f, rk_sub_timestep[rk_step], small_step);    // :2372
@@ -1118,10 +1174,10 @@ void atm_srk3(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreF
       if (cfg.config_scalar_advection && !cfg.config_split_dynamics_transport)  // :2504-2507
         advance_scalars(cfg, m, s, f, rk_step, rk_timestep);
       // :2543-2551 ke_vertex / ke_edge re-allocated, garbage column zeroed
-      for (int k = 1; k <= nVertLevels; ++k) {
+      parallel_for(1, nVertLevels, [=, m = view(m), f = view(f)] CPPMPAS_LAMBDA(int k) {
         f.sdw.ke_vertex(k, m.nVertices + 1) = 0.0;
         f.sdw.ke_edge(k, m.nEdges + 1) = 0.0;
-      }
+      });
       atm_compute_solve_diagnostics(dt, cfg.config_apvm_upwinding, m, f.rho_zz2, f.u2, d, f.sdw, 1, m.nCells, 1,
                                     m.nVertices, 1, m.nEdges, rk_step);  // :2556
     }
@@ -1137,12 +1193,12 @@ void atm_srk3(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreF
   // :2744 mpas_reconstruct of u at time level 2
   mpas_reconstruct_2d(m, f.u2, d.uReconstructX, d.uReconstructY, d.uReconstructZ, d.uReconstructZonal,
                       d.uReconstructMeridional);
-  // :2758-2788 rqvdynten, rthdynten for cu_grell_freitas / cu_ntiedtke
+  // :2758-2788 rqvdynten, rthdynten for cu_grell_freitas / cu_ntiedtke (on the host)
   if (f.phys.dyn_tend_for_convection) f.phys.dyn_tend_for_convection(s, f, dt);
   clamp_negative_scalars(f.scalars2);  // :2799-2800
   // :2806-2817 microphysics (pre_ / post_microphysics are OpenACC-only) on time level 2
   if (f.phys.microphysics) {
-    f.phys.microphysics(s, d, f);
+    f.phys.microphysics(s, d, f);  // the physics suite's driver_microphysics (on the host)
   } else if (cfg.config_microp_scheme != "off" && cfg.config_microp_scheme != "suite") {
     if (!f.mp.active) throw Error("atm_srk3: config_microp_scheme = '" + cfg.config_microp_scheme + "' without microphysics_init");
     driver_microphysics(m, s, f.theta_m2, f.rho_zz2, f.scalars2, d, f.rt_diabatic_tend, f.mp);
@@ -1152,8 +1208,10 @@ void atm_srk3(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreF
 
 // TI:2799-2800: where (scalars_2 < 0.0) scalars_2 = 0.0, the whole array (garbage column included); -0.0 is not < 0
 void clamp_negative_scalars(FArray<real>& scalars) {
-  for (std::size_t i = 0; i < scalars.size(); ++i)
-    if (scalars.data()[i] < 0.0) scalars.data()[i] = 0.0;
+  const auto scalars_2 = scalars.view();
+  parallel_for_n(scalars.size(), [=] CPPMPAS_LAMBDA(std::size_t i) {
+    if (scalars_2[i] < 0.0) scalars_2[i] = 0.0;
+  });
 }
 
 void atm_timestep(const DycoreConfig& cfg, const Mesh& m, State& s, Diag& d, DycoreFields& f, real dt,
@@ -1188,12 +1246,13 @@ void atm_compute_output_diagnostics(const Mesh& m, State& s, Diag& d) {
     if (s.scalar_names[k] == "qv") index_qv = static_cast<int>(k) + 1;
   if (index_qv == 0) throw Error("atm_compute_output_diagnostics: qv is not an active scalar");
   if (!d.pressure.allocated()) d.pressure.allocate({m.nVertLevels, m.nCells + 1}, 0.0);  // Registry default 0
-  for (int iCell = 1; iCell <= m.nCells; ++iCell)  // mpas_atm_core.F:957-963
+  parallel_for(1, m.nCells, [=, m = view(m), s = view(s), d = view(d)] CPPMPAS_LAMBDA(int iCell) {  // mpas_atm_core.F:957-963
     for (int k = 1; k <= m.nVertLevels; ++k) {
       s.theta(k, iCell) = s.theta_m(k, iCell) / (1. + rvord * s.scalars(index_qv, k, iCell));
       s.rho(k, iCell) = s.rho_zz(k, iCell) * m.zz(k, iCell);
       d.pressure(k, iCell) = d.pressure_base(k, iCell) + d.pressure_p(k, iCell);
     }
+  });
 }
 
 std::string add_seconds(const std::string& ts, long long seconds) {

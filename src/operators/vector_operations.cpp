@@ -6,15 +6,18 @@
 #include <vector>
 
 #include "core/error.hpp"
+#include "core/views.hpp"
 #include "operators/geometry_utils.hpp"
 
 namespace cppmpas {
 
+// Each loop over cells / edges is a kernel, one thread per element (core/backend.hpp); the RBF solve of a cell runs
+// in its thread, MPAS's automatic arrays as the thread's work arrays (LocalArray).
 // gfortran expands SUM(a(1:n)*b(1:n)) with an accumulator that starts at +0.0 and adds the products in index order
 // (reference executable: pxor then addsd per term), so a sum of -0.0 terms is +0.0.
 
 // mpas_vector_operations.F:95-101
-void mpas_unit_vec_in_r3(real xin[3]) {
+CPPMPAS_HD void mpas_unit_vec_in_r3(real xin[3]) {
   const real mag = std::sqrt(xin[0] * xin[0] + xin[1] * xin[1] + xin[2] * xin[2]);  // :99
   xin[0] = xin[0] / mag;                                                              // :100
   xin[1] = xin[1] / mag;
@@ -22,7 +25,7 @@ void mpas_unit_vec_in_r3(real xin[3]) {
 }
 
 // mpas_vector_operations.F:113-121
-void mpas_cross_product_in_r3(const real p_1[3], const real p_2[3], real p_out[3]) {
+CPPMPAS_HD void mpas_cross_product_in_r3(const real p_1[3], const real p_2[3], real p_out[3]) {
   p_out[0] = p_1[1] * p_2[2] - p_1[2] * p_2[1];
   p_out[1] = p_1[2] * p_2[0] - p_1[0] * p_2[2];
   p_out[2] = p_1[0] * p_2[1] - p_1[1] * p_2[0];
@@ -41,10 +44,10 @@ void mpas_initialize_vectors(Mesh& m) {
   auto& lvu = m.localVerticalUnitVectors;
   auto& env = m.edgeNormalVectors;
   auto& ctp = m.cellTangentPlane;
-  std::fill(env.data(), env.data() + env.size(), 0.0);  // :693-694, whole arrays
-  std::fill(lvu.data(), lvu.data() + lvu.size(), 0.0);
+  fill_all(env, 0.0);  // :693-694, whole arrays
+  fill_all(lvu, 0.0);
 
-  for (int iCell = 1; iCell <= nCells; ++iCell) {  // :697-706
+  parallel_for(1, nCells, [=, m = view(m), lvu = view(lvu)] CPPMPAS_LAMBDA(int iCell) {  // :697-706
     if (m.on_a_sphere) {
       real v[3] = {m.xCell(iCell), m.yCell(iCell), m.zCell(iCell)};
       mpas_unit_vec_in_r3(v);
@@ -54,9 +57,10 @@ void mpas_initialize_vectors(Mesh& m) {
       lvu(2, iCell) = 0.;
       lvu(3, iCell) = 1.;
     }
-  }
+  });
 
-  for (int iEdge = 1; iEdge <= nEdges; ++iEdge) {  // :711-754, is_periodic = .false. branches
+  // :711-754, is_periodic = .false. branches
+  parallel_for(1, nEdges, [=, m = view(m), env = view(env)] CPPMPAS_LAMBDA(int iEdge) {
     const int cell1 = m.cellsOnEdge(1, iEdge);
     const int cell2 = m.cellsOnEdge(2, iEdge);
     real v[3];
@@ -75,9 +79,10 @@ void mpas_initialize_vectors(Mesh& m) {
     }
     mpas_unit_vec_in_r3(v);  // :753
     for (int d = 1; d <= 3; ++d) env(d, iEdge) = v[d - 1];
-  }
+  });
 
-  for (int iCell = 1; iCell <= nCells; ++iCell) {  // :756-769
+  parallel_for(1, nCells, [=, m = view(m), lvu = view(lvu), env = view(env),
+                           ctp = view(ctp)] CPPMPAS_LAMBDA(int iCell) {  // :756-769
     const int iEdge = m.edgesOnCell(1, iCell);
     const real rHat[3] = {lvu(1, iCell), lvu(2, iCell), lvu(3, iCell)};
     real normalDotRHat = 0.0;  // :761 SUM
@@ -92,18 +97,18 @@ void mpas_initialize_vectors(Mesh& m) {
       ctp(d, 1, iCell) = xHatPlane[d - 1];
       ctp(d, 2, iCell) = yHatPlane[d - 1];
     }
-  }
+  });
 }
 
 namespace {
 
 // evaluate_rbf, mpas_rbf_interpolation.F:1369-1376 (integer 1 -> 1.0)
-real evaluate_rbf(real rSquared) { return 1.0 / std::sqrt(1.0 + rSquared); }
+CPPMPAS_HD real evaluate_rbf(real rSquared) { return 1.0 / std::sqrt(1.0 + rSquared); }
 
 // mpas_set_up_vector_dirichlet_rbf_matrix_and_rhs, mpas_rbf_interpolation.F:1527-1559; arrays (pointCount, dims)
-void set_up_vector_dirichlet_rbf_matrix_and_rhs(int pointCount, int dimensions, const real* sourcePoints,
-                                                const real* unitVectors, const real* destinationPoint, real alpha,
-                                                real* matrix, real* rhs) {
+CPPMPAS_HD void set_up_vector_dirichlet_rbf_matrix_and_rhs(int pointCount, int dimensions, const real* sourcePoints,
+                                                           const real* unitVectors, const real* destinationPoint,
+                                                           real alpha, real* matrix, real* rhs) {
   auto S = [&](int i, int d) { return sourcePoints[(i - 1) + pointCount * (d - 1)]; };
   auto U = [&](int i, int d) { return unitVectors[(i - 1) + pointCount * (d - 1)]; };
   auto M = [&](int i, int j) -> real& { return matrix[(i - 1) + pointCount * (j - 1)]; };
@@ -134,9 +139,9 @@ void set_up_vector_dirichlet_rbf_matrix_and_rhs(int pointCount, int dimensions, 
 }
 
 // elgs, mpas_rbf_interpolation.F:1782-1846 (inlined into mpas_legs in the reference)
-void elgs(real* A, int N, int* INDX) {
+CPPMPAS_HD void elgs(real* A, int N, int* INDX) {
   auto a = [&](int i, int j) -> real& { return A[(i - 1) + N * (j - 1)]; };
-  std::vector<real> C(static_cast<std::size_t>(N) + 1);
+  LocalArray<real, kMaxRbfPoints + 3> C(N + 1);
   for (int I = 1; I <= N; ++I) INDX[I - 1] = I;
   for (int I = 1; I <= N; ++I) {  // :1805-1812
     real C1 = 0.0;
@@ -154,7 +159,7 @@ void elgs(real* A, int N, int* INDX) {
       }
     }
     // Without a pivot, MPAS reuses K from the previous column's DO K loop (N+1: out of bounds); not reproduced.
-    if (K == 0) throw Error("mpas_legs/elgs: no pivot in column " + std::to_string(J) + " (singular RBF matrix)");
+    if (K == 0) return kernel_fail("mpas_legs/elgs: no pivot in column ", J, " (singular RBF matrix)");
     const int ITMP = INDX[J - 1];
     INDX[J - 1] = INDX[K - 1];
     INDX[K - 1] = ITMP;
@@ -169,9 +174,12 @@ void elgs(real* A, int N, int* INDX) {
 }  // namespace
 
 // mpas_rbf_interpolation.F:1670-1698
-void mpas_legs(real* A, int N, real* B, real* X, int* INDX) {
+CPPMPAS_HD void mpas_legs(real* A, int N, real* B, real* X, int* INDX) {
   // MPAS's only caller passes pointCount + 2 >= 3; N < 1 would index X(0) (public routine: checked)
-  if (N < 1) throw Error("mpas_legs: N < 1");
+  if (N < 1) return kernel_fail("mpas_legs: N < 1");
+#if defined(CPPMPAS_USE_CUDA)
+  if (N > kMaxRbfPoints + 2) return kernel_fail("mpas_legs: N > kMaxRbfPoints + 2 (the GPU work array of elgs)");
+#endif
   auto a = [&](int i, int j) { return A[(i - 1) + N * (j - 1)]; };
   elgs(A, N, INDX);
   for (int I = 1; I <= N - 1; ++I)
@@ -185,20 +193,27 @@ void mpas_legs(real* A, int N, real* B, real* X, int* INDX) {
 }
 
 // mpas_rbf_interpolation.F:1079-1145
-void mpas_rbf_interp_func_3D_plane_vec_const_dir_comp_coeffs(int pointCount, const real* sourcePoints,
-                                                            const real* unitVectors, const real destinationPoint[3],
-                                                            real alpha, const real* planeBasisVectors,
-                                                            real* coefficients) {
+CPPMPAS_HD void mpas_rbf_interp_func_3D_plane_vec_const_dir_comp_coeffs(int pointCount, const real* sourcePoints,
+                                                                       const real* unitVectors,
+                                                                       const real destinationPoint[3], real alpha,
+                                                                       const real* planeBasisVectors,
+                                                                       real* coefficients) {
+#if defined(CPPMPAS_USE_CUDA)
+  if (pointCount > kMaxRbfPoints)
+    return kernel_fail("mpas_rbf_interp_func_3D_plane_vec_const_dir_comp_coeffs: pointCount > kMaxRbfPoints");
+#endif
+  constexpr int kMs = kMaxRbfPoints + 2;  // the capacity of the (matrixSize, ...) work arrays
   const int pc = pointCount;
   const int matrixSize = pc + 2;  // :1104
   auto SP = [&](int i, int d) { return sourcePoints[(i - 1) + pc * (d - 1)]; };
   auto UV = [&](int i, int d) { return unitVectors[(i - 1) + pc * (d - 1)]; };
   auto PB = [&](int r, int d) { return planeBasisVectors[(r - 1) + 2 * (d - 1)]; };
-  std::vector<real> planarSourcePoints(static_cast<std::size_t>(pc) * 2), planarUnitVectors(static_cast<std::size_t>(pc) * 2);
+  LocalArray<real, kMaxRbfPoints * 2> planarSourcePoints(pc * 2), planarUnitVectors(pc * 2);
   auto PSP = [&](int i, int d) -> real& { return planarSourcePoints[(i - 1) + pc * (d - 1)]; };
   auto PUV = [&](int i, int d) -> real& { return planarUnitVectors[(i - 1) + pc * (d - 1)]; };
   const std::size_t ms = static_cast<std::size_t>(matrixSize);
-  std::vector<real> matrix(ms * ms, 0.0), rhs(ms * 2, 0.0), coeffs(ms * 2, 0.0);  // :1106-1108
+  LocalArray<real, kMs * kMs> matrix(int(ms * ms));  // :1106-1108 (zero-filled)
+  LocalArray<real, kMs * 2> rhs(int(ms * 2)), coeffs(int(ms * 2));
   auto MAT = [&](int i, int j) -> real& { return matrix[(i - 1) + ms * (j - 1)]; };
   auto RHS = [&](int i, int d) -> real& { return rhs[(i - 1) + ms * (d - 1)]; };
 
@@ -219,7 +234,8 @@ void mpas_rbf_interp_func_3D_plane_vec_const_dir_comp_coeffs(int pointCount, con
     planarDestinationPoint[r - 1] = s;
   }
 
-  std::vector<real> matrixWork(static_cast<std::size_t>(pc) * pc), rhsWork(static_cast<std::size_t>(pc) * 2);  // :1119-1121
+  LocalArray<real, kMaxRbfPoints * kMaxRbfPoints> matrixWork(pc * pc);  // :1119-1121
+  LocalArray<real, kMaxRbfPoints * 2> rhsWork(pc * 2);
   set_up_vector_dirichlet_rbf_matrix_and_rhs(pc, 2, planarSourcePoints.data(), planarUnitVectors.data(),
                                              planarDestinationPoint, alpha, matrixWork.data(), rhsWork.data());
   for (int j = 1; j <= pc; ++j)  // :1123-1124
@@ -234,8 +250,8 @@ void mpas_rbf_interp_func_3D_plane_vec_const_dir_comp_coeffs(int pointCount, con
   }
   for (int i = 1; i <= 2; ++i) RHS(pc + i, i) = 1.0;  // :1130-1132
 
-  std::vector<real> matrixCopy = matrix;  // :1135-1137
-  std::vector<int> pivotIndices(ms);
+  auto matrixCopy = matrix;  // :1135-1137
+  LocalArray<int, kMs> pivotIndices(static_cast<int>(ms));
   mpas_legs(matrix.data(), matrixSize, &rhs[0], &coeffs[0], pivotIndices.data());
   mpas_legs(matrixCopy.data(), matrixSize, &rhs[ms], &coeffs[ms], pivotIndices.data());
 
@@ -248,14 +264,19 @@ void mpas_rbf_interp_func_3D_plane_vec_const_dir_comp_coeffs(int pointCount, con
 void mpas_init_reconstruct(Mesh& m) {
   if (m.is_periodic)
     throw Error("mpas_init_reconstruct: the is_periodic branch (mpas_vector_reconstruction.F:141-144) is not ported");
+#if defined(CPPMPAS_USE_CUDA)
+  if (m.maxEdges > kMaxRbfPoints)
+    throw Error("mpas_init_reconstruct: maxEdges = " + std::to_string(m.maxEdges) + " is more than the " +
+                std::to_string(kMaxRbfPoints) + " points of the GPU's RBF work arrays (kMaxRbfPoints)");
+#endif
   auto& cr = m.coeffs_reconstruct;
-  std::fill(cr.data(), cr.data() + cr.size(), 0.0);  // :124
-  const int nCells = m.nCellsSolve();                 // :117-121
-  for (int iCell = 1; iCell <= nCells; ++iCell) {
+  fill_all(cr, 0.0);                   // :124
+  const int nCells = m.nCellsSolve();  // :117-121
+  parallel_for(1, nCells, [=, m = view(m), cr = view(cr)] CPPMPAS_LAMBDA(int iCell) {
     const int pointCount = m.nEdgesOnCell(iCell);
     const real cellCenter[3] = {m.xCell(iCell), m.yCell(iCell), m.zCell(iCell)};
     const std::size_t pc = static_cast<std::size_t>(pointCount);
-    std::vector<real> loc(pc * 3), nrm(pc * 3), coeffs(pc * 3);
+    LocalArray<real, kMaxRbfPoints * 3> loc(int(pc * 3)), nrm(int(pc * 3)), coeffs(int(pc * 3));
     for (int i = 1; i <= pointCount; ++i) {  // :139-151
       const int iEdge = m.edgesOnCell(i, iCell);
       loc[(i - 1) + pc * 0] = m.xEdge(iEdge);
@@ -283,7 +304,7 @@ void mpas_init_reconstruct(Mesh& m) {
                                                             tangentPlane, coeffs.data());
     for (int i = 1; i <= pointCount; ++i)  // :181-183
       for (int d = 1; d <= 3; ++d) cr(d, i, iCell) = coeffs[(i - 1) + pc * (d - 1)];
-  }
+  });
 }
 
 }  // namespace cppmpas

@@ -204,7 +204,7 @@ MUTATIONS = [
     (A, "  if (cfg.config_apply_lbcs && maxmask == 0)", "  if (false)", ["unit_init_guards"]),
     (A, "  if (cfg.config_epssm != 0.0)", "  if (false)", ["unit_init_guards"]),
     (A, "  if (cfg.config_positive_definite)", "  if (false)", ["unit_init_guards"]),
-    (A, "    if (n > 25) throw", "    if (n > 26) throw", ["unit_init_guards"]),
+    (A, "    if (n > 25) return kernel_fail", "    if (n > 26) return kernel_fail", ["unit_init_guards"]),
     (A, "  if (m.is_periodic)\n    throw Error(\"atm_initialize_deformation_weights", "  if (false)\n    throw Error(\"atm_initialize_deformation_weights",
      ["unit_init_guards"]),
     (A, "      if (a->data()[k] != 0) throw Error(\"mpas_atm_setup_bdy_masks", "      if (false) throw Error(\"mpas_atm_setup_bdy_masks",
@@ -408,8 +408,8 @@ MUTATIONS = [
     (A, "    if (m.meshDensity(iCell) != 1.0) return true;", "    if (false) return true;", ["unit_init_guards"]),
     (A, "    if (scaled_mesh && std::find(scaling.begin(), scaling.end(), n) != scaling.end()) continue;",
      "    if (false && std::find(scaling.begin(), scaling.end(), n) != scaling.end()) continue;", ["unit_init_guards"]),
-    (A, "    if (n > 25) throw", "    if (n >= 25) throw", ["unit_init_guards"]),
-    (V, "  if (N < 1) throw Error(\"mpas_legs: N < 1\");", "", ["unit_init_guards"]),
+    (A, "    if (n > 25) return kernel_fail", "    if (n >= 25) return kernel_fail", ["unit_init_guards"]),
+    (V, "  if (N < 1) return kernel_fail(\"mpas_legs: N < 1\");", "", ["unit_init_guards"]),
     (W, "  if (opt.nprocs < 1 || opt.nprocs > 9) throw", "  if (false) throw", ["unit_io_core"]),
     (W, "    std::remove(path.c_str());", "    (void)path;", ["unit_io_core"]),
     ("src/core/decomp.cpp",
@@ -725,11 +725,11 @@ MUTATIONS += [
     (DY, "  number_sub_steps[3] = number_of_sub_steps;", "  number_sub_steps[3] = number_of_sub_steps - 1;", S1),
     # the clamp of TI:2799-2800 acts on no reference (MW's qv and SC's mono-limited scalars are >= +0 there): the
     # call deleted is exact on every step file; unit_dycore tests the routine itself
-    (DY, "    if (scalars.data()[i] < 0.0) scalars.data()[i] = 0.0;", "    ;", ["unit_dycore"]),
-    (DY, "    if (scalars.data()[i] < 0.0) scalars.data()[i] = 0.0;", "    if (scalars.data()[i] <= 0.0) scalars.data()[i] = 0.0;",
+    (DY, "    if (scalars_2[i] < 0.0) scalars_2[i] = 0.0;", "    ;", ["unit_dycore"]),
+    (DY, "    if (scalars_2[i] < 0.0) scalars_2[i] = 0.0;", "    if (scalars_2[i] <= 0.0) scalars_2[i] = 0.0;",
      ["unit_dycore"]),
-    (DY, "  for (std::size_t i = 0; i < scalars.size(); ++i)", "  for (std::size_t i = 0; i + 3 < scalars.size(); ++i)",
-     ["unit_dycore"]),
+    (DY, "  parallel_for_n(scalars.size(), [=] CPPMPAS_LAMBDA(std::size_t i) {",
+     "  parallel_for_n(scalars.size() - 3, [=] CPPMPAS_LAMBDA(std::size_t i) {", ["unit_dycore"]),
     (DY, "    if (!moist) continue;", "", ["unit_dycore"]),
     # output diagnostics, Time, xtime, the step files
     (DY, "      s.rho(k, iCell) = s.rho_zz(k, iCell) * m.zz(k, iCell);", "      s.rho(k, iCell) = s.rho_zz(k, iCell);",
@@ -794,8 +794,8 @@ MUTATIONS += [
     (DS, "  h_mom_eddy_visc4 = config_visc4_2dsmag * (config_len_disp * config_len_disp * config_len_disp);",
      "  h_mom_eddy_visc4 = config_visc4_2dsmag * (config_len_disp * config_len_disp);", J1),
     (DS, "  h_theta_eddy_visc4 = h_mom_eddy_visc4;", "  h_theta_eddy_visc4 = 0.0;", JST([1], "theta_m rho_zz theta")),
-    (DY, "      smagorinsky_2d(m, eddy_visc_horz, u, d.v, cfg.config_smagorinsky_coef,",
-     "      smagorinsky_2d(m, eddy_visc_horz, u, u, cfg.config_smagorinsky_coef,", J1),
+    (DY, "      smagorinsky_2d(m, f.eddy_visc_horz, f.u2, d.v, cfg.config_smagorinsky_coef,",
+     "      smagorinsky_2d(m, f.eddy_visc_horz, f.u2, f.u2, cfg.config_smagorinsky_coef,", J1),
     # JW: the 4th-order filters (DM:728-811, 1073-1100, 1306-1332)
     (DS, "        const real edge_sign = m.invAreaTriangle(iVertex) * m.dcEdge(iEdge) * m.edgesOnVertex_sign(i, iVertex);",
      "        const real edge_sign = m.invAreaTriangle(iVertex) * m.dvEdge(iEdge) * m.edgesOnVertex_sign(i, iVertex);", J1),
@@ -974,6 +974,15 @@ MUTATIONS += [
      ["dycore_restart0_MW_qv", "dycore_MW_step0_qv"]),
     ("src/core/namelist_table.inc", r'"config_do_restart", "logical", "false", "false\ntrue")',
      r'"config_do_restart", "logical", "false", "false")', ["dycore_restart0_run_MW", "namelist_MW"]),
+    # the CPU build has none of the GPU's capacity limits (core/backend.hpp, operators/vector_operations.cpp)
+    ("src/core/backend.cpp", "#if !defined(CPPMPAS_USE_CUDA)\n  (void)nVertLevels;", "#if 0\n  (void)nVertLevels;",
+     ["unit_backend"]),
+    ("src/core/backend.hpp", "    if (n_ > N) {\n      big_.assign", "    if (n_ > N) {\n      n_ = N;\n      big_.assign",
+     ["unit_backend"]),
+    (V, "#if defined(CPPMPAS_USE_CUDA)\n  if (N > kMaxRbfPoints + 2)", "#if 1\n  if (N > kMaxRbfPoints + 2)",
+     ["unit_backend"]),
+    (V, "#if defined(CPPMPAS_USE_CUDA)\n  if (pointCount > kMaxRbfPoints)", "#if 1\n  if (pointCount > kMaxRbfPoints)",
+     ["unit_backend"]),
 ]
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -1143,7 +1152,8 @@ EQUIVALENT_ON_SC = {
 }
 MUTATIONS += [
     # --- physics column checks, appended after the supercell's mutants (merge of the physics branches: the
-    # supercell keeps its indices 493-534; WSM6 535-537, YSU / surface layer 538-547, radiation 548-560, Noah 561-569, New Tiedtke 570-575, GWDO 576-578)
+    # supercell keeps its indices 493-534, main 535-538; WSM6 539-541, YSU / surface layer 542-551, radiation 552-564, Noah 565-573,
+    # New Tiedtke 574-579, GWDO 580-582)
     # WSM6 column check (tests/wsm6_column): the libmvec lanes of MPAS's -O3 build (scalar log / exp everywhere,
     # CPPWRF's kernel as WRF calls it), the max(0, qv) of th_p (PI:665; cells of regime 4 have qv < 0), the
     # background radius above mp_top_level (PI:1010; case 9:41:2:33)
@@ -1233,10 +1243,10 @@ MUTATIONS += [
      ["noah_column"]),
     ("src/physics/module_sf_noahdrv.cpp", "gl.lvcoef = tables.lvcoef_data;", "gl.lvcoef = tables.salp_data;",
      ["noah_column"]),
-    # New Tiedtke (cu_ntiedtke) and its MPAS driver, column check (tests/cu_gwdo_column): 570 cuinin's cuadjtqn
-    # without the -O3 libmvec exp lanes (CPPWRF / WRF's scalar kernel), 571 dx_p (CV:840) without the
-    # _ZGVbN2vv_pow lanes, 572 initflag without config_do_restart (CV:478; restart cases), 573 thften without the
-    # shortwave heating (CV:846-847), 574 pratec = rn / dt without stepcu (PO:96; the n_cu = 2 case), 575 the
+    # New Tiedtke (cu_ntiedtke) and its MPAS driver, column check (tests/cu_gwdo_column): 574 cuinin's cuadjtqn
+    # without the -O3 libmvec exp lanes (CPPWRF / WRF's scalar kernel), 575 dx_p (CV:840) without the
+    # _ZGVbN2vv_pow lanes, 576 initflag without config_do_restart (CV:478; restart cases), 577 thften without the
+    # shortwave heating (CV:846-847), 578 pratec = rn / dt without stepcu (PO:96; the n_cu = 2 case), 579 the
     # rainc bucket without the i_rainc count (CV:1094; acrain cases)
     ("src/physics/module_cu_ntiedtke.cpp", "    c.cuinin_mvec = lane(i - its, im);", "    c.cuinin_mvec = false;", ["cu_gwdo_column"]),
     ("src/physics/mpas_atmphys_convection.cpp", "    dx_p(i) = m.config_len_disp / (lane(i - its, ite - its + 1) ? libm::mvec_pow", "    dx_p(i) = m.config_len_disp / (false ? libm::mvec_pow", ["cu_gwdo_column"]),
@@ -1244,12 +1254,50 @@ MUTATIONS += [
     ("src/physics/mpas_atmphys_convection.cpp", "          (m.rthdynten(k, i) + m.rthblten(k, i) + m.rthratenlw(k, i) + m.rthratensw(k, i)) * v.pi_p(i, k);", "          (m.rthdynten(k, i) + m.rthblten(k, i) + m.rthratenlw(k, i)) * v.pi_p(i, k);", ["cu_gwdo_column"]),
     ("src/physics/module_cu_ntiedtke.cpp", "    (*a.pratec)(i) = rn / (real(a.stepcu) * a.dt);", "    (*a.pratec)(i) = rn / a.dt;", ["cu_gwdo_column"]),
     ("src/physics/mpas_atmphys_convection.cpp", "      m.i_rainc(i) = m.i_rainc(i) + 1;", "      m.i_rainc(i) = m.i_rainc(i);", ["cu_gwdo_column"]),
-    # GWDO (bl_ysu_gwdo) and its MPAS driver, column check (tests/cu_gwdo_column): 576 WRF 4.8.0's cg = 1 (MPAS's
-    # MMM-physics a4baf7f bl_gwdo.F90:153 has 0.5), 577 WRF 4.8.0's olmin floor on ol (GW:342 has none; regime 4
-    # has ol = 0), 578 rubldiff without the PBL tendency removed (GD:680)
+    # GWDO (bl_ysu_gwdo) and its MPAS driver, column check (tests/cu_gwdo_column): 580 WRF 4.8.0's cg = 1 (MPAS's
+    # MMM-physics a4baf7f bl_gwdo.F90:153 has 0.5), 581 WRF 4.8.0's olmin floor on ol (GW:342 has none; regime 4
+    # has ol = 0), 582 rubldiff without the PBL tendency removed (GD:680)
     ("src/physics/bl_gwdo.hpp", "const T xl = T(4.0e4), gmax = T(1.), veleps = T(1.0), frc = T(1.0), ce = T(0.8), cg = T(0.5);", "const T xl = T(4.0e4), gmax = T(1.), veleps = T(1.0), frc = T(1.0), ce = T(0.8), cg = T(1.);", ["cu_gwdo_column"]),
     ("src/physics/bl_gwdo.hpp", "    ol = ol4[(nwd - 1) % 4 + 1];", "    ol = c_max(ol4[(nwd - 1) % 4 + 1], olmin);", ["cu_gwdo_column"]),
     ("src/physics/mpas_atmphys_gwdo.cpp", "      m.rubldiff(k, i) = rublten_p(i, k) - m.rublten(k, i);", "      m.rubldiff(k, i) = rublten_p(i, k);", ["cu_gwdo_column"]),
+]
+
+# ---------------------------------------------------------------------------------------------------------------
+# the mesoscale_reference suite in the model run against RG (mpas842-dbl-rg-004): the split dynamics-transport, the
+# physics manager / init / driver and their coupling (tests dycore_RG_*). Indices 583-599.
+DRV, LU = "src/physics/mpas_atmphys_driver.cpp", "src/physics/mpas_atmphys_landuse.cpp"
+RG1 = lambda *fs: [f"dycore_RG_step1_{f}" for f in fs]
+MUTATIONS += [
+    # split dynamics-transport: dt_dynamics (TI:2055), the transport's rk_timestep(1) of order 2 (TI:2679), the
+    # weights of the density (TI:4754), rho_zz_int (TI:5270), the ruAvg sum of the substeps (TI:7790), the time level
+    # copy between substeps (TI:7752)
+    (DY, "    dt_dynamics = dt / static_cast<real>(dynamics_split);", "    dt_dynamics = dt;", RG1("u", "theta_m")),
+    (DY, "    if (cfg.config_time_integration_order == 2) rk_timestep[1] = dt / 2.;", "", RG1("qv")),
+    (AS, "    if (rk_step == 2) weight_time_new = 1. / 2;", "    if (rk_step == 2) weight_time_new = 1.;", RG1("qv")),
+    (AS, "            rho_zz_old(k, iCell) + dt * (rho_zz_int(k, iCell) - rdnw(k) * (wwAvg(k + 1, iCell) - wwAvg(k, iCell)));",
+     "            rho_zz_old(k, iCell) + dt * rho_zz_int(k, iCell);", RG1("qv")),
+    (DY, "f.ruAvg_split(k, iEdge) = f.ruAvg(k, iEdge) + f.ruAvg_split(k, iEdge);",
+     "f.ruAvg_split(k, iEdge) = f.ruAvg(k, iEdge);", RG1("qv")),
+    (DY, "        s.theta_m(k, iCell) = f.theta_m2(k, iCell);\n", "\n", RG1("theta_m")),
+    # physics_run_init / physics_init / landuse_init_forMPAS / physics_update_surface / physics_timetracker
+    (DRV, "  r.xice_threshold = c.config_frac_seaice ? 0.02 : 0.5;", "  r.xice_threshold = c.config_frac_seaice ? 0.5 : 0.02;",
+     RG1("theta_m")),
+    (DRV, "      dzs(1, iCell) = 0.10;", "      dzs(1, iCell) = 0.11;", RG1("theta_m")),
+    (DRV, "      east(1, iCell) = -libm::sin(lon);", "      east(1, iCell) = libm::sin(lon);", RG1("u")),
+    (DRV, "  if (r.green_alarm.ringing(now_s)) {", "  if (false && r.green_alarm.ringing(now_s)) {", RG1("theta_m")),
+    (DRV, "      o3climatology_from_MPAS(r.rad.curr_julday, q, m.nCellsSolve());",
+     "      o3climatology_from_MPAS(r.rad.curr_julday + 1.0, q, m.nCellsSolve());", RG1("theta_m")),
+    ("src/physics/mpas_atmphys_driver.hpp", "    while (ring <= now) ring += interval;", "    while (ring < now) ring += interval;",
+     ["dycore_RG_step2_theta_m"]),
+    (DRV, "      rqvdynten(k, i) = config_monotonic ? (scalars2(qv, k, i) - s.scalars(qv, k, i)) / dt : 0.;",
+     "      rqvdynten(k, i) = 0.;", ["dycore_RG_step2_theta_m"]),
+    (LU, "    if (julday < 105 || julday >= 288) isn = 2;", "    if (julday < 105 || julday >= 285) isn = 2;", RG1("theta_m")),
+    (LU, "      if (landmask(iCell) == 0) sfc_albbck(iCell) = 0.08;", "      if (landmask(iCell) == 0) sfc_albbck(iCell) = 0.07;",
+     RG1("theta_m")),
+    (LU, "        field_out(n) = (field_in(month2, n) * real(target_date - middle[l]) +",
+     "        field_out(n) = (field_in(month1, n) * real(target_date - middle[l]) +", RG1("theta_m")),
+    # the writer keeps the input file's attributes of the physics fields (the reference restart's isltyp)
+    (W, "      if (std::find(rd.begin(), rd.end(), n) != rd.end()) {", "      if (false) {", ["dycore_RG_restart_isltyp"]),
 ]
 
 MUTATIONS = [(p, o, n, [t for t in ts if t not in EQUIVALENT_ON_SC.get((p, n), [])]) for p, o, n, ts in MUTATIONS]

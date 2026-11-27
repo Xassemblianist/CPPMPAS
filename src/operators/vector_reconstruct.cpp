@@ -1,14 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// src/operators/mpas_vector_reconstruction.F:205-339 (VR below).
+// src/operators/mpas_vector_reconstruction.F:205-339 (VR below). Each loop over cells is a kernel, one thread per cell
+// (core/backend.hpp), the k loop and the edgesOnCell loop inside the thread in MPAS's order.
 #include "operators/vector_reconstruct.hpp"
 
+#include <initializer_list>
 #include <string>
 #include <utility>
 
 #include "core/error.hpp"
 #include "core/libm.hpp"
+#include "core/views.hpp"
 
 namespace cppmpas {
+
+// an array and its name, for the extent checks (explicit type: nvcc 12 cannot deduce a braced list of std::pair)
+using RealArrayName = std::pair<const FArray<real>*, const char*>;
+using Arrays = std::initializer_list<RealArrayName>;
 
 namespace {
 // u is (nVertLevels, nEdges+1) and every output (nVertLevels, nCells+1), as MPAS allocates them
@@ -27,7 +34,7 @@ void mpas_reconstruct_2d(const Mesh& m, const FArray<real>& u, FArray<real>& uRe
   const auto& coeffs_reconstruct = m.coeffs_reconstruct;
   if (nVertLevels < 1) throw Error("mpas_reconstruct_2d: nVertLevels < 1 (no vertical mesh)");
   need_exact(u, nVertLevels, m.nEdges + 1, "u");
-  for (auto [a, n] : {std::pair{&uReconstructX, "uReconstructX"}, {&uReconstructY, "uReconstructY"},
+  for (auto [a, n] : Arrays{{&uReconstructX, "uReconstructX"}, {&uReconstructY, "uReconstructY"},
                       {&uReconstructZ, "uReconstructZ"}, {&uReconstructZonal, "uReconstructZonal"},
                       {&uReconstructMeridional, "uReconstructMeridional"}})
     need_exact(*a, nVertLevels, nCells + 1, n);
@@ -35,7 +42,9 @@ void mpas_reconstruct_2d(const Mesh& m, const FArray<real>& u, FArray<real>& uRe
       coeffs_reconstruct.extent(1) < m.maxEdges || coeffs_reconstruct.extent(2) < nCells)
     throw Error("mpas_reconstruct_2d: coeffs_reconstruct is not (3, maxEdges, nCells) (mpas_init_reconstruct first)");
 
-  for (int iCell = 1; iCell <= nCells; ++iCell) {  // VR:274-299
+  parallel_for(1, nCells, [=, m = view(m), coeffs_reconstruct = view(coeffs_reconstruct), u = view(u),
+                           uReconstructX = view(uReconstructX), uReconstructY = view(uReconstructY),
+                           uReconstructZ = view(uReconstructZ)] CPPMPAS_LAMBDA(int iCell) {  // VR:274-299
     for (int k = 1; k <= nVertLevels; ++k) {        // VR:277-281 (0.0: default real, exact)
       uReconstructX(k, iCell) = 0.0;
       uReconstructY(k, iCell) = 0.0;
@@ -49,10 +58,12 @@ void mpas_reconstruct_2d(const Mesh& m, const FArray<real>& u, FArray<real>& uRe
         uReconstructZ(k, iCell) = uReconstructZ(k, iCell) + coeffs_reconstruct(3, i, iCell) * u(k, iEdge);
       }
     }
-  }
+  });
 
   if (m.on_a_sphere) {
-    for (int iCell = 1; iCell <= nCells; ++iCell) {  // VR:309-322
+    parallel_for(1, nCells, [=, m = view(m), uReconstructX = view(uReconstructX), uReconstructY = view(uReconstructY),
+                             uReconstructZ = view(uReconstructZ), uReconstructZonal = view(uReconstructZonal),
+                             uReconstructMeridional = view(uReconstructMeridional)] CPPMPAS_LAMBDA(int iCell) {  // VR:309-322
       // VR:310-313: gfortran fuses cos / sin of the same argument into one sincos@plt each, latCell then lonCell
       // (reference executable, __mpas_vector_reconstruction_MOD_mpas_reconstruct_2d at 0x588510: sincos@plt at
       // 0x589a57 and 0x589a8b, the only libm calls; no sin / cos / libmvec call, no FMA; the k loop is vectorised two
@@ -69,14 +80,16 @@ void mpas_reconstruct_2d(const Mesh& m, const FArray<real>& u, FArray<real>& uRe
         uReconstructMeridional(k, iCell) =
             -((uReconstructX(k, iCell) * clon + uReconstructY(k, iCell) * slon) * slat) + uReconstructZ(k, iCell) * clat;
       }
-    }
+    });
   } else {
-    for (int iCell = 1; iCell <= nCells; ++iCell) {  // VR:329-334
+    parallel_for(1, nCells, [=, uReconstructX = view(uReconstructX), uReconstructY = view(uReconstructY),
+                             uReconstructZonal = view(uReconstructZonal),
+                             uReconstructMeridional = view(uReconstructMeridional)] CPPMPAS_LAMBDA(int iCell) {  // VR:329-334
       for (int k = 1; k <= nVertLevels; ++k) {
         uReconstructZonal(k, iCell) = uReconstructX(k, iCell);
         uReconstructMeridional(k, iCell) = uReconstructY(k, iCell);
       }
-    }
+    });
   }
 }
 
