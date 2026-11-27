@@ -23,9 +23,25 @@
 
 namespace cppmpas::phys {
 
+// Kernel view of a PArray: trivially copyable, CPPMPAS_HD access with the PArray's 1-based (i, k) indexing.
+struct PView {
+  real* p = nullptr;
+  int ldi = 0;
+  CPPMPAS_HD real& operator()(int i, int k = 1) const { return p[static_cast<std::size_t>(k - 1) * ldi + (i - 1)]; }
+};
+struct PCView {
+  const real* p = nullptr;
+  int ldi = 0;
+  CPPMPAS_HD const real& operator()(int i, int k = 1) const {
+    return p[static_cast<std::size_t>(k - 1) * ldi + (i - 1)];
+  }
+};
+
 // A (ims:ime, kms:kme, jms:jme) or (ims:ime, jms:jme) array of mpas_atmphys_vars, 1-based, jms = jme = 1.
+// Storage: core/field.hpp FStorage (host memory in the CPU build, CUDA managed memory in the CUDA build), so the
+// physics kernels and any host code read the same array.
 struct PArray {
-  std::vector<real> a;
+  FStorage<real> a;
   int ldi = 0;
   void allocate(int ni, int nk) {
     ldi = ni;
@@ -35,6 +51,9 @@ struct PArray {
   const real& operator()(int i, int k = 1) const { return a[static_cast<std::size_t>(k - 1) * ldi + (i - 1)]; }
   real* data() { return a.data(); }
   const real* data() const { return a.data(); }
+  PView view() { return PView{a.data(), ldi}; }
+  PCView view() const { return PCView{a.data(), ldi}; }
+  PCView cview() const { return PCView{a.data(), ldi}; }
 };
 
 // mpas_atmphys_vars' arrays shared by all physics drivers (allocate_forall_physics, PI:100-156)
