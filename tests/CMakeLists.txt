@@ -535,8 +535,9 @@ foreach(stamp IN LISTS DYCORE_RG_STAMPS)
   math(EXPR step "${step} + 1")
 endforeach()
 # the reference's 11 step files only (the run also writes steps 11, 12 and the state files)
+string(REPLACE ";" " " DYCORE_RG_STAMP_WORDS "${DYCORE_RG_STAMPS}")
 add_test(NAME dycore_RG_mpas_compare COMMAND ${CMAKE_COMMAND} -E env sh -c
-  "rm -rf '${W}/dycore_RG_steps' && mkdir -p '${W}/dycore_RG_steps' && for s in ${DYCORE_RG_STAMPS}; do ln -s '${W}/dycore_RG/step.2026-10-12_'$s.nc '${W}/dycore_RG_steps/'; done && ${PY} '${T}/dycore_compare.py' '${CPPMPAS_MPAS_COMPARE}' '${REF_RG}/steps' '${W}/dycore_RG_steps' '${W}/dycore_RG_compare.json' 165")
+  "rm -rf '${W}/dycore_RG_steps' && mkdir -p '${W}/dycore_RG_steps' && for s in ${DYCORE_RG_STAMP_WORDS}; do ln -s '${W}/dycore_RG/step.2026-10-12_'$s.nc '${W}/dycore_RG_steps/'; done && ${PY} '${T}/dycore_compare.py' '${CPPMPAS_MPAS_COMPARE}' '${REF_RG}/steps' '${W}/dycore_RG_steps' '${W}/dycore_RG_compare.json' 165")
 set_tests_properties(dycore_RG_mpas_compare PROPERTIES FIXTURES_REQUIRED dycore_RG)
 foreach(f IN LISTS DYCORE_RG_RESTART_FIELDS)
   add_test(NAME dycore_RG_restart_${f} COMMAND ${PY} ${T}/compare_arrays.py
