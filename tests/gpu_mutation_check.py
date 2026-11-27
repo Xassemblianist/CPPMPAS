@@ -31,7 +31,10 @@ MP, KS = "src/core_atmosphere/atm_microphysics.cpp", "src/physics/mp_kessler.hpp
 
 
 def dev(orig, mut):
-    """the mutated statement in the device code only (the CPU build keeps the original): the vs_cpu tests see it"""
+    """the mutated statement in the device code only (the CPU build keeps the original): the vs_cpu tests see it.
+    The mutated statement must use the same variables as the original: an extended lambda's implicit captures are
+    the host pass's, so a variable only the device branch names is not captured (a first version that divided by
+    rho_zz_old in place of rho_zz_new, or dropped pressure_b, read another capture's bytes on the device)."""
     return f"#if defined(__CUDA_ARCH__)\n{mut}\n#else\n{orig}\n#endif"
 
 
@@ -87,10 +90,10 @@ GPU_MUTATIONS = [
      dev("        sw2(k, j) = m.adv_coefs(j, iEdge) + sign1(uhAvg(k, iEdge)) * m.adv_coefs_3rd(j, iEdge);",
          "        sw2(k, j) = m.adv_coefs(j, iEdge) - sign1(uhAvg(k, iEdge)) * m.adv_coefs_3rd(j, iEdge);"),
      SC((1, 10), "qv") + SCV),
-    # monotonic transport, rk_step 3 (TI:5731-5735): the update divided by the old density
+    # monotonic transport, rk_step 3 (TI:5731-5735): the vertical flux divergence with the wrong sign of one face
     (AS, "            (scalar_new(k, iCell) + (-(rdnw(k) * (wdtn(k + 1, iCell) - wdtn(k, iCell))))) / rho_zz_new(k, iCell);",
      dev("            (scalar_new(k, iCell) + (-(rdnw(k) * (wdtn(k + 1, iCell) - wdtn(k, iCell))))) / rho_zz_new(k, iCell);",
-         "            (scalar_new(k, iCell) + (-(rdnw(k) * (wdtn(k + 1, iCell) - wdtn(k, iCell))))) / rho_zz_old(k, iCell);"),
+         "            (scalar_new(k, iCell) + (-(rdnw(k) * (wdtn(k + 1, iCell) + wdtn(k, iCell))))) / rho_zz_new(k, iCell);"),
      SC((1, 10), "qv") + SCV),
     # the limiter's bounds (TI:5374-5392) over five of the six neighbours: only the 30-min state sees it
     (AS, "        for (int j = 1; j <= 6; ++j) {\n          mx = vmax",
@@ -114,10 +117,10 @@ GPU_MUTATIONS = [
      "CPPMPAS_HD inline bool lane(int i, int n) {\n" + dev("  return n > 1 && !((n & 1) && i == n - 1);", "  return false;")
      + "\n}", ["gpu_dycore_SC_restart_qc", "gpu_dycore_SC_restart_qr", "gpu_dycore_SC_output30_qc",
                "gpu_dycore_SC_output30_qr"]),
-    # the surface pressure of PI:950-964 without the base-state pressure
+    # the surface pressure of PI:950-964 with the base-state pressure of level 2
     (MP, "    surface_pressure(i) = surface_pressure(i) + pressure_p(1, i) + pressure_b(1, i);",
      dev("    surface_pressure(i) = surface_pressure(i) + pressure_p(1, i) + pressure_b(1, i);",
-         "    surface_pressure(i) = surface_pressure(i) + pressure_p(1, i);"),
+         "    surface_pressure(i) = surface_pressure(i) + pressure_p(1, i) + pressure_b(2, i);"),
      ["gpu_dycore_SC_restart_surface_pressure", "gpu_dycore_SC_output30_surface_pressure"]),
 ]
 # tests/mutation_check.py mutants by a piece of their original fragment, with the GPU tests they must break (a mutant
