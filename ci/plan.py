@@ -3,6 +3,7 @@
 """Split the CPU suite into test jobs (.github/workflows/cpu_suite.yml).
 
 usage: plan.py <tests.json (ctest --show-only=json-v1)> <short|long|all> <out dir> [--target SECONDS] [--jobs N]
+               [--src-root DIR]
 
 Selection: "short" is every test without the label "long", "long" every test with it, "all" both.
 - Tests labelled "gpu" go to one job of their own ("gpu"). It runs them without fixture setups (ctest -FA): this CPU
@@ -11,7 +12,10 @@ Selection: "short" is every test without the label "long", "long" every test wit
   job, so a model run is made once and its comparisons read its output. The two cheap fixtures "inputs" and
   "work_dir" (make_inputs, make_work_dir) are left out of the grouping; CTest adds their setup test to any job that
   needs it.
-- Each group needs the reference releases its tests name (mpas842-dbl-*, ci/data.tsv); groups with the same releases
+- Each group needs the reference releases its tests name (mpas842-dbl-*, ci/data.tsv): in the test's own entry
+  (command, arguments, properties) and in the text of every script of the source tree its command runs (a path under
+  /w/src, read from --src-root: a script such as tests/check_ref_recipes.py names the releases it reads itself and
+  gets only the references directory as its argument). Groups with the same releases
   are packed into jobs of at most --target seconds (estimated wall time at -j PARALLEL: the longest setup plus its
   longest comparison, or the summed time / PARALLEL), from ci/costs.tsv (seconds per test on a GitHub runner;
   unknown tests DEFAULT_COST). A small group (< SMALL seconds) joins the job it adds the fewest bytes of downloads to.
@@ -33,6 +37,7 @@ PARALLEL = 4
 SMALL = 60.0
 MAX_REFS = 6  # the workflow's cache slots per job
 TAG_RE = re.compile(r"mpas842-dbl-[a-z0-9]+-[0-9]{3}")
+SRC_IN_CONTAINER = "/w/src/"  # ci/in_container.sh mounts the CPPMPAS checkout there
 
 
 def prop(test, name):
@@ -59,6 +64,8 @@ def main():
     ap.add_argument("labels", choices=["short", "long", "all"])
     ap.add_argument("out")
     ap.add_argument("--target", type=float, default=1200.0)
+    ap.add_argument("--src-root", type=Path, default=None,
+                    help="the checkout mounted at /w/src (its scripts are read for the releases they name)")
     args = ap.parse_args()
 
     data_rows = load_table(HERE / "data.tsv", 5)
@@ -119,10 +126,28 @@ def main():
     for n in members:
         groups.setdefault(find(n), []).append(n)
 
+    script_tags = {}
+
+    def tags_of_scripts(test):  # the releases named in the scripts of the source tree the command runs
+        tags = set()
+        for arg in test.get("command", []):
+            for word in arg.split():  # also the paths inside a "sh -c" string
+                if not word.startswith(SRC_IN_CONTAINER):
+                    continue
+                if args.src_root is None:
+                    sys.exit("plan.py: --src-root is needed (a test runs a script of the source tree)")
+                path = args.src_root / word[len(SRC_IN_CONTAINER):].strip("'\";")
+                if path not in script_tags:
+                    script_tags[path] = (set(TAG_RE.findall(path.read_text(errors="replace")))
+                                         if path.is_file() else set())
+                tags |= script_tags[path]
+        return tags
+
     def refs_of(names):
         tags = set()
         for n in names:
             tags.update(TAG_RE.findall(json.dumps(by_name[n])))
+            tags.update(tags_of_scripts(by_name[n]))
         for tag in tags:
             if tag not in item_bytes:
                 sys.exit(f"plan.py: {tag} (named by a test) is not in ci/data.tsv: add its archive and SHA-256")

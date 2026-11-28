@@ -97,7 +97,7 @@ jobs:
       - name: plan
         id: plan
         run: |
-          python3 tools/ci/plan.py w/out/tests.json "$LABELS" plan | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 tools/ci/plan.py w/out/tests.json "$LABELS" plan --src-root src | tee -a "$GITHUB_STEP_SUMMARY"
           echo "matrix=$(cat plan/matrix.json)" >> "$GITHUB_OUTPUT"
           echo "data=$(cat plan/data.json)" >> "$GITHUB_OUTPUT"
           echo "common_key=$(python3 -c 'import json; print(json.load(open("plan/data.json"))["include"][0]["key"])')" >> "$GITHUB_OUTPUT"
