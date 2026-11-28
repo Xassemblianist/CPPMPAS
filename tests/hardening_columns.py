@@ -11,6 +11,9 @@ the two programs must be the same bytes (the GPU build against the CPU build).
   hardening_columns.py mcica <test_radiation_column> <work dir> <tables dir> <lw tables> <sw tables> [--vs ...]
       RRTMG on 2-level columns (maximum-random overlap): 3 radiation layers, where the KISS seed of MCICA_SUBCOL
       reads the bottom four (Error); 3 levels (4 layers) run.
+  hardening_columns.py lw_layers <test_radiation_column> <work dir> <tables dir> <lw tables> <sw tables> [--vs ...]
+      RRTMG LW on 125-level columns whose top (3-80 hPa) adds 1-20 buffer layers: more than the 128 layers of the
+      port's LW arrays (an Error on both builds; MPAS itself takes them); 100 levels run.
   hardening_columns.py noah <test_noah_column> <work dir> <tables dir> [--vs ...]
       Noah (USGS) on a restart with a land point of vegetation category 0 (REDPRM reads its tables at 0: Error), a
       cold start with soil category 31 (above SOILPARM's 19: Error), a cold start without config_sfc_snowalbedo and
@@ -99,6 +102,16 @@ def main():
         make([cols, "make", work / "ok.bin", 3, 3, 1, 3, 2, 0, 1])
         expect_run([prog, work / "ok.bin", work / "ok.out", tables, lw, sw], work / "ok.out",
                    "RRTMG on 3-level cloudy columns",
+                   vs and [vs, work / "ok.bin", work / "ok_vs.out", tables, lw, sw], work / "ok_vs.out")
+    elif case == "lw_layers":
+        tables, lw, sw = args[3:6]
+        cols = HERE / "radiation_column" / "columns.py"
+        make([cols, "make", work / "deep.bin", 3, 125, 1, 3, 2, 0, 1])
+        expect_error([prog, work / "deep.bin", work / "deep.out", tables, lw, sw], "rrtmg_lwrad: more than 128 layers",
+                     "RRTMG LW on 125-level columns")
+        make([cols, "make", work / "ok.bin", 3, 100, 1, 3, 2, 0, 1])
+        expect_run([prog, work / "ok.bin", work / "ok.out", tables, lw, sw], work / "ok.out",
+                   "RRTMG on 100-level columns",
                    vs and [vs, work / "ok.bin", work / "ok_vs.out", tables, lw, sw], work / "ok_vs.out")
     elif case == "noah":
         tables = Path(args[3])

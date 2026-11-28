@@ -761,10 +761,13 @@ set(_hc ${PY} ${T}/hardening_columns.py)
 add_test(NAME hardening_wsm6_1km COMMAND ${_hc} wsm6_1km $<TARGET_FILE:test_wsm6_column> ${W}/hardening_wsm6)
 add_test(NAME hardening_mcica COMMAND ${_hc} mcica $<TARGET_FILE:test_radiation_column> ${W}/hardening_mcica
   ${CPPMPAS_MPAS_TABLES} ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_lw_tables.bin ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_sw_tables.bin)
+add_test(NAME hardening_lw_layers COMMAND ${_hc} lw_layers $<TARGET_FILE:test_radiation_column> ${W}/hardening_lw
+  ${CPPMPAS_MPAS_TABLES} ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_lw_tables.bin ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_sw_tables.bin)
 add_test(NAME hardening_noah COMMAND ${_hc} noah $<TARGET_FILE:test_noah_column> ${W}/hardening_noah
   ${CPPMPAS_NOAH_TABLES})
-set_tests_properties(hardening_wsm6_1km hardening_mcica hardening_noah PROPERTIES FIXTURES_REQUIRED work_dir)
-set(GPU_HARDENING_COLUMNS wsm6_1km mcica noah)
+set_tests_properties(hardening_wsm6_1km hardening_mcica hardening_lw_layers hardening_noah PROPERTIES
+  FIXTURES_REQUIRED work_dir)
+set(GPU_HARDENING_COLUMNS wsm6_1km mcica lw_layers noah)
 if(CPPMPAS_ENABLE_CUDA)
   # the CUDA build of a test source: a generated .cu that includes it (as the library's sources, CMakeLists.txt)
   function(cppmpas_cuda_test name src)
@@ -786,10 +789,13 @@ if(CPPMPAS_ENABLE_CUDA)
   add_test(NAME gpu_hardening_mcica COMMAND ${_hc} mcica $<TARGET_FILE:test_gpu_radiation_column>
     ${W}/gpu_hardening_mcica ${CPPMPAS_MPAS_TABLES} ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_lw_tables.bin
     ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_sw_tables.bin --vs $<TARGET_FILE:test_radiation_column>)
+  add_test(NAME gpu_hardening_lw_layers COMMAND ${_hc} lw_layers $<TARGET_FILE:test_gpu_radiation_column>
+    ${W}/gpu_hardening_lw ${CPPMPAS_MPAS_TABLES} ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_lw_tables.bin
+    ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_sw_tables.bin --vs $<TARGET_FILE:test_radiation_column>)
   add_test(NAME gpu_hardening_noah COMMAND ${_hc} noah $<TARGET_FILE:test_gpu_noah_column> ${W}/gpu_hardening_noah
     ${CPPMPAS_NOAH_TABLES} --vs $<TARGET_FILE:test_noah_column>)
-  set_tests_properties(gpu_hardening_wsm6_1km gpu_hardening_mcica gpu_hardening_noah PROPERTIES
-    FIXTURES_REQUIRED work_dir)
+  set_tests_properties(gpu_hardening_wsm6_1km gpu_hardening_mcica gpu_hardening_lw_layers gpu_hardening_noah
+    PROPERTIES FIXTURES_REQUIRED work_dir)
   # libm::log / log10 and the libmvec lanes mvec_log / mvec_log10 on the device against the host, bit for bit
   add_executable(test_gpu_mvec_log test_gpu_mvec_log.cu)
   target_link_libraries(test_gpu_mvec_log PRIVATE cppmpas_cuda)
