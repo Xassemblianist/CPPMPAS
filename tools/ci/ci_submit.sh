@@ -6,7 +6,7 @@
 # commit out (ci/fetch_bundle.sh). The asset is deleted again whatever the outcome (also on an error or Ctrl-C).
 #
 #   tools/ci/ci_submit.sh [COMMIT] [--labels short|long|all] [--no-wait] [--hours H] [--out DIR]
-#       [--workflow-ref REF] [--max-parallel N]
+#       [--workflow-ref REF] [--max-parallel N] [--cache-salt S]
 #
 # COMMIT: default HEAD. --labels: the tests to run (default all; short: without the label long). The script waits
 # for the run (at most --hours, default 3), downloads its summary (the artifact "summary") to --out (default
@@ -17,23 +17,27 @@
 # test brings everything else: its ci/ (the image, the build, the plan with ci/data.tsv and ci/costs.tsv, the data
 # checks, the test runner, the summary), so a new reference release in ci/data.tsv or a planner change is tested
 # without being on main. --max-parallel: test jobs at once (default 10, at most 10; fewer when other jobs of the
-# project run: its share is 20 runners).
+# project run: its share is 20 runners). --cache-salt: appended to every cache key of the run, so that nothing
+# restores (a run that must not need the cache); afterwards delete the entries it saved: `gh cache delete <key>
+# -R Xassemblianist/CPPMPAS` for every key of `gh cache list -R Xassemblianist/CPPMPAS --key cpu-suite-` with S in it.
 # Needs gh, logged in with the rights to start CPPMPAS's workflows and upload to cppmpas-data's releases.
 set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 GH_REPO_SRC=${CPPMPAS_CI_REPO:-Xassemblianist/CPPMPAS}
 DATA=Xassemblianist/cppmpas-data
-COMMIT=HEAD LABELS=all WAIT=1 HOURS=3 OUT= WREF=main MAXP=10
+COMMIT=HEAD LABELS=all WAIT=1 HOURS=3 OUT= WREF=main MAXP=10 SALT=
 while [ $# -gt 0 ]; do
   case $1 in
     --labels) LABELS=$2; shift 2 ;; --no-wait) WAIT=0; shift ;; --hours) HOURS=$2; shift 2 ;;
     --out) OUT=$2; shift 2 ;; --workflow-ref) WREF=$2; shift 2 ;; --max-parallel) MAXP=$2; shift 2 ;;
-    -*) sed -n '3,21p' "$0"; exit 2 ;;
+    --cache-salt) SALT=$2; shift 2 ;;
+    -*) sed -n '3,24p' "$0"; exit 2 ;;
     *) COMMIT=$1; shift ;;
   esac
 done
 case $LABELS in all|short|long) ;; *) echo "[ci_submit] --labels: all, short or long"; exit 2 ;; esac
 [[ $MAXP =~ ^[0-9]+$ ]] && [ "$MAXP" -ge 1 ] && [ "$MAXP" -le 10 ] || { echo "[ci_submit] --max-parallel: 1 to 10"; exit 2; }
+[[ $SALT =~ ^[A-Za-z0-9._]*$ ]] || { echo "[ci_submit] --cache-salt: letters, digits, . and _"; exit 2; }
 SHA=$(git -C "$REPO" rev-parse --verify "$COMMIT^{commit}")
 git -C "$REPO" fetch -q origin main 2> /dev/null || echo "[ci_submit] note: git fetch origin failed; origin/main as known locally"
 BASE=$(git -C "$REPO" rev-parse origin/main)
@@ -72,7 +76,8 @@ if ! git -C "$REPO" merge-base --is-ancestor "$SHA" "$BASE"; then
   echo "[ci_submit] bundle $BUNDLE ($(stat -c %s "$F") bytes, sha256 ${BSHA:0:16}, $(git -C "$REPO" rev-list --count "$SHA" "^$BASE") commits on origin/main ${BASE:0:8})"
 fi
 gh workflow run cpu_suite.yml -R "$GH_REPO_SRC" --ref "$WREF" -f ref="$SHA" -f labels="$LABELS" \
-  -f bundle="${BUNDLE:-}" -f bundle_sha256="$BSHA" -f tag="$TAG" -f max_parallel="$MAXP" > /dev/null
+  -f bundle="${BUNDLE:-}" -f bundle_sha256="$BSHA" -f tag="$TAG" -f max_parallel="$MAXP" \
+  ${SALT:+-f cache_salt="$SALT"} > /dev/null
 RUN=
 for _ in $(seq 30); do  # the run of this dispatch, by its name
   sleep 5
