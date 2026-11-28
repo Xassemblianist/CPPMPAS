@@ -8,7 +8,7 @@
 # default list has odd and even cell and level counts (1, 2, 3, 7, 14, 64, 63 cells; 55 levels as RG, 56, 41), RG's
 # len_disp 240 km and 3 km (the scale-aware branch), the Registry's closures (0, 8) and others (deep 1, 7, 10, 14,
 # -1; shallow 0, 1, 4, 7, -1), the rainc bucket, and dt 600 s (RG's), 300, 90 and 45 s.
-set -u
+set -euo pipefail
 mpas=$1; mmm=$2; work=$3; cpp=$4; shift 4
 here=$(dirname "$(realpath "$0")")
 cases=${*:-"1:55:2:1:240000:0:0:8:600 2:55:2:2:240000:0:0:8:600 3:56:2:3:3000:0:0:8:600 7:55:2:4:240000:1:0:8:600 14:55:2:5:3000:0:0:8:300 64:55:2:6:240000:0:0:8:600 63:41:2:7:240000:1:0:8:90 64:56:2:8:3000:0:0:8:600 21:55:2:9:240000:0:1:0:600 21:55:2:10:240000:0:7:1:600 21:55:2:11:3000:0:10:4:600 21:55:2:12:240000:0:14:7:300 21:55:2:13:240000:0:-1:-1:45"}
@@ -21,14 +21,15 @@ ncase=0
 "$cpp" guards || { echo "FAIL: the cu_grell_freitas hard errors"; rc=1; }
 for c in $cases; do
   IFS=: read -r nc nv ns seed ld acr cd cs dt <<< "$c"
-  in=$work/in_$c.bin; rm -f "$work/ref_$c.bin" "$work/cpp_$c.bin"
+  in=$work/in_$c.bin
+  rm -f "$in" "$work/ref_$c.bin" "$work/cpp_$c.bin" "$work/ref_$c.log"  # no file of an earlier run can stand in
   python3 -I "$here/columns.py" make "$in" "$nc" "$nv" "$ns" "$seed" "$ld" "$acr" "$cd" "$cs" "$dt" || { echo "FAIL: columns $c"; rc=1; continue; }
   "$work/ref/gf_column_ref" "$in" "$work/ref_$c.bin" > "$work/ref_$c.log" 2>&1 || { cat "$work/ref_$c.log"; echo "FAIL: reference run $c"; rc=1; continue; }
   "$cpp" "$in" "$work/cpp_$c.bin" || { echo "FAIL: CPPMPAS run $c"; rc=1; continue; }
   ncase=$((ncase + 1))
   echo -n "case $c: "
   python3 -I "$here/columns.py" stats "$work/ref_$c.bin" "$nc" || { echo "FAIL: stats $c"; rc=1; }
-  if python3 -I "$here/columns.py" compare "$work/ref_$c.bin" "$work/cpp_$c.bin"; then
+  if python3 -I "$here/columns.py" compare "$in" "$work/ref_$c.bin" "$work/cpp_$c.bin"; then
     rm -f "$in" "$work/ref_$c.bin" "$work/cpp_$c.bin"  # kept when they differ
   else
     rc=1

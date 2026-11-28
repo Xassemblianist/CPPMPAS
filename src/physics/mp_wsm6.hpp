@@ -838,6 +838,9 @@ struct Wsm6Params {
                                     Real& graupel, Real& graupelncv,
                                     Real& sr,
                                     int lane_i = 0, int lane_n = 1) const {  // MPAS parameter (header comment)
+        // the column arrays hold MaxLevels levels: a direct call with more is refused before any is written (the
+        // wrapper checks kMaxLevels too, module_mp_wsm6.cpp)
+        if (nz < 1 || nz > MaxLevels) kernel_fail("mp_wsm6: nz outside 1..MaxLevels (the column arrays)");
         for (int k = 0; k < nz; ++k) {
             qc[k] = std::max(qc[k], static_cast<Real>(0.0));
             qr[k] = std::max(qr[k], static_cast<Real>(0.0));

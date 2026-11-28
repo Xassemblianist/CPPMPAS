@@ -25,6 +25,23 @@ void driver_pbl_mynn(int itimestep, PblPools& mp, const PhysicsVars& vp, int its
   if (its != 1) throw Error("driver_pbl: its /= 1");
   if (const char* r = mp.mynn.refused())
     throw Error(std::string("driver_pbl: bl_mynn with ") + r + " has no verified port");
+  // init_pbl (PB:744-747) fills bl_mynn_common before any driver_pbl: mynn_const from mynn_init_pbl()
+  if (!(mp.mynn_const.cp > 0.) || !(mp.mynn_const.grav > 0.) || !(mp.mynn_const.r_d > 0.))
+    throw Error("driver_pbl: bl_mynn without init_pbl (mynn_const is not mynn_init_pbl()'s)");
+  {  // the pool arrays of bl_mynn (Registry package bl_mynn_in and sfclayer): all set
+    const void* need[] = {mp.xland.p, mp.hfx.p, mp.qfx.p, mp.ust.p, mp.wspd.p, mp.znt.p, mp.hpbl.p, mp.kzh.p,
+                          mp.kzm.p, mp.kzq.p, mp.kpbl.p, mp.rthratenlw.p, mp.rthratensw.p, mp.rublten.p, mp.rvblten.p,
+                          mp.rthblten.p, mp.rqvblten.p, mp.rqcblten.p, mp.rqiblten.p, mp.meshDensity.p,
+                          mp.skintemp.p, mp.ch.p, mp.qsfc.p, mp.rmol.p, mp.el_pbl.p, mp.cov.p, mp.qke.p, mp.qke_adv.p,
+                          mp.qsq.p, mp.tsq.p, mp.tke_pbl.p, mp.sh3d.p, mp.sm3d.p, mp.cldfrac_bl.p, mp.qc_bl.p,
+                          mp.qi_bl.p, mp.edmf_a.p, mp.edmf_ent.p, mp.edmf_qc.p, mp.edmf_qt.p, mp.edmf_thl.p,
+                          mp.edmf_w.p, mp.sub_thl.p, mp.sub_qv.p, mp.det_thl.p, mp.det_qv.p, mp.dqke.p, mp.qbuoy.p,
+                          mp.qdiss.p, mp.qshear.p, mp.qwt.p, mp.rqsblten.p, mp.rniblten.p};
+    for (const void* q : need)
+      if (!q) throw Error("driver_pbl: the bl_mynn pool arrays are not all set");
+    if (mp.diag_kbl_plume.p && (!mp.diag_maxwidthbl.p || !mp.diag_maxmfbl.p || !mp.diag_zbl_plume.p))
+      throw Error("driver_pbl: the plume diagnostics copies are set only in part");
+  }
   if (!mp.f_qc || !mp.f_qi || !mp.f_qs || !mp.f_ni)
     throw Error("driver_pbl: bl_mynn without qc, qi, qs or ni (f_qc / f_qi / f_qs / f_ni = .false.) has no verified port");
   if (mp.f_nc || mp.f_nifa || mp.f_nwfa || mp.f_qoz || mp.f_nbca)

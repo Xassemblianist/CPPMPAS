@@ -17,6 +17,10 @@
 // check_physics_supported): WSM6, New Tiedtke, YSU with GWDO, the revised MM5 surface layer, Noah with the sea-ice
 // driver and the surface diagnostics, RRTMG LW and SW with 'cld_fraction' and the ozone climatology. In the step
 // before a diagnostics alarm (l_diags) the WSM6 driver computes the radar reflectivity and relhum (DRV:467-482).
+// And for 'convection_permitting' with RGCP's options: Thompson (n_microp sub-steps of driver_microphysics, its
+// tables read by thompson_init from the run directory's MP_THOMPSON_*_DATA.DBL, nt_c / mu_c from
+// init_thompson_clouddroplets_forMPAS), Grell-Freitas, MYNN PBL (init_pbl: bl_mynn_init) with YSU's GWDO, the MYNN
+// surface layer feeding Noah, and the same radiation, cloud fraction and surface diagnostics.
 #include <functional>
 #include <string>
 #include <vector>
@@ -27,6 +31,8 @@
 #include "physics/mpas_atmphys_interface.hpp"
 #include "physics/mpas_atmphys_radiation.hpp"
 #include "physics/mpas_atmphys_sfclayer.hpp"
+#include "physics/bl_mynn_common.hpp"
+#include "physics/mp_thompson_init.hpp"
 #include "physics/mp_wsm6.hpp"
 #include "physics/mp_wsm6_refl.hpp"
 #include "physics/sf_noah.hpp"
@@ -55,13 +61,18 @@ struct PhysicsRun {
   RrtmgTables rrtmg;
   wsm6::Wsm6Params<real> wsm6;
   wsm6::Wsm6Radar wsm6_radar;  // mp_wsm6_init's radar_init (MW6:174-184), for the l_diags reflectivity
+  std::string thompson_dir;     // the run directory of MP_THOMPSON_{QRacrQG,QRacrQS,freezeH2O,QIautQS}_DATA.DBL
+  thompson::ThompsonTables thompson;  // thompson_init's (DRV:294-295)
+  mynn::Const mynn_const{};           // bl_mynn_common after init_pbl (PB:744-747)
   // mpas_atmphys_vars / mpas_atmphys_manager
   real dt_dyn = 0, dt_microp = 0, dt_cu = 0, dt_pbl = 0, xice_threshold = 0;
   int n_cu = 1, n_microp = 1, mp_top_level = 0, isurban = 0;
   int has_reqc = 0, has_reqi = 0, has_reqs = 0;
   bool l_radtlw = false, l_radtsw = false, l_conv = false, l_diags = false, l_acrain = false, l_acradt = false;
   bool f_qc = false, f_qr = false, f_qi = false, f_qs = false, f_qg = false;
+  bool f_nc = false, f_ni = false, f_nifa = false, f_nwfa = false;  // IN:518-533 (f_qoz, f_nbca: false)
   int index_qv = 0, index_qc = 0, index_qr = 0, index_qi = 0, index_qs = 0, index_qg = 0;
+  int index_ni = 0, index_nr = 0, index_nc = 0, index_nifa = 0, index_nwfa = 0;
   RadiationVars rad;
   ClockAlarm radtlw_alarm, radtsw_alarm, green_alarm, diag_alarm;
   std::string start_time;  // YYYY-MM-DD_hh:mm:ss of the clock's start
@@ -95,12 +106,12 @@ void physics_driver(PhysicsRun& r, const Mesh& m, State& s, Diag& d, RegistryPoo
 void physics_get_tend_for_dynamics(PhysicsRun& r, const Mesh& m, const State& s, Diag& d, RegistryPools& p,
                                    const FArray<real>& rho_zz2, const DycorePhysicsArrays& a);
 
-// TI:2758-2788: rqvdynten and rthdynten for cu_ntiedtke from the scalars of both time levels and theta_m of level 2
+// TI:2758-2788: rqvdynten and rthdynten for cu_ntiedtke and cu_grell_freitas from the scalars of both time levels and theta_m of level 2
 void dynamics_tendencies_for_convection(PhysicsRun& r, const Mesh& m, const State& s, RegistryPools& p,
                                         const FArray<real>& scalars2, const FArray<real>& theta_m2, real dt,
                                         bool config_monotonic, const DycorePhysicsArrays& a);
 
-// TI:2806-2817: driver_microphysics (DRV:317-500, mp_wsm6) on time level 2
+// TI:2806-2817: driver_microphysics (DRV:317-500, mp_wsm6 or mp_thompson) on time level 2
 void microphysics_for_dynamics(PhysicsRun& r, const Mesh& m, State& s, Diag& d, RegistryPools& p,
                                FArray<real>& theta_m2, FArray<real>& rho_zz2, FArray<real>& scalars2,
                                const FArray<real>& w2, int itimestep, const DycorePhysicsArrays& a);

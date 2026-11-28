@@ -200,6 +200,11 @@ CPPMPAS_HD inline void mym_length(const Const& C, int kte, real xland, const rea
   int k = kts + 1;
   real zwk = zw[k];
   while (zwk <= PBLH_PLUS_ENT) {
+    // BS:1094-1104 has no bound on k: with the PBL top above the column MPAS reads dz(k), qkw(k) past kte (undefined)
+    if (k > kte) {
+      kernel_fail("mym_length: zi + h1 is above the model top (MPAS reads dz and qkw past kte there)");
+      return;
+    }
     const real dzk = 0.5 * (dz[k] + dz[k - 1]);
     const real qdz = fmn(fmx(qkw[k] - qmin, 0.03), 30.0) * dzk;
     elt = elt + qdz * zwk;
@@ -1070,6 +1075,11 @@ CPPMPAS_HD inline void get_pblh(int kte, real& zi, const real* thetav1D, const r
   int kthv = 1;
   real minthv = 9.E9;
   while (zw1D[k] <= 200.) {  // BS:4519
+    // no bound on k in MPAS: a column top at or below 200 m reads thetav1D(k) past kte (undefined)
+    if (k > kte) {
+      kernel_fail("get_pblh: the model top is at or below 200 m (MPAS reads thetav1D past kte there)");
+      return;
+    }
     if (minthv > thetav1D[k]) {
       minthv = thetav1D[k];
       kthv = k;

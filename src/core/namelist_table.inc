@@ -13,6 +13,8 @@
 //   mpas842-dbl-rg24-001/RG24/steps/namelist.atmosphere
 //   mpas842-dbl-rg24-001/RG24/forecast/namelist.atmosphere
 //   tests/namelists/RGR_restart/namelist.atmosphere
+//   mpas842-dbl-rgcp-001/RGCP/steps/namelist.atmosphere
+//   mpas842-dbl-rgcp-001/RGCP/forecast/namelist.atmosphere
 //   tests/namelists/RGR24_restart/namelist.atmosphere
 // Do not edit by hand. Columns: record, option, type, Registry default, accepted values (normalised, one
 // per line: reals as the shortest round-trip decimal, logicals true / false).
@@ -116,7 +118,7 @@ CPPMPAS_NML_OPTION("physics", "config_pbl_interval", "character", "none", "none"
 CPPMPAS_NML_OPTION("physics", "config_camrad_abs_update", "character", "06:00:00", "06:00:00")
 CPPMPAS_NML_OPTION("physics", "config_greeness_update", "character", "24:00:00", "24:00:00")
 CPPMPAS_NML_OPTION("physics", "config_bucket_update", "character", "none", "none")
-CPPMPAS_NML_OPTION("physics", "config_physics_suite", "character", "mesoscale_reference", "none\nmesoscale_reference")
+CPPMPAS_NML_OPTION("physics", "config_physics_suite", "character", "mesoscale_reference", "none\nmesoscale_reference\nconvection_permitting")
 CPPMPAS_NML_OPTION("physics", "config_microp_scheme", "character", "suite", "suite\nmp_kessler")
 CPPMPAS_NML_OPTION("physics", "config_convection_scheme", "character", "suite", "suite")
 CPPMPAS_NML_OPTION("physics", "config_lsm_scheme", "character", "suite", "suite")

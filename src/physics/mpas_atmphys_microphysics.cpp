@@ -59,6 +59,8 @@ void driver_microphysics_wsm6(const wsm6::Wsm6Params<real>& params, Microphysics
     throw Error("driver_microphysics: WSM6 needs qv, qc, qr, qi, qs and qg");
   const int kts = 1, kte = mp.nVertLevels;
   if (mp.mp_top_level < 1 || mp.mp_top_level > kte) throw Error("driver_microphysics: mp_top_level outside 1..nVertLevels");
+  // the surface pressure of PI:950-964 reads atmospheric level 2 and interface 3: a 1-level column is past it
+  if (kte < 2) throw Error("driver_microphysics: nVertLevels < 2 (the surface pressure of PI:950-964)");
   if (mp.l_diags && kte > wsm6::kReflMaxLevels) throw Error("refl10cm_wsm6: nVertLevels outside 1..128");
   KernelCopy<wsm6::Wsm6Radar> radar_k;
   MicrophysicsPools m = mp;
@@ -196,6 +198,9 @@ void driver_microphysics_wsm6(const wsm6::Wsm6Params<real>& params, Microphysics
       for (int k = kts + 1; k <= kte; ++k)
         if (dBZ1d[k - 1] > mx) mx = dBZ1d[k - 1];
       m.refl10cm_max(i) = mx;
+      // DRV:722-724 read zp(kp+1) and dBZ1d(kp+1): with no midpoint at or above 1 km AGL (kp = kte, also a 1-level
+      // column) that is past the arrays MPAS allocated (kts:kte), undefined in MPAS: refused
+      if (kp >= kte) kernel_fail("refl10cm_1km: no level midpoint at or above 1 km AGL (MPAS reads zp(kte+1))");
       const real w1 = (zp[kp] - 1000.) / (zp[kp] - zp[kp - 1]);
       const real w2 = 1.0 - w1;
       m.refl10cm_1km(i) = w1 * dBZ1d[kp - 1] + w2 * dBZ1d[kp];

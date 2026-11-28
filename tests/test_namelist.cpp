@@ -28,6 +28,7 @@
 
 #include "core/error.hpp"
 #include "core/namelist.hpp"
+#include "physics/mpas_atmphys_control.hpp"
 
 using namespace cppmpas;
 
@@ -202,6 +203,45 @@ int main(int argc, char** argv) {
     mr.config_microp_scheme = "off";
     expect(active_scalars(mr) == std::vector<std::string>{"qv", "qc", "qi"},
            "mesoscale_reference without microphysics: qc, qi of cu_ntiedtke_in / bl_ysu_in");
+    // the convection_permitting suite: mp_thompson, cu_grell_freitas, bl_mynn (mpas_atmphys_control.F:143-153)
+    InitConfig cp;
+    cp.config_physics_suite = "convection_permitting";
+    expect(active_scalars(cp) == std::vector<std::string>{"qv", "qc", "qr", "qi", "qs", "qg", "ni", "nr"},
+           "convection_permitting: qv, qc, qr, qi, qs, qg, ni, nr");
+    cp.config_microp_scheme = "off";
+    expect(active_scalars(cp) == std::vector<std::string>{"qv", "qc", "qi", "qs", "ni"},
+           "convection_permitting without microphysics: qc, qi, qs, ni of bl_mynn_in");
+    {  // check_physics_supported: RGCP's convection_permitting options, then the same as a restart run (refused)
+      phys::PhysicsConfig p;
+      p.config_physics_suite = "convection_permitting";
+      p.config_microp_scheme = "mp_thompson";
+      p.config_convection_scheme = "cu_grell_freitas";
+      p.config_pbl_scheme = "bl_mynn";
+      p.config_gwdo_scheme = "bl_ysu_gwdo";
+      p.config_radt_lw_scheme = "rrtmg_lw";
+      p.config_radt_sw_scheme = "rrtmg_sw";
+      p.config_radt_cld_scheme = "cld_fraction";
+      p.config_sfclayer_scheme = "sf_mynn";
+      p.config_lsm_scheme = "sf_noah";
+      p.config_les_model = "none";
+      p.config_bucket_update = p.config_conv_interval = p.config_pbl_interval = p.config_sounding_interval = "none";
+      bool ok = true;
+      try {
+        phys::check_physics_supported(p);
+      } catch (const Error& e) {
+        ok = false;
+        std::printf("  unexpected: %s\n", e.what());
+      }
+      expect(ok, "check_physics_supported accepts RGCP's convection_permitting options");
+      p.config_do_restart = true;
+      bool refused = false;
+      try {
+        phys::check_physics_supported(p);
+      } catch (const Error& e) {
+        refused = std::string(e.what()).find("config_do_restart = true with convection_permitting") != std::string::npos;
+      }
+      expect(refused, "check_physics_supported refuses a convection_permitting restart");
+    }
     // each of the other physics choices is an error
     auto refuses = [&](InitConfig x, const std::string& text) {
       try {
@@ -214,8 +254,8 @@ int main(int argc, char** argv) {
     InitConfig d;
     d.config_physics_suite = "none";
     InitConfig x = d;
-    x.config_physics_suite = "convection_permitting";
-    expect(refuses(x, "config_physics_suite = 'convection_permitting' is not handled"), "a physics suite is not handled");
+    x.config_physics_suite = "other";
+    expect(refuses(x, "config_physics_suite = 'other' is not handled"), "a physics suite is not handled");
     x = d;
     x.config_les_model = "3d_smagorinsky";
     expect(refuses(x, "config_les_model = '3d_smagorinsky' is not handled"), "an LES model is not handled");
@@ -223,11 +263,12 @@ int main(int argc, char** argv) {
     x.config_convection_scheme = "cu_kain_fritsch";
     expect(refuses(x, "config_convection_scheme = 'cu_kain_fritsch' is not handled"), "a convection scheme is not handled");
     x = d;
-    x.config_pbl_scheme = "bl_mynn";
-    expect(refuses(x, "config_pbl_scheme = 'bl_mynn' is not handled"), "a PBL scheme is not handled");
+    x.config_pbl_scheme = "bl_other";
+    expect(refuses(x, "config_pbl_scheme = 'bl_other' is not handled"), "a PBL scheme is not handled");
     x = d;
-    x.config_microp_scheme = "mp_thompson";
-    expect(refuses(x, "config_microp_scheme = 'mp_thompson' is not handled"), "a microphysics scheme is not handled");
+    x.config_microp_scheme = "mp_thompson_aerosols";
+    expect(refuses(x, "config_microp_scheme = 'mp_thompson_aerosols' is not handled"),
+           "a microphysics scheme is not handled");
   }
   }
   if (locale_only) {

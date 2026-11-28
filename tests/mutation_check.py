@@ -405,8 +405,8 @@ MUTATIONS = [
     (NL, "      if (!groups.insert(record).second)", "      if (false)", ["unit_namelist"]),
     (NL, "    const auto at = [&] { return path + \":\" + std::to_string(name_line); };",
      "    const auto at = [&] { return path + \":\" + std::to_string(line); };", ["unit_namelist"]),
-    (NL, "  if (kessler || wsm6) v.push_back(\"qr\");",
-     "  if (wsm6) v.push_back(\"qr\");", ["unit_namelist", "err_scalars_missing"]),
+    (NL, "  if (kessler || thompson || wsm6) v.push_back(\"qr\");",
+     "  if (thompson || wsm6) v.push_back(\"qr\");", ["unit_namelist", "err_scalars_missing"]),
     (NL, "  t(\"config_microp_scheme\", c.config_microp_scheme);", "", ["err_scalars_missing"]),
     (X, "    if (a.scalars != want) {", "    if (false) {", ["err_scalars_extra", "err_scalars_missing"]),
     (A, "  if (mo < 1 || mo > 12 || v(3) < 1 || v(3) > days[mo] || v(4) > 23 || v(5) > 59 || v(6) > 59)", "  if (false)",
@@ -553,8 +553,10 @@ MUTATIONS = [
     (NL, "    out[key] = match;", "    out[key] = v;", ["unit_namelist"]),
     (NL, "  } else {\n    throw Error(\"active scalars: config_physics_suite", "  } else if (false) {\n    throw Error(\"active scalars: config_physics_suite", ["unit_namelist"]),
     (NL, "  if (c.config_les_model != \"none\") throw", "  if (false) throw", ["unit_namelist"]),
-    (NL, "  if (cu != \"off\" && cu != \"cu_ntiedtke\") throw", "  if (false) throw", ["unit_namelist"]),
-    (NL, "  if (pbl != \"off\" && pbl != \"bl_ysu\") throw", "  if (false) throw", ["unit_namelist"]),
+    (NL, "  if (cu != \"off\" && cu != \"cu_ntiedtke\" && cu != \"cu_grell_freitas\")\n    throw", "  if (false)\n    throw",
+     ["unit_namelist"]),
+    (NL, "  if (pbl != \"off\" && pbl != \"bl_ysu\" && pbl != \"bl_mynn\")\n    throw", "  if (false)\n    throw",
+     ["unit_namelist"]),
     ("tools/gen_namelist_table.py", "            if rec in seen:", "            if False:", ["namelist_gen_errors"]),
     (W, "    if (!names.insert(n).second) throw", "    if (false) throw", ["unit_io_core"]),
     (W, "    if (ref.c && ref.c->size() > kStrLen) throw", "    if (false) throw", ["unit_io_core"]),
@@ -988,15 +990,16 @@ MUTATIONS += [
      ["dycore_restart0_MW_qv", "dycore_MW_step0_qv"]),
     ("src/core/namelist_table.inc", r'"config_do_restart", "logical", "false", "false\ntrue")',
      r'"config_do_restart", "logical", "false", "false")', ["dycore_restart0_run_MW", "namelist_MW"]),
-    # the CPU build has none of the GPU's capacity limits (core/backend.hpp, operators/vector_operations.cpp)
-    ("src/core/backend.cpp", "#if !defined(CPPMPAS_USE_CUDA)\n  (void)nVertLevels;", "#if 0\n  (void)nVertLevels;",
+    # the CPU build refuses the inputs the GPU's work arrays cannot hold (core/backend.hpp,
+    # operators/vector_operations.cpp, atm_advance_scalars.cpp): 256 levels refused
+    ("src/core/backend.cpp", "  if (nVertLevels + 2 > kMaxColumn)", "  if (nVertLevels + 1 > kMaxColumn)",
      ["unit_backend"]),
     ("src/core/backend.hpp", "    if (n_ > N) {\n      big_.assign", "    if (n_ > N) {\n      n_ = N;\n      big_.assign",
      ["unit_backend"]),
-    (V, "#if defined(CPPMPAS_USE_CUDA)\n  if (N > kMaxRbfPoints + 2)", "#if 1\n  if (N > kMaxRbfPoints + 2)",
-     ["unit_backend"]),
-    (V, "#if defined(CPPMPAS_USE_CUDA)\n  if (pointCount > kMaxRbfPoints)", "#if 1\n  if (pointCount > kMaxRbfPoints)",
-     ["unit_backend"]),
+    (V, "  if (N > kMaxRbfPoints + 2) return kernel_fail(", "  if (false) return kernel_fail(", ["unit_backend"]),
+    (V, "  if (pointCount > kMaxRbfPoints)  // both builds", "  if (false)  // both builds", ["unit_backend"]),
+    ("src/core_atmosphere/atm_advance_scalars.cpp", "  if (num_scalars > kMaxScalars)  // both builds",
+     "  if (false)  // both builds", ["unit_backend"]),
 ]
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -1239,9 +1242,8 @@ MUTATIONS += [
     # lsm_from_MPAS (:460-468), correct_tsk_over_seaice's xice < 0.1 limit (lsm_shared.F:49), usemonalb =
     # config_sfc_albedo (driver_lsm.F:735, case 'as'), the sfc-diagnostics cqs2 threshold (regime 9), the sea-ice
     # TBOT (seaice_drv.F, shared kernel), SFLX_GLACIAL's LVCOEF (snow ageing on land ice)
-    (L, "CPPMPAS_FORCEINLINE double log10(double x) { return ::cppwrf::glibc::log10(arg(x)); }",
-     "CPPMPAS_FORCEINLINE double log10(double x) { return ::cppwrf::glibc::log(arg(x)) / 2.302585092994046; }",
-     ["noah_column"]),
+    (L, "  return x < 0.0 ? __builtin_nan(\"\") : ::cppwrf::glibc::log10(x);",
+     "  return x < 0.0 ? __builtin_nan(\"\") : ::cppwrf::glibc::log(x) / 2.302585092994046;", ["noah_column"]),
     ("src/physics/mpas_atmphys_lsm_noahinit.cpp", "&t.satpsi[lc], &t.satdk[lc], &t.satdw[lc], &t.wltsmc[lc]",
      "&t.satpsi[lc], &t.satdw[lc], &t.satdk[lc], &t.wltsmc[lc]", ["noah_column"]),
     ("src/physics/mpas_atmphys_driver_lsm.cpp", "real fk = libm::pow((hlice / (pc::gravity * (-psisat)))",
@@ -1730,8 +1732,8 @@ MUTATIONS += [
     (PBD, '      m.kzq(k, i) = kzh_p(i, k);  // PB:604: kzh_p, as MPAS\n    }\n  });\n  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // PB:659-690',
      '      m.kzq(k, i) = kzm_p(i, k);  // PB:604: kzh_p, as MPAS\n    }\n  });\n  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // PB:659-690',
      ["mynn_column"]),
-    (PIF, '        for (int k = kts; k <= kte; ++k) v.ni_p(i, k) = fmax0(m.scalars(m.index_ni, k, i));',
-     '        for (int k = kts; k <= kte; ++k) v.ni_p(i, k) = m.scalars(m.index_ni, k, i);', ["mynn_column"]),
+    (PIF, '          v.ni_p(i, k) = (tail_src && i == ite) ? fmax0_src(m.scalars(m.index_ni, k, i)) : fmax0(m.scalars(m.index_ni, k, i));',
+     '          v.ni_p(i, k) = m.scalars(m.index_ni, k, i);', ["mynn_column"]),
     (PTD, '          tend_scalars(m.index_qs, k, i) = tend_scalars(m.index_qs, k, i) + m.rqsblten(k, i) * mass(k, i);',
      '          tend_scalars(m.index_qs, k, i) = tend_scalars(m.index_qs, k, i) + m.rqiblten(k, i) * mass(k, i);',
      ["mynn_column"]),
@@ -1761,6 +1763,96 @@ MUTATIONS += [
     ("CMakeLists.txt", 'cppmpas_check_fp_directory("${CMAKE_SOURCE_DIR}")', '# cppmpas_check_fp_directory', ["cmake_fp_flags"]),
     ("CMakeLists.txt", '    if(_v MATCHES "^CMAKE_[A-Za-z]+_FLAGS(_[A-Za-z0-9_]+)?$" OR',
      '    if(_v MATCHES "^CMAKE_[A-Za-z]+_FLAGS(_RELEASE)?$" OR', ["cmake_fp_flags"]),
+]
+
+# the GPU audit's situations (tests/test_hardening.cpp, tests/hardening_columns.py, tests/test_libm.cpp): each check
+# fails when its refusal, its semantics or its arithmetic is undone
+NTH, YSUH, KSH, NOAHH = "src/physics/cu_ntiedtke.hpp", "src/physics/bl_ysu.hpp", "src/physics/mp_kessler.hpp", \
+    "src/physics/sf_noah.hpp"
+SFCH, GWH = "src/physics/sf_sfclayrev.hpp", "src/physics/bl_gwdo.hpp"
+SWC, LWC = "src/physics/rrtmg/rrtmg_sw_cldprmc.hpp", "src/physics/rrtmg/rrtmg_lw_cldprmc.hpp"
+LSMD, NDRV = "src/physics/mpas_atmphys_driver_lsm.cpp", "src/physics/module_sf_noahdrv.cpp"
+OFF3 = "    return std::ptrdiff_t(i) + std::ptrdiff_t(j) * sj + std::ptrdiff_t(k) * sk;"
+MUTATIONS += [
+    # G1: log10@plt's SVID wrapper (+qNaN for x < 0) left out of the lane and of the scalar wrapper
+    (L, "  return x < 0.0 ? __builtin_nan(\"\") : ::cppwrf::mvec::log10(x);", "  return ::cppwrf::mvec::log10(x);",
+     ["unit_libm"]),
+    (L, "  return x < 0.0 ? __builtin_nan(\"\") : ::cppwrf::glibc::log10(x);", "  return ::cppwrf::glibc::log10(x);",
+     ["unit_libm"]),
+    # G2: MIN(x, 0.) with the constant first (a -0.0 operand stays -0.0), and cuadjtqn's zcond clamp in that order
+    (NTH, "CPPMPAS_HD inline T cmin(T x, T c) { return sel_lt(x, c); }", "CPPMPAS_HD inline T cmin(T x, T c) { return sel_lt(c, x); }",
+     ["hardening_ntclamp"]),
+    (NTH, "      zcond = cmin(zcond, T(0.));\n      pt[kk] = pt[kk] + foeldcpm(c, pt[kk]) * zcond;",
+     "      zcond = T(0.) < zcond ? T(0.) : zcond;\n      pt[kk] = pt[kk] + foeldcpm(c, pt[kk]) * zcond;", ["hardening_ntclamp"]),
+    (NTH, "CPPMPAS_HD inline T vmin(T a, T b) { return sel_lt(b, a); }", "CPPMPAS_HD inline T vmin(T a, T b) { return sel_lt(a, b); }",
+     ["hardening_ntclamp"]),
+    # G3: the stable lookups accept s = 100 z/L down to -2 (a negative table index for s <= -1)
+    (SFCH, "  if (!(s > static_cast<T>(-1.0) && s < static_cast<T>(2147483647.0)))",
+     "  if (!(s > static_cast<T>(-2.0) && s < static_cast<T>(2147483647.0)))", ["hardening_sfclayrev"]),
+    (SFCH, "  if (!(s > static_cast<T>(-1.0) && s < static_cast<T>(2147483647.0)))",
+     "  if (!(s > static_cast<T>(-1.0) && s < static_cast<T>(1e300)))", ["hardening_sfclayrev"]),
+    # M1: the offsets in int again
+    (YSUH, OFF3, "    return i + j * sj + k * sk;", ["hardening_views"]),
+    (KSH, OFF3, "    return i + j * sj + k * sk;", ["hardening_views"]),
+    (NOAHH, OFF3, "    return i + j * sj + k * sk;", ["hardening_views"]),
+    (NOAHH, "  CPPMPAS_HD std::ptrdiff_t offset(int i, int j) const { return std::ptrdiff_t(i) + std::ptrdiff_t(j) * sj; }",
+     "  CPPMPAS_HD std::ptrdiff_t offset(int i, int j) const { return i + j * sj; }", ["hardening_views"]),
+    # M2
+    ("src/physics/mpas_atmphys_control.cpp", "  if (!c.config_frac_seaice) no(", "  if (false) no(", ["hardening_seaice"]),
+    (LSMD, "    if (!f->p) throw Error(\"driver_seaice:", "    if (false) throw Error(\"driver_seaice:", ["hardening_seaice"]),
+    # M3: refl10cm_1km interpolates past the column again
+    (MC, "      if (kp >= kte) kernel_fail(\"refl10cm_1km:", "      if (false) kernel_fail(\"refl10cm_1km:",
+     ["hardening_wsm6_1km"]),
+    # M5: the raw column routines without their level checks
+    (NTH, "  if (km < 1 || km > kMaxLevels) kernel_fail(", "  if (km < 1) kernel_fail(", ["hardening_raw"]),
+    (NTH, "  if (km < 1 || km > kMaxLevels) kernel_fail(", "  if (km > kMaxLevels) kernel_fail(", ["hardening_raw"]),
+    (YSUH, "    if (nz < 1 || nz > MaxLevels) kernel_fail(", "    if (nz < 1) kernel_fail(", ["hardening_raw"]),
+    ("src/physics/mp_wsm6.hpp", "        if (nz < 1 || nz > MaxLevels) kernel_fail(", "        if (nz < 1) kernel_fail(",
+     ["hardening_raw"]),
+    (KSH, "    if (nz < 2 || nz > kMaxLevels) kernel_fail(", "    if (nz > kMaxLevels) kernel_fail(", ["hardening_raw"]),
+    (KSH, "    if (nz < 2 || nz > kMaxLevels) kernel_fail(", "    if (nz < 1) kernel_fail(", ["hardening_raw"]),
+    (GWH, "  if (kte < 2 || kte > kMaxLevels) kernel_fail(", "  if (kte > kMaxLevels) kernel_fail(", ["hardening_raw"]),
+    (GWH, "  if (kte < 2 || kte > kMaxLevels) kernel_fail(", "  if (kte < 2) kernel_fail(", ["hardening_raw"]),
+    # M4: thin columns, Noah categories and roots, McICA layers
+    ("src/physics/mpas_atmphys_gwdo.cpp", "  if (kte < 2) throw Error(\"driver_gwdo:", "  if (false) throw Error(\"driver_gwdo:",
+     ["hardening_thin"]),
+    (MC, "  if (kte < 2) throw Error(\"driver_microphysics:", "  if (false) throw Error(\"driver_microphysics:",
+     ["hardening_thin"]),
+    ("src/core_atmosphere/atm_microphysics.cpp", "  if (kte < 3) throw Error(\"driver_microphysics:",
+     "  if (kte < 2) throw Error(\"driver_microphysics:", ["hardening_thin"]),
+    (LSMD, "  if (p.nSoilLevels < 2 || p.nSoilLevels > noah::kMaxSoilLevels)",
+     "  if (p.nSoilLevels < 1 || p.nSoilLevels > noah::kMaxSoilLevels)", ["hardening_thin"]),
+    (NDRV, "  if (a.num_soil_layers < 2 || a.num_soil_layers > noah::kMaxSoilLevels)\n    throw Error(\"module_sf_noahdrv.F lsm:",
+     "  if (a.num_soil_layers < 1 || a.num_soil_layers > noah::kMaxSoilLevels)\n    throw Error(\"module_sf_noahdrv.F lsm:",
+     ["hardening_thin"]),
+    (NDRV, "  if (a.num_soil_layers < 2 || a.num_soil_layers > noah::kMaxSoilLevels)\n    throw Error(\"module_sf_noah_seaice_drv.F:",
+     "  if (a.num_soil_layers < 1 || a.num_soil_layers > noah::kMaxSoilLevels)\n    throw Error(\"module_sf_noah_seaice_drv.F:",
+     ["hardening_thin"]),
+    (NOAHH, "    if (styp < 1 || vtyp < 1 || slop < 1) {", "    if (styp < 1 || slop < 1) {", ["hardening_noah"]),
+    (NOAHH, "      if (nroot < 1) { raise_fatal(kFatalNoahNoRootsCanres); return; }", "", ["hardening_noah"]),
+    (NOAHH, "        if (nroot < 1) raise_fatal(kFatalNoahNoRootsTransp);", "", ["hardening_noah"]),
+    (LSMD, "      if (p.isltyp(iCell) > tables.slcats)", "      if (false)", ["hardening_noah"]),
+    (LSMD, "      if (!cfg.config_sfc_snowalbedo && (p.ivgtyp(iCell) < 1 || p.ivgtyp(iCell) > tables.lucats))",
+     "      if (!cfg.config_sfc_snowalbedo && p.ivgtyp(iCell) > tables.lucats)", ["hardening_noah"]),
+    (RAD, "  if (nlay < 4) kernel_fail(\"MCICA_SUBCOL: fewer than 4 layers", "  if (false) kernel_fail(\"MCICA_SUBCOL: fewer than 4 layers",
+     ["hardening_mcica"]),
+    # L1.1 / L1.2: the size stops and the prep stages' layer checks
+    (SWC, "          if (radice < rb(5.0) || radice > rb(131.0))", "          if (radice < rb(5.0))", ["hardening_radius"]),
+    (SWC, "          if (radice < rb(5.0) || radice > rb(140.0))", "          if (radice > rb(140.5))", ["hardening_radius"]),
+    (SWC, "          if (radsno < rb(5.0) || radsno > rb(140.0))", "          if (radsno > rb(140.0))", ["hardening_radius"]),
+    (LWC, "              if (radice < rb(5.0) || radice > rb(131.0))", "              if (radice > rb(140.0))", ["hardening_radius"]),
+    (LWC, "              if (radice < rb(5.0) || radice > rb(140.0))", "              if (radice < rb(5.0))", ["hardening_radius"]),
+    (LWC, "            if (radsno < rb(5.0) || radsno > rb(140.0))", "            if (radsno < rb(5.0))", ["hardening_radius"]),
+    ("src/physics/rrtmg/rrtmg_lw_stages.hpp", "  if (nlayers < 1 || nlayers > kMcicaMaxLayers) ::cppmpas::kernel_fail(\"rrtmg_lw_prep:",
+     "  if (nlayers < 1) ::cppmpas::kernel_fail(\"rrtmg_lw_prep:", ["hardening_prep"]),
+    ("src/physics/rrtmg/rrtmg_sw_stages.hpp", "  if (nlayers < 1 || nlayers > kMcicaMaxLayers) ::cppmpas::kernel_fail(\"rrtmg_sw_prep:",
+     "  if (nlayers < 1) ::cppmpas::kernel_fail(\"rrtmg_sw_prep:", ["hardening_prep"]),
+    # M5: the LW layer limit of the port (128) not checked: the sweep arrays overrun
+    (RAD, "    if (nl > rrtmg::RRTMG_LW_SWEEP_MAX) kernel_fail(", "    if (nl > rrtmg::RRTMG_LW_SWEEP_MAX + 64) kernel_fail(",
+     ["hardening_lw_layers"]),
+    # G5 in a kernel (the unit_backend mutants above cover the host calls)
+    (V, "  if (pointCount > kMaxRbfPoints)  // both builds", "  if (pointCount > kMaxRbfPoints + 1)  // both builds",
+     ["hardening_capacity"]),
 ]
 
 MUTATIONS = [(p, o, n, [t for t in ts if t not in EQUIVALENT_ON_SC.get((p, n), [])]) for p, o, n, ts in MUTATIONS]
@@ -1850,6 +1942,61 @@ MUTATIONS += [
     # config_do_restart only
     ("tests/check_restart_recipe.py", 'RESTART_ALLOWED = {"config_run_duration", "config_start_time", "config_do_restart"}',
      'RESTART_ALLOWED = {"config_run_duration", "config_do_restart"}', ["restart_recipe_RGR"]),
+]
+
+# The convection_permitting suite in cppmpas run (physics/mpas_atmphys_driver.cpp), against mpas842-dbl-rgcp-001
+# (dycore_RGCP_*: the steps, the restart and history fields, the forecast's streams) and mpas842-dbl-rgcp24-001
+# (dycore_RGCP24_*, label long): Thompson's n_microp sub-steps and nt_c / mu_c, the sf_mynn inputs, MYNN's initflag
+# and grid length, the ni tendency of physics_get_tend, the Grell-Freitas closures, and the
+# l_diags reflectivity maximum; the suite's scalars, the refused convection_permitting restart. Indices 854-865 (after main's).
+DRV = "src/physics/mpas_atmphys_driver.cpp"
+MUTATIONS += [
+    (DRV, "    q.n_microp = r.n_microp;", "    q.n_microp = 1;", ["dycore_RGCP_step1_qr"]),
+    (DRV, '    init_thompson_clouddroplets_forMPAS(nCellsSolve, cv(p.I("landmask")), p.v("nt_c"), p.v("mu_c"));',
+     '    init_thompson_clouddroplets_forMPAS(nCellsSolve, cv(p.I("landmask")), p.v("mu_c"), p.v("nt_c"));',
+     ["dycore_RGCP_restart_nt_c", "dycore_RGCP_restart_mu_c"]),
+    (DRV, '      q.snowh = cv(p.R("snowh"));', '      q.snowh = cv(p.R("snow"));', ["dycore_RGCP_step1_qv"]),
+    (DRV, "    q.config_do_restart = c.config_do_restart;  // PB:814, 821, 935",
+     "    q.config_do_restart = true;  // PB:814, 821, 935", ["dycore_RGCP_step1_u", "dycore_RGCP_restart_qke"]),
+    (DRV, "      CPPMPAS_C(rqsblten) CPPMPAS_C(rniblten)", '      CPPMPAS_C(rqsblten) q.rniblten = cv(p.R("rqsblten"));',
+     ["dycore_RGCP_step5_ni", "dycore_RGCP_step10_ni"]),
+    (DRV, "    q.config_gfconv_closure_deep = r.cfg.config_gfconv_closure_deep;", "    q.config_gfconv_closure_deep = 1;",
+     ["dycore_RGCP_step1_qv", "dycore_RGCP_restart_xmb_total"]),
+    (DRV, "      q.config_len_disp = c.config_len_disp;\n      q.mynn = mynn_options(c);",
+     "      q.config_len_disp = 2. * c.config_len_disp;\n      q.mynn = mynn_options(c);",
+     ["dycore_RGCP_history1h_hpbl", "dycore_RGCP_history2h_u"]),
+    (DRV, '    q.refl10cm_max = p.v("refl10cm_max");', '    q.refl10cm_max = p.v("refl10cm_1km_max");',
+     ["dycore_RGCP_streams_restart.2026-10-12_01.10.00", "dycore_RGCP_streams_all"]),
+    # (nt_c read from mu_c stops the 24 h run: "Not Run", no kill; gsw from glw and closure_shallow 7 unresolved)
+    (DRV, "      q.config_len_disp = c.config_len_disp;\n      q.mynn = mynn_options(c);",
+     "      q.config_len_disp = 1.5 * c.config_len_disp;\n      q.mynn = mynn_options(c);",
+     ["dycore_RGCP24_history.2026-10-13_00.00.00", "dycore_RGCP24_all"]),
+    # the scalars of the suite (core/namelist.cpp active_scalars) and the dycore's check of them
+    (NL, '  if (mynn || thompson) v.push_back("ni");', '  if (thompson) v.push_back("ni");', ["unit_namelist"]),
+    ("src/core_atmosphere/atm_dycore.cpp", '  const bool suite = c.config_physics_suite == "mesoscale_reference" || cp;',
+     '  const bool suite = c.config_physics_suite == "mesoscale_reference";', ["unit_dycore"]),
+    ("src/physics/mpas_atmphys_control.cpp", "    if (c.config_do_restart) no(\"config_do_restart = true with convection_permitting",
+     "    if (false) no(\"config_do_restart = true with convection_permitting", ["unit_namelist"]),
+]
+
+# The MYNN review's findings (tests/mynn_column, tests/sfmynn_column): MPAS_to_physics' ni_p odd-tail lane of the
+# reference object code (PI:397), the kte bounds of get_pblh's and mym_length's DO WHILE loops, the index -1 of an
+# inactive constituent in physics_get_tend, init_pbl not called, unset bl_mynn pool arrays, sf_mynn with one level.
+# Indices 866-872 (after main's).
+MUTATIONS += [
+    (PIF, "    const bool tail_src = n >= 18 && (n & 1);", "    const bool tail_src = false;", ["mynn_column"]),
+    (MYK, "    if (k > kte) {\n      kernel_fail(\"get_pblh:", "    if (false) {\n      kernel_fail(\"get_pblh:",
+     ["mynn_column"]),
+    (MYK, "    if (k > kte) {\n      kernel_fail(\"mym_length:", "    if (false) {\n      kernel_fail(\"mym_length:",
+     ["mynn_column"]),
+    (PTD, "  if (pbl == \"bl_mynn\" && (mp.index_qs <= 0 || mp.index_ni <= 0))",
+     "  if (pbl == \"bl_mynn\" && (!mp.index_qs || !mp.index_ni))", ["mynn_column"]),
+    (PBD, "  if (!(mp.mynn_const.cp > 0.) || !(mp.mynn_const.grav > 0.) || !(mp.mynn_const.r_d > 0.))",
+     "  if (false)", ["mynn_column"]),
+    (PBD, "      if (!q) throw Error(\"driver_pbl: the bl_mynn pool arrays are not all set\");",
+     "      (void)q;", ["mynn_column"]),
+    ("src/physics/mpas_atmphys_sfclayer.cpp", "  if (mynn && vp.kme < 3)", "  if (mynn && vp.kme < 2)",
+     ["sfmynn_column"]),
 ]
 # RGR24 (label long, mpas842-dbl-rgr24-001): the recipe check compares the NetCDF files by tools/mpas_compare.py (the
 # init file and the 12:10 checkpoint hold the random file_id / parent_id of their run), and the long restart run's

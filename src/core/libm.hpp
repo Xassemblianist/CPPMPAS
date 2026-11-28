@@ -10,6 +10,16 @@
 // CPPWRF's ports (core/glibc_math.hpp, shared with CPPWRF); sincos, which CPPWRF does not use, is ported here.
 #include <cstdint>
 
+// The lanes of libmvec's 2-lane log / log10 outside the normal range (x < DBL_MIN: subnormals, +-0, negatives;
+// +-Inf, NaN) call the scalar log / log10 of libm (svml_d_log2_core_sse4.S, svml_d_log102_core_sse4.S), the
+// reference's __log_fma / __ieee754_log10. CPPWRF's core/libmvec_x86.hpp takes them from the glibc ports of
+// core/glibc_math.hpp with CPPWRF_GLIBC_MATH and from std::log / std::log10 without: on the device that is CUDA's
+// log, which rounds differently (log10 of 0x1p-1023: ...5221 on the GPU against glibc's ...5220). CPPMPAS defines it
+// for every source, host and device, so both builds compute those lanes as glibc does.
+#ifndef CPPWRF_GLIBC_MATH
+#define CPPWRF_GLIBC_MATH 1
+#endif
+
 #include "core/backend.hpp"
 #include "core/glibc_math.hpp"
 #include "core/libmvec_x86.hpp"
@@ -128,13 +138,25 @@ CPPMPAS_FORCEINLINE double tanh(double x) { return ::cppwrf::glibc::tanh(arg(x))
 CPPMPAS_FORCEINLINE double mvec_atan(double x) { return ::cppwrf::glibc::mvec::atan(arg(x)); }  // _ZGVbN2v_atan_sse4
 // Noah LSM (physics/sf_noah.hpp, TDFCND): log10 is __ieee754_log10 (sysdeps/ieee754/dbl-64/e_log10.c, no FMA
 // variant; its log is __log_fma). The reference calls it through log10@plt; no libmvec lane in Noah.
-CPPMPAS_FORCEINLINE double log10(double x) { return ::cppwrf::glibc::log10(arg(x)); }  // __ieee754_log10
+// log10@plt is the x86-64 libm's default log10, the wrapper of math/w_log10_compat.c:25-41 (LIBM_SVID_COMPAT), as
+// asin / acos above: x < 0 returns __kernel_standard's NAN (+qNaN, k_standard.c type 19), not __ieee754_log10's
+// (x - x) / (x - x); +-0 gives -HUGE_VAL (type 18), which __ieee754_log10 also returns. Any other x is
+// __ieee754_log10's.
+CPPMPAS_FORCEINLINE double log10(double x) {  // log10 (w_log10_compat.c) -> __ieee754_log10
+  x = arg(x);
+  return x < 0.0 ? __builtin_nan("") : ::cppwrf::glibc::log10(x);
+}
 
 // WSM6 reflectivity (physics/mp_radar.hpp, mp_wsm6_refl.hpp): the 2-lane log10 _ZGVbN2v_log10_sse4 (CPPWRF's
 // core/libmvec_x86.hpp, Intel rcpps tables as the reference runs preload them), and the complex functions gfortran
 // calls for COMPLEX*16 ABS, LOG and SQRT: cabs (__cabs = __hypot, no ifunc), clog (__clog), csqrt (__csqrt)
 // (CPPWRF's core/glibc_math.hpp ports).
-CPPMPAS_FORCEINLINE double mvec_log10(double x) { return ::cppwrf::mvec::log10(arg(x)); }  // _ZGVbN2v_log10_sse4
+// A lane outside the normal range calls log10@plt (svml_d_log102_core_sse4.S): the wrapper of log10 above, so a
+// negative lane is +qNaN; CPPWRF's lane takes __ieee754_log10 (core/glibc_math.hpp, CPPWRF_GLIBC_MATH) for the rest.
+CPPMPAS_FORCEINLINE double mvec_log10(double x) {  // _ZGVbN2v_log10_sse4
+  x = arg(x);
+  return x < 0.0 ? __builtin_nan("") : ::cppwrf::mvec::log10(x);
+}
 CPPMPAS_FORCEINLINE double cabs(double re, double im) { return ::cppwrf::glibc::hypot(arg(re), arg(im)); }
 CPPMPAS_FORCEINLINE void clog(double re, double im, double* r, double* i) {
   ::cppwrf::glibc::clog(arg(re), arg(im), r, i);

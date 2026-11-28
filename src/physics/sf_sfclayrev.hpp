@@ -122,9 +122,21 @@ CPPMPAS_HD inline T psih_unstable_full(T zolf) {
   return (psihk + zolf * zolf * psihc) / (static_cast<T>(1.0) + zolf * zolf);
 }
 
+// The table index of psim_stable / psih_stable / psim_unstable / psih_unstable (sf_sfclayrev.F90:1034-1095):
+// nzol = int(s), s = zolf*100. (stable) or -zolf*100. (unstable), then psi*_stab / psi*_unstab (0:1000) at nzol and
+// nzol+1 when nzol+1 < 1000, else the full function. MPAS's int() is a 32-bit cvttsd2si: s >= 2^31 or a NaN gives
+// -2^31 and s <= -1 a negative nzol, both an index below the tables (undefined in MPAS; a C++ conversion out of
+// range is undefined too); s >= 2^31 - 1 overflows nzol+1. Refused on both builds; any other s is MPAS's lookup.
+template <typename T>
+CPPMPAS_HD inline int zol_table_index(T s) {
+  if (!(s > static_cast<T>(-1.0) && s < static_cast<T>(2147483647.0)))
+    kernel_fail("sf_sfclayrev: z/L outside the psim / psih lookup (MPAS indexes its tables out of bounds)");
+  return static_cast<int>(s);
+}
+
 template <typename T>
 CPPMPAS_HD inline T psim_stable(T zolf, const SFClayRevTables<T>& tbl) {
-  int nzol = static_cast<int>(zolf * static_cast<T>(100.0));
+  int nzol = zol_table_index(zolf * static_cast<T>(100.0));
   T rzol = zolf * static_cast<T>(100.0) - static_cast<T>(nzol);
   if (nzol + 1 < 1000) {
     return tbl.psim_stab[nzol] + rzol * (tbl.psim_stab[nzol + 1] - tbl.psim_stab[nzol]);
@@ -135,7 +147,7 @@ CPPMPAS_HD inline T psim_stable(T zolf, const SFClayRevTables<T>& tbl) {
 
 template <typename T>
 CPPMPAS_HD inline T psih_stable(T zolf, const SFClayRevTables<T>& tbl) {
-  int nzol = static_cast<int>(zolf * static_cast<T>(100.0));
+  int nzol = zol_table_index(zolf * static_cast<T>(100.0));
   T rzol = zolf * static_cast<T>(100.0) - static_cast<T>(nzol);
   if (nzol + 1 < 1000) {
     return tbl.psih_stab[nzol] + rzol * (tbl.psih_stab[nzol + 1] - tbl.psih_stab[nzol]);
@@ -146,7 +158,7 @@ CPPMPAS_HD inline T psih_stable(T zolf, const SFClayRevTables<T>& tbl) {
 
 template <typename T>
 CPPMPAS_HD inline T psim_unstable(T zolf, const SFClayRevTables<T>& tbl) {
-  int nzol = static_cast<int>(-zolf * static_cast<T>(100.0));
+  int nzol = zol_table_index(-zolf * static_cast<T>(100.0));
   T rzol = -zolf * static_cast<T>(100.0) - static_cast<T>(nzol);
   if (nzol + 1 < 1000) {
     return tbl.psim_unstab[nzol] + rzol * (tbl.psim_unstab[nzol + 1] - tbl.psim_unstab[nzol]);
@@ -157,7 +169,7 @@ CPPMPAS_HD inline T psim_unstable(T zolf, const SFClayRevTables<T>& tbl) {
 
 template <typename T>
 CPPMPAS_HD inline T psih_unstable(T zolf, const SFClayRevTables<T>& tbl) {
-  int nzol = static_cast<int>(-zolf * static_cast<T>(100.0));
+  int nzol = zol_table_index(-zolf * static_cast<T>(100.0));
   T rzol = -zolf * static_cast<T>(100.0) - static_cast<T>(nzol);
   if (nzol + 1 < 1000) {
     return tbl.psih_unstab[nzol] + rzol * (tbl.psih_unstab[nzol + 1] - tbl.psih_unstab[nzol]);

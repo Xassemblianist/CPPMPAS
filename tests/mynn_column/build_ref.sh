@@ -11,11 +11,13 @@
 # and module_bl_ysu.F (driver_pbl's module uses it); from MMM-physics mynn_shared.F90, bl_mynn_subroutines.F90,
 # bl_mynn.F90 and bl_ysu.F90. Framework modules (pools, timers, log, derived types, inner dimensions) are the
 # stand-ins of stubs.F90. The harness program (harness.F90) only moves data.
-set -eu
+set -euo pipefail
 mpas=$(realpath "$1"); mmm=$(realpath "$2"); out=$3; here=$(dirname "$(realpath "$0")")
 FFLAGS="-O3 -ffree-line-length-none -fconvert=big-endian -ffree-form -fdefault-real-8 -fdefault-double-8"
 CPP="-D_MPI -DCORE_ATMOSPHERE -DMPAS_NAMELIST_SUFFIX=atmosphere -DMPAS_EXE_NAME=atmosphere_model -DMPAS_NATIVE_TIMERS -DMPAS_GIT_VERSION=v8.4.2 -DMPAS_BUILD_TARGET=gfortran -DMPAS_SMIOL_SUPPORT -DMPAS_USE_MPI_F08"
-gfortran --version | head -1
+gfortran --version | sed -n 1p  # sed reads all of it: no SIGPIPE under pipefail
+# the reference compiler is gfortran 14.2 (the build log of the mpas842 reference); another version is refused
+case "$(gfortran -dumpfullversion)" in 14.2.*) ;; *) echo "FAIL: gfortran $(gfortran -dumpfullversion), the reference is 14.2"; exit 1;; esac
 mkdir -p "$out"; cd "$out"
 phys=$mpas/src/core_atmosphere/physics
 c() { gfortran $FFLAGS "$@"; }

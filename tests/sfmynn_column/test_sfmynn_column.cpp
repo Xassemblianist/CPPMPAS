@@ -82,9 +82,44 @@ void dump_all(std::FILE* o) {
 
 }  // namespace
 
+// test_sfmynn_column guards: the hard errors of the sf_mynn path. Each must throw an Error naming the reason.
+int guards() {
+  int fails = 0;
+  auto expect_error = [&](const char* what, const char* needle, auto run) {
+    bool ok = false;
+    try {
+      run();
+    } catch (const cppmpas::Error& e) {
+      ok = std::strstr(e.what(), needle) != nullptr;
+      if (!ok) std::printf("%s: unexpected error: %s\n", what, e.what());
+    }
+    std::printf("%s %s\n", ok ? "ok  " : "FAIL", what);
+    fails += !ok;
+  };
+  static ph::sfclayrev::SFClayRevTables<real> tables;
+  expect_error("sf_mynn with one level", "fewer than 2 levels", [] {
+    ph::SfclayerPools q;
+    q.sfclayer_scheme = "sf_mynn";
+    ph::PhysicsVars v;
+    v.ime = 1;
+    v.kme = 2;
+    ph::driver_sfclayer(1, tables, q, v, 1, 1);
+  });
+  expect_error("sf_mynn without qcg, snowh, ch", "are not set", [] {
+    ph::SfclayerPools q;
+    q.sfclayer_scheme = "sf_mynn";
+    ph::PhysicsVars v;
+    v.ime = 1;
+    v.kme = 56;
+    ph::driver_sfclayer(1, tables, q, v, 1, 1);
+  });
+  return fails ? 1 : 0;
+}
+
 int main(int argc, char** argv) {
+  if (argc == 2 && std::strcmp(argv[1], "guards") == 0) return guards();
   if (argc != 3) {
-    std::fprintf(stderr, "usage: test_sfmynn_column <in.bin> <out.bin>\n");
+    std::fprintf(stderr, "usage: test_sfmynn_column <in.bin> <out.bin> | guards\n");
     return 2;
   }
   try {
@@ -204,7 +239,12 @@ int main(int argc, char** argv) {
         put_r(out, "@lh_sea", 1, {nC}, sea.lh.data(), nC);
       }
     }
-    std::fclose(out);
+    // a short write (a full disk) is a failed run, never an output that looks complete
+    const bool write_error = std::ferror(out) != 0;
+    if (std::fclose(out) != 0 || write_error) {
+      std::fprintf(stderr, "cannot write %s\n", argv[2]);
+      return 1;
+    }
   } catch (const std::exception& e) {
     std::fprintf(stderr, "%s\n", e.what());
     return 1;

@@ -51,8 +51,10 @@ CPPMPAS_HD inline real vmin(real a, real b) { return b < a ? b : a; }
 constexpr real eps = 1.e-20;  // TI:5175
 constexpr int SCALE_IN = 1, SCALE_OUT = 2;  // TI:5174
 // the capacity of the GPU's per-thread scalar work arrays (scalar_tend_column, wdtn of atm_advance_scalars_work):
-// the verified scalar sets are {qv}, {qv, qc, qr} and WSM6's {qv, qc, qr, qi, qs, qg}
-constexpr int kMaxScalars = 6;
+// the scalar sets of the suites are {qv}, {qv, qc, qr}, mesoscale_reference's {qv, qc, qr, qi, qs, qg} and
+// convection_permitting's {qv, qc, qr, qi, qs, qg, ni, nr}. A larger count is refused on both builds (the CPU's work
+// arrays would take it; one range for both builds)
+constexpr int kMaxScalars = 8;
 
 // TI:4683-4939; edges 1..nEdges, cells 1..nCells. advance_density: config_split_dynamics_transport (TI:3049)
 void atm_advance_scalars_work(const DycoreConfig& cfg, const Mesh& m, const State& s, DycoreFields& f, real dt,
@@ -402,6 +404,12 @@ void atm_advance_scalars_mono_work(const DycoreConfig& cfg, const Mesh& m, State
 
 }  // namespace
 
+void check_scalar_capacity(int num_scalars) {
+  if (num_scalars > kMaxScalars)  // both builds (kMaxScalars)
+    throw Error("advance_scalars: more than " + std::to_string(kMaxScalars) +
+                " scalars (the capacity of the per-thread work arrays)");
+}
+
 void check_advance_scalars_supported(const DycoreConfig& cfg, const Mesh& m) {
   auto no = [](const std::string& what) { throw Error("advance_scalars: " + what + " has no verified port"); };
   if (!cfg.config_monotonic) no("config_monotonic = false (the non-monotonic rk_step 3, TI:3044)");
@@ -417,11 +425,7 @@ void advance_scalars(const DycoreConfig& cfg, const Mesh& m, State& s, DycoreFie
   const int nCells = m.nCells, nEdges = m.nEdges, nVertLevels = m.nVertLevels;
   const int num_scalars = s.scalars.extent(0);
   fits_column(nVertLevels, "advance_scalars");
-#if defined(CPPMPAS_USE_CUDA)
-  if (num_scalars > kMaxScalars)
-    throw Error("advance_scalars: more than " + std::to_string(kMaxScalars) +
-                " scalars (the capacity of the GPU build's per-thread work arrays)");
-#endif
+  check_scalar_capacity(num_scalars);
   if (rk_step < 3) {  // :3021-3029, 3044-3049
     FArray<real> horiz_flux_array({num_scalars, nVertLevels, nEdges + 1}, 0.0);
     atm_advance_scalars_work(cfg, m, s, f, rk_timestep[rk_step], horiz_flux_array, rk_step,

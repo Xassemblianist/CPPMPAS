@@ -27,6 +27,12 @@ glibc's vector `log` uses `rcpps`, whose result differs between the two vendors.
   mutation checks.
 - **RG.** Both builds match `mpas842-dbl-rg-004` for the checked fields at steps 0 through 10 and all
   702 variables in the 5 forecast stream files.
+<<<<<<< HEAD
+- **RGCP, RGCP24 (CPU build).** RG and RG24 with the `convection_permitting` suite (Thompson, Grell-Freitas, MYNN
+  PBL and surface layer, YSU GWDO, Noah, RRTMG). The CPU build matches `mpas842-dbl-rgcp-001` in every field at
+  steps 0 through 10 and in all 749 variables of its 5 forecast stream files, and `mpas842-dbl-rgcp24-001` in all
+  19 history, diagnostics and restart files and 2227 variables. The CUDA build refuses this suite until it is proven.
+=======
 - **RGR (restart with physics).** A restart run with `mesoscale_reference` physics from the 01:10 checkpoint
   matches `mpas842-dbl-rgr-001` in all 712 variables of its 5 stream files (history and diagnostics at 02:00 and
   02:50, restart at 02:10) on the CPU and the GPU. RGR24, the long restart from RG24's 12:10 checkpoint to 24:00,
@@ -34,6 +40,7 @@ glibc's vector `log` uses `rcpps`, whose result differs between the two vendors.
   18:10 and 21:10, restart at 24:00) on the CPU and the GPU. MPAS's own restarted run differs from its uninterrupted forecast at 02:00
   (45 of 99 history variables). One known cause: its alarms start again at the restart time, so the radiation
   runs at 01:10 and 01:40 instead of 01:30.
+>>>>>>> origin/main
 - **Idealized cases.** MW (mountain wave), JW (Jablonowski–Williamson baroclinic wave) and SC (supercell with
   Kessler microphysics) match on the CPU and GPU for the 57 initdump fields per case, the tested initial
   restart-stream fields, and the checked fields at steps 0 through 10.
@@ -44,7 +51,11 @@ glibc's vector `log` uses `rcpps`, whose result differs between the two vendors.
 - **CPU suites.** With the Intel `libmvec` preload, `ctest -LE long` reports 2425/2425 and
   `ctest -L long` reports 306/306. The CPU build skips the GPU tests.
 
+<<<<<<< HEAD
+Open work includes restart runs with physics, the `convection_permitting` suite on the GPU, variable-resolution meshes,
+=======
 Open work includes the `convection_permitting` suite, variable-resolution meshes,
+>>>>>>> origin/main
 MPI and multi-GPU runs, and performance work.
 
 ## Build and tests
@@ -61,8 +72,9 @@ tests run as `compare_unit` and `compare_mutants`. `unit_libm` needs glibc 2.41 
 
 The workflow [`cpu_suite`](.github/workflows/cpu_suite.yml) runs the CPU suite in the Debian 13 image of the
 references (glibc 2.41, gcc and gfortran 14.2). It builds the Release CPU build and the Intel `libmvec` preload, and
-fetches every input from cppmpas-data. Each input is checked against its SHA-256 in [ci/data.tsv](ci/data.tsv) and
-kept in the Actions cache. The tests are split into parallel jobs ([ci/plan.py](ci/plan.py)), and ctest runs under the
+fetches every input from cppmpas-data. Each input is checked against its SHA-256 in [ci/data.tsv](ci/data.tsv).
+Only the small, often used inputs are kept in the Actions cache; a test job downloads every input the cache does not
+give from its release, so an evicted cache entry never fails a run. The tests are split into parallel jobs ([ci/plan.py](ci/plan.py)), and ctest runs under the
 preload:
 
 ```bash
@@ -139,8 +151,15 @@ A first map of the work, counted from the two source trees:
 
 ## License
 
-GPL-3.0-or-later (LICENSE). Files derived from MPAS keep MPAS's own copyright and license notices (MPAS is distributed
-under a BSD-style license), and files derived from WRF keep WRF's notices, as in CPPWRF.
+The project-owned CPPMPAS code is licensed under the GNU General Public License, version 3 or any later version (GPL-3.0-or-later). See [LICENSE](LICENSE).
+
+Commercial licenses for the project-owned code are available on request (contact via GitHub: [Xassemblianist](https://github.com/Xassemblianist)).
+
+[THIRD_PARTY.md](THIRD_PARTY.md) lists the upstream components and their license terms. Those terms apply to the relevant code, tables and fixtures in any distribution. Some components in the current tree require separate clearance or replacement before redistribution as a combined GPL or paid release.
+
+Files derived from MPAS keep MPAS's own copyright and license notices, and files derived from WRF keep WRF's notices, as in CPPWRF.
+
+Outside contributions need a signed Contributor License Agreement; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Author
 

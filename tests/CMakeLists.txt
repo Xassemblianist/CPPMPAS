@@ -159,9 +159,12 @@ add_test(NAME unit_libm COMMAND test_libm 2000000)
 # and of the namelists of the restart runs (tests/namelists/RGR_restart: a copy of mpas842-dbl-rgr-001/RGR/restart/
 # namelist.atmosphere, checked by restart_recipe_RGR; tests/namelists/RGR24_restart: mpas842-dbl-rgr24-001's, checked by
 # restart_recipe_RGR24; tests/namelists/MW_restart: the MW forecast namelist restarted from the
-# reference's restart file at 00:30:06, verified by the dycore_restart_MW_* tests)
+# reference's restart file at 00:30:06, verified by the dycore_restart_MW_* tests) and of RGCP's
+# (mpas842-dbl-rgcp-001). RGCP24's namelists are RGCP's with RG24's run duration and stream intervals (no value of
+# theirs is missing from the table; dycore_run_long_RGCP24 reads them); they are left out here because one CI job
+# holds at most six reference releases (ci/plan.py MAX_REFS).
 add_test(NAME namelist_table_current COMMAND ${CMAKE_COMMAND} -E env sh -c
-  "${Python3_EXECUTABLE} -I '${CMAKE_SOURCE_DIR}/tools/gen_namelist_table.py' '${CPPMPAS_MPAS_REGISTRY}' ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/forecast/namelist.atmosphere '${CMAKE_SOURCE_DIR}/tests/namelists/MW_restart/namelist.atmosphere' ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg-004/RG/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg-004/RG/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg24-001/RG24/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg24-001/RG24/forecast/namelist.atmosphere '${CMAKE_SOURCE_DIR}/tests/namelists/RGR_restart/namelist.atmosphere' '${CMAKE_SOURCE_DIR}/tests/namelists/RGR24_restart/namelist.atmosphere' > '${W}/namelist_table.inc' && ${CMAKE_COMMAND} -E compare_files '${W}/namelist_table.inc' '${CMAKE_SOURCE_DIR}/src/core/namelist_table.inc'")
+  "${Python3_EXECUTABLE} -I '${CMAKE_SOURCE_DIR}/tools/gen_namelist_table.py' '${CPPMPAS_MPAS_REGISTRY}' ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/forecast/namelist.atmosphere '${CMAKE_SOURCE_DIR}/tests/namelists/MW_restart/namelist.atmosphere' ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg-004/RG/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg-004/RG/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg24-001/RG24/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg24-001/RG24/forecast/namelist.atmosphere '${CMAKE_SOURCE_DIR}/tests/namelists/RGR_restart/namelist.atmosphere' ${CPPMPAS_REFS_DIR}/mpas842-dbl-rgcp-001/RGCP/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rgcp-001/RGCP/forecast/namelist.atmosphere '${CMAKE_SOURCE_DIR}/tests/namelists/RGR24_restart/namelist.atmosphere' > '${W}/namelist_table.inc' && ${CMAKE_COMMAND} -E compare_files '${W}/namelist_table.inc' '${CMAKE_SOURCE_DIR}/src/core/namelist_table.inc'")
 set_tests_properties(namelist_table_current PROPERTIES FIXTURES_REQUIRED work_dir)
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -726,6 +729,86 @@ add_test(NAME dycore_RG24_all COMMAND ${PY} ${T}/streams_compare.py ${CPPMPAS_MP
 set_tests_properties(dycore_RG24_all PROPERTIES FIXTURES_REQUIRED dycore_long_RG24 LABELS long)
 
 # ---------------------------------------------------------------------------------------------------------------
+# RGCP (mpas842-dbl-rgcp-001): RG with config_physics_suite = 'convection_permitting' (Thompson with n_microp = 7
+# sub-steps, Grell-Freitas, MYNN PBL and surface layer, YSU's GWDO, Noah, RRTMG with cld_fraction; the scalars qv, qc,
+# qr, qi, qs, qg, ni, nr). The Thompson tables are the reference run's (RGCP/tables, read through --thompson as
+# thompson_init reads them from MPAS's run directory). As for RG: one run of 12 steps writes the every-step stream
+# (steps 0-10 at tolerance 0, one test per step and field, and the directory through tools/mpas_compare.py) and,
+# after steps 6, 7 and 12, the fields of the forecast run's history (1 h, 2 h) and restart (01:10) streams; relhum
+# and refl10cm_max are left out there (the microphysics driver computes them only when the diagnostics alarm rings,
+# l_diags, which a steps-configuration run never does; the --streams test below has them). Needs
+# CPPMPAS_MPAS_TABLES and CPPMPAS_CPPWRF_RRTMG as RG.
+set(REF_RGCP ${CPPMPAS_REFS_DIR}/mpas842-dbl-rgcp-001/RGCP)
+set(DYCORE_RGCP_FIELDS xtime Time u w rho_zz theta_m rho theta pressure_p qv qc qr qi qs qg ni nr)
+set(DYCORE_RGCP_RESTART_FIELDS ru_p rw_p rt_diabatic_tend rthdynten isltyp ivgtyp mminlu isice_lu iswater_lu landmask shdmin shdmax snoalb albedo12m greenfrac var2d con oa1 oa2 oa3 oa4 ol1 ol2 ol3 ol4 qv qc qr qi qs qg ni nr u_init v_init t_init xtime Time u w rho_zz theta_m pressure_p rho theta exner exner_base rtheta_base pressure_base rho_base theta_base ru rw rtheta_p rho_p surface_pressure rainprod evapprod re_cloud re_ice re_snow tend_sfc_pressure nsteps_accum ndays_accum tlag tday_accum tyear_mean tyear_accum i_rainnc rainncv rainnc snowncv snownc graupelncv graupelnc sr i_rainc cuprec rainc raincv qcg ch kpbl hpbl hfx mavail mol qfx qsfc ust ustm zol znt br cd cda chs chs2 cqs2 ck cka cpm flhc flqc gz1oz0 lh psim psih qgh regime rmol wspd fh fm u10 v10 q2 t2m th2m dusfcg dvsfcg dtaux3d dtauy3d rubldiff rvbldiff i_acswdnb i_acswdnbc i_acswdnt i_acswdntc i_acswupb i_acswupbc i_acswupt i_acswuptc acswdnb acswdnbc acswdnt acswdntc acswupb acswupbc acswupt acswuptc gsw i_aclwdnb i_aclwdnbc i_aclwdnt i_aclwdntc i_aclwupb i_aclwupbc i_aclwupt i_aclwuptc aclwdnb aclwdnbc aclwdnt aclwdntc aclwupb aclwupbc aclwupt aclwuptc glw o3clim o3vmr acsnom acsnow canwat chklowq grdflx lai noahres potevp sfc_albedo sfc_emiss sfc_emibck sfcrunoff smstav smstot snopcx snotime sstsk sstsk_dtc sstsk_dtw thc udrunoff xicem z0 zs rthmpten rqvmpten rqcmpten rqrmpten rqimpten rqsmpten rqgmpten rthcuten rqvcuten rqccuten rqicuten rqvdynten rucuten rvcuten rublten rvblten rthblten rqvblten rqcblten rqiblten rthratensw rthratenlw sfc_albbck skintemp snow snowc snowh sst tmn vegfra seaice xice xland dzs smcrel sh2o smois tslb t_oml t_oml_initial t_oml_200m_initial h_oml h_oml_initial hu_oml hv_oml nt_c mu_c cubot cutop sh3d sm3d qke qke_adv cov qsq tsq tke_pbl el_pbl edmf_a edmf_w edmf_qt edmf_qc edmf_thl edmf_ent sub_thl sub_qv det_thl det_qv cldfrac_bl qc_bl qi_bl k22_shallow kbcon_shallow ktop_shallow ktop_deep xmb_total xmb_shallow qc_cu qi_cu rnimpten rnrmpten rqsblten rncblten rniblten rnifablten rnwfablten qv_init initial_time circulation)
+set(DYCORE_RGCP_HISTORY_FIELDS qv qc qr qi qs qg ni nr xtime Time u w pressure surface_pressure rho theta divergence vorticity ke uReconstructZonal uReconstructMeridional i_rainnc rainnc precipw cuprec i_rainc rainc kpbl hpbl hfx qfx cd cda ck cka lh u10 v10 q2 t2m th2m gsw glw acsnow pin ozmixm mminlu isice_lu iswater_lu xland skintemp snow snowh sst vegfra xice sh2o smois tslb initial_time)
+set(DYCORE_RGCP_LONG_FIELDS ${DYCORE_RGCP_RESTART_FIELDS} ${DYCORE_RGCP_HISTORY_FIELDS})
+list(REMOVE_DUPLICATES DYCORE_RGCP_LONG_FIELDS)
+string(REPLACE ";" "," DYCORE_RGCP_LONG_LIST "${DYCORE_RGCP_LONG_FIELDS}")
+set(RGCP_SCALARS qv,qc,qr,qi,qs,qg,ni,nr)
+add_test(NAME dycore_run_RGCP COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/dycore_RGCP' && mkdir -p '${W}/dycore_RGCP' && '${EXE}' run '${REF_RGCP}/init/x1.10242.init.nc' '${W}/dycore_RGCP' --namelist '${REF_RGCP}/steps/namelist.atmosphere' --scalars ${RGCP_SCALARS} --steps 12 --write-at 6,7,12 --write-fields ${DYCORE_RGCP_LONG_LIST} --tables '${CPPMPAS_MPAS_TABLES}' --rrtmg '${CPPMPAS_CPPWRF_RRTMG}' --thompson '${REF_RGCP}/tables'")
+set_tests_properties(dycore_run_RGCP PROPERTIES FIXTURES_SETUP dycore_RGCP TIMEOUT 1800)
+set(step 0)
+foreach(stamp IN LISTS DYCORE_RG_STAMPS)
+  foreach(f IN LISTS DYCORE_RGCP_FIELDS)
+    add_test(NAME dycore_RGCP_step${step}_${f} COMMAND ${PY} ${T}/compare_arrays.py
+      ${REF_RGCP}/steps/step.2026-10-12_${stamp}.nc ${W}/dycore_RGCP/step.2026-10-12_${stamp}.nc ${f})
+    set_tests_properties(dycore_RGCP_step${step}_${f} PROPERTIES FIXTURES_REQUIRED dycore_RGCP)
+  endforeach()
+  math(EXPR step "${step} + 1")
+endforeach()
+add_test(NAME dycore_RGCP_mpas_compare COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "set -e; rm -rf '${W}/dycore_RGCP_steps' && mkdir -p '${W}/dycore_RGCP_steps' && for s in ${DYCORE_RG_STAMP_WORDS}; do ln -s '${W}/dycore_RGCP/step.2026-10-12_'$s.nc '${W}/dycore_RGCP_steps/'; done && ${Python3_EXECUTABLE} -I '${T}/dycore_compare.py' '${CPPMPAS_MPAS_COMPARE}' '${REF_RGCP}/steps' '${W}/dycore_RGCP_steps' '${W}/dycore_RGCP_compare.json' 187")
+set_tests_properties(dycore_RGCP_mpas_compare PROPERTIES FIXTURES_REQUIRED dycore_RGCP)
+foreach(f IN LISTS DYCORE_RGCP_RESTART_FIELDS)
+  add_test(NAME dycore_RGCP_restart_${f} COMMAND ${PY} ${T}/compare_arrays.py
+    ${REF_RGCP}/forecast/restart.2026-10-12_01.10.00.nc ${W}/dycore_RGCP/state.2026-10-12_01.10.00.nc ${f})
+  set_tests_properties(dycore_RGCP_restart_${f} PROPERTIES FIXTURES_REQUIRED dycore_RGCP)
+endforeach()
+foreach(f IN LISTS DYCORE_RGCP_HISTORY_FIELDS)
+  add_test(NAME dycore_RGCP_history1h_${f} COMMAND ${PY} ${T}/compare_arrays.py
+    ${REF_RGCP}/forecast/history.2026-10-12_01.00.00.nc ${W}/dycore_RGCP/state.2026-10-12_01.00.00.nc ${f})
+  set_tests_properties(dycore_RGCP_history1h_${f} PROPERTIES FIXTURES_REQUIRED dycore_RGCP)
+  add_test(NAME dycore_RGCP_history2h_${f} COMMAND ${PY} ${T}/compare_arrays.py
+    ${REF_RGCP}/forecast/history.2026-10-12_02.00.00.nc ${W}/dycore_RGCP/state.2026-10-12_02.00.00.nc ${f})
+  set_tests_properties(dycore_RGCP_history2h_${f} PROPERTIES FIXTURES_REQUIRED dycore_RGCP)
+endforeach()
+
+# RGCP as the reference's forecast run writes it (cppmpas run --streams with the forecast's namelist.atmosphere and
+# streams.atmosphere, as RG): every file of mpas842-dbl-rgcp-001's forecast directory (diag 00:00, history 00:00 /
+# 01:00 / 02:00, restart 01:10), every variable, its attributes and the global attributes, the restart_timestamp
+# file; one test per file and one for the whole directory.
+add_test(NAME dycore_run_RGCP_streams COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/dycore_RGCP_streams' && mkdir -p '${W}/dycore_RGCP_streams' && '${EXE}' run '${REF_RGCP}/init/x1.10242.init.nc' '${W}/dycore_RGCP_streams' --namelist '${REF_RGCP}/forecast/namelist.atmosphere' --streams '${REF_RGCP}/forecast/streams.atmosphere' --scalars ${RGCP_SCALARS} --every 0 --tables '${CPPMPAS_MPAS_TABLES}' --rrtmg '${CPPMPAS_CPPWRF_RRTMG}' --thompson '${REF_RGCP}/tables'")
+set_tests_properties(dycore_run_RGCP_streams PROPERTIES FIXTURES_SETUP dycore_RGCP_streams TIMEOUT 1800)
+foreach(file IN LISTS RG_STREAM_FILES)
+  add_test(NAME dycore_RGCP_streams_${file} COMMAND ${PY} ${CPPMPAS_MPAS_COMPARE}
+    ${REF_RGCP}/forecast/${file}.nc ${W}/dycore_RGCP_streams/${file}.nc)
+  set_tests_properties(dycore_RGCP_streams_${file} PROPERTIES FIXTURES_REQUIRED dycore_RGCP_streams)
+endforeach()
+add_test(NAME dycore_RGCP_streams_all COMMAND ${PY} ${T}/streams_compare.py ${CPPMPAS_MPAS_COMPARE}
+  ${REF_RGCP}/forecast ${W}/dycore_RGCP_streams ${W}/dycore_RGCP_streams.json 5 749)
+set_tests_properties(dycore_RGCP_streams_all PROPERTIES FIXTURES_REQUIRED dycore_RGCP_streams)
+
+# RGCP24 (mpas842-dbl-rgcp24-001: RGCP for 24 h; label "long"): the forecast run as the reference made it (144 steps,
+# history and diagnostics every 3 h from 00:00 to 2026-10-13_00, restart at 12:10), with its own run's Thompson
+# tables, every file of the reference's forecast directory compared at tolerance 0 with tools/mpas_compare.py and the
+# restart_timestamp file.
+set(REF_RGCP24 ${CPPMPAS_REFS_DIR}/mpas842-dbl-rgcp24-001/RGCP24)
+add_test(NAME dycore_run_long_RGCP24 COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/dycore_long_RGCP24' && mkdir -p '${W}/dycore_long_RGCP24' && '${EXE}' run '${REF_RGCP24}/init/x1.10242.init.nc' '${W}/dycore_long_RGCP24' --namelist '${REF_RGCP24}/forecast/namelist.atmosphere' --streams '${REF_RGCP24}/forecast/streams.atmosphere' --scalars ${RGCP_SCALARS} --every 0 --tables '${CPPMPAS_MPAS_TABLES}' --rrtmg '${CPPMPAS_CPPWRF_RRTMG}' --thompson '${REF_RGCP24}/tables'")
+set_tests_properties(dycore_run_long_RGCP24 PROPERTIES FIXTURES_SETUP dycore_long_RGCP24 LABELS long TIMEOUT 7200)
+foreach(file IN LISTS RG24_STREAM_FILES)
+  add_test(NAME dycore_RGCP24_${file} COMMAND ${PY} ${CPPMPAS_MPAS_COMPARE}
+    ${REF_RGCP24}/forecast/${file}.nc ${W}/dycore_long_RGCP24/${file}.nc)
+  set_tests_properties(dycore_RGCP24_${file} PROPERTIES FIXTURES_REQUIRED dycore_long_RGCP24 LABELS long)
+endforeach()
+add_test(NAME dycore_RGCP24_all COMMAND ${PY} ${T}/streams_compare.py ${CPPMPAS_MPAS_COMPARE}
+  ${REF_RGCP24}/forecast ${W}/dycore_long_RGCP24 ${W}/dycore_long_RGCP24.json 19 2227)
+set_tests_properties(dycore_RGCP24_all PROPERTIES FIXTURES_REQUIRED dycore_long_RGCP24 LABELS long)
+
+# ---------------------------------------------------------------------------------------------------------------
 # GPU proof: the CUDA build of the same sources (cppmpas_gpu, CMake option CPPMPAS_ENABLE_CUDA; every parallel_for a
 # kernel on the GPU, core/backend.hpp) against the same references at tolerance 0, and against the CPU build's own
 # output (cppmpas, the tests above). Not all of cppmpas_gpu runs on the device: physics_core_init (init_dirs_forphys,
@@ -807,6 +890,76 @@ else()
   add_test(NAME gpu_backend COMMAND ${GPU} device)
 endif()
 cppmpas_gpu_props(gpu_backend)
+# The GPU audit's situations (tests/test_hardening.cpp, tests/hardening_columns.py): direct calls and columns that
+# reach what MPAS leaves undefined or the port's capacities end at, on the CPU build (hardening_*) and the same
+# source built by nvcc (gpu_hardening_*): the same Errors on both builds, the same values (kernel against host) where
+# the input is valid; the column programs of both builds on ordinary columns give the same bytes.
+set(HARDENING_CHECKS views sfclayrev ntclamp raw thin seaice capacity radius prep)
+add_executable(test_hardening test_hardening.cpp)
+target_link_libraries(test_hardening PRIVATE cppmpas)
+foreach(c IN LISTS HARDENING_CHECKS)
+  add_test(NAME hardening_${c} COMMAND test_hardening ${c})
+endforeach()
+set(_hc ${PY} ${T}/hardening_columns.py)
+add_test(NAME hardening_wsm6_1km COMMAND ${_hc} wsm6_1km $<TARGET_FILE:test_wsm6_column> ${W}/hardening_wsm6)
+add_test(NAME hardening_mcica COMMAND ${_hc} mcica $<TARGET_FILE:test_radiation_column> ${W}/hardening_mcica
+  ${CPPMPAS_MPAS_TABLES} ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_lw_tables.bin ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_sw_tables.bin)
+add_test(NAME hardening_lw_layers COMMAND ${_hc} lw_layers $<TARGET_FILE:test_radiation_column> ${W}/hardening_lw
+  ${CPPMPAS_MPAS_TABLES} ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_lw_tables.bin ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_sw_tables.bin)
+add_test(NAME hardening_noah COMMAND ${_hc} noah $<TARGET_FILE:test_noah_column> ${W}/hardening_noah
+  ${CPPMPAS_NOAH_TABLES})
+set_tests_properties(hardening_wsm6_1km hardening_mcica hardening_lw_layers hardening_noah PROPERTIES
+  FIXTURES_REQUIRED work_dir)
+set(GPU_HARDENING_COLUMNS wsm6_1km mcica lw_layers noah)
+if(CPPMPAS_ENABLE_CUDA)
+  # the CUDA build of a test source: a generated .cu that includes it (as the library's sources, CMakeLists.txt)
+  function(cppmpas_cuda_test name src)
+    set(_cu ${CMAKE_BINARY_DIR}/cuda_src/tests/${src}.cu)
+    file(CONFIGURE OUTPUT ${_cu} CONTENT "// generated: the CUDA build of tests/${src}\n#include \"${CMAKE_CURRENT_SOURCE_DIR}/${src}\"\n")
+    add_executable(${name} ${_cu})
+    target_link_libraries(${name} PRIVATE cppmpas_cuda)
+    set_target_properties(${name} PROPERTIES CUDA_SEPARABLE_COMPILATION ON CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+  endfunction()
+  cppmpas_cuda_test(test_gpu_hardening test_hardening.cpp)
+  foreach(c IN LISTS HARDENING_CHECKS)
+    add_test(NAME gpu_hardening_${c} COMMAND test_gpu_hardening ${c})
+  endforeach()
+  cppmpas_cuda_test(test_gpu_wsm6_column wsm6_column/test_wsm6_column.cpp)
+  cppmpas_cuda_test(test_gpu_radiation_column radiation_column/test_radiation_column.cpp)
+  cppmpas_cuda_test(test_gpu_noah_column noah_column/test_noah_column.cpp)
+  add_test(NAME gpu_hardening_wsm6_1km COMMAND ${_hc} wsm6_1km $<TARGET_FILE:test_gpu_wsm6_column>
+    ${W}/gpu_hardening_wsm6 --vs $<TARGET_FILE:test_wsm6_column>)
+  add_test(NAME gpu_hardening_mcica COMMAND ${_hc} mcica $<TARGET_FILE:test_gpu_radiation_column>
+    ${W}/gpu_hardening_mcica ${CPPMPAS_MPAS_TABLES} ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_lw_tables.bin
+    ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_sw_tables.bin --vs $<TARGET_FILE:test_radiation_column>)
+  add_test(NAME gpu_hardening_lw_layers COMMAND ${_hc} lw_layers $<TARGET_FILE:test_gpu_radiation_column>
+    ${W}/gpu_hardening_lw ${CPPMPAS_MPAS_TABLES} ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_lw_tables.bin
+    ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_sw_tables.bin --vs $<TARGET_FILE:test_radiation_column>)
+  add_test(NAME gpu_hardening_noah COMMAND ${_hc} noah $<TARGET_FILE:test_gpu_noah_column> ${W}/gpu_hardening_noah
+    ${CPPMPAS_NOAH_TABLES} --vs $<TARGET_FILE:test_noah_column>)
+  set_tests_properties(gpu_hardening_wsm6_1km gpu_hardening_mcica gpu_hardening_lw_layers gpu_hardening_noah
+    PROPERTIES FIXTURES_REQUIRED work_dir)
+  # libm::log / log10 and the libmvec lanes mvec_log / mvec_log10 on the device against the host, bit for bit
+  add_executable(test_gpu_mvec_log test_gpu_mvec_log.cu)
+  target_link_libraries(test_gpu_mvec_log PRIVATE cppmpas_cuda)
+  set_target_properties(test_gpu_mvec_log PROPERTIES CUDA_SEPARABLE_COMPILATION ON CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+  add_test(NAME gpu_mvec_log COMMAND test_gpu_mvec_log 200000)
+  # core/backend.hpp refuses a CUDA source compiled without relocatable device code (its kernel_fail would record
+  # nothing): the preprocessor stops without -rdc=true and passes with it
+  file(WRITE ${CMAKE_BINARY_DIR}/cuda_src/tests/rdc_probe.cu "#include \"core/backend.hpp\"\nint main() { return 0; }\n")
+  add_test(NAME cmake_cuda_requires_rdc COMMAND ${CMAKE_COMMAND} -E env sh -c
+    "p='${CMAKE_BINARY_DIR}/cuda_src/tests/rdc_probe.cu'; out=$('${CMAKE_CUDA_COMPILER}' -std=c++20 -E -x cu -I'${CMAKE_SOURCE_DIR}/src' \"$p\" -o /dev/null 2>&1); rc=$?; echo \"$out\" | tail -3; [ $rc -ne 0 ] && echo \"$out\" | grep -q 'compile CUDA sources with -rdc=true' && '${CMAKE_CUDA_COMPILER}' -std=c++20 -E -x cu -rdc=true -I'${CMAKE_SOURCE_DIR}/src' \"$p\" -o /dev/null")
+  set_tests_properties(cmake_cuda_requires_rdc PROPERTIES LABELS gpu)
+else()
+  foreach(c IN LISTS HARDENING_CHECKS GPU_HARDENING_COLUMNS)
+    add_test(NAME gpu_hardening_${c} COMMAND ${GPU} device)
+  endforeach()
+  add_test(NAME gpu_mvec_log COMMAND ${GPU} device)
+endif()
+foreach(c IN LISTS HARDENING_CHECKS GPU_HARDENING_COLUMNS)
+  cppmpas_gpu_props(gpu_hardening_${c})
+endforeach()
+cppmpas_gpu_props(gpu_mvec_log)
 # RG's radiation calls at 00:00 and 00:30 on the device (tests/radiation_replay, the CUDA build of the same test):
 # every loop of the cloudiness, ozone and radiation drivers and every RRTMG stage a kernel, against the CPU run's
 # outputs at tolerance 0
@@ -820,11 +973,18 @@ if(CPPMPAS_ENABLE_CUDA)
     add_test(NAME gpu_radiation_RG_${t} COMMAND test_gpu_radiation_replay ${RADIATION_DUMP_RG}/radiation.${t}.bin
       ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_lw_tables.bin ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_sw_tables.bin)
     cppmpas_gpu_props(gpu_radiation_RG_${t} FIXTURES_REQUIRED radiation_dump_RG)
+    # the same calls in chunks of 7 columns (module_ra_rrtmg.cpp chunk_buffers: the chunk a smaller device, or an
+    # allocation failure, leaves): the chunk groups columns into launches only, the outputs are the same bits
+    add_test(NAME gpu_radiation_RG_${t}_chunk7 COMMAND ${CMAKE_COMMAND} -E env CPPMPAS_RRTMG_CHUNK=7
+      $<TARGET_FILE:test_gpu_radiation_replay> ${RADIATION_DUMP_RG}/radiation.${t}.bin
+      ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_lw_tables.bin ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_sw_tables.bin)
+    cppmpas_gpu_props(gpu_radiation_RG_${t}_chunk7 FIXTURES_REQUIRED radiation_dump_RG)
   endforeach()
 else()
   foreach(t IN LISTS RADIATION_RG_CALLS)
     add_test(NAME gpu_radiation_RG_${t} COMMAND ${GPU} device)
-    cppmpas_gpu_props(gpu_radiation_RG_${t})
+    add_test(NAME gpu_radiation_RG_${t}_chunk7 COMMAND ${GPU} device)
+    cppmpas_gpu_props(gpu_radiation_RG_${t} gpu_radiation_RG_${t}_chunk7)
   endforeach()
 endif()
 # atm_mpas_init_block on the GPU: every initdump field of MW, SC and JW against MPAS, and against the CPU build

@@ -12,6 +12,11 @@ contains
     real(kind=8), intent(in), optional :: realArgs(:)
     logical, intent(in), optional :: logicArgs(:)
     print *, 'mpas_log_write: ', trim(msg)
+    ! MPAS_LOG_CRIT (= 4, mpas_log_types.inc:8) aborts the run as MPAS's mpas_log_write does; a nonzero exit
+    ! status, so the check cannot take the run for a finished one
+    if (present(messageType)) then
+      if (messageType == 4) error stop 'MPAS_LOG_CRIT'
+    end if
   end subroutine
 end module mpas_log
 
@@ -111,7 +116,7 @@ contains
         return
       end if
     end do
-    stop 'pool stub full'
+    error stop 'pool stub full'
   end function
   integer function find(names, name)
     character(len=64), intent(in) :: names(nmax)

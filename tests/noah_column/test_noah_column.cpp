@@ -35,8 +35,9 @@ int main(int argc, char** argv) {
   char lu[64];
   if (std::fread(hdr, 4, 10, in) != 10 || std::fread(&dt, 8, 1, in) != 1 || std::fread(lu, 1, 64, in) != 64) return 2;
   const int nC = hdr[0], nsoil = hdr[1], nsteps = hdr[2], nV = hdr[3];
-  std::vector<int> ivgtyp(nC), isltyp(nC);
-  std::vector<real> r1(std::size_t(nC) * NR1), s2(std::size_t(nsoil) * nC * NS2), a3(std::size_t(nC) * (nV + 1) * NA),
+  // FStorage: managed memory in the CUDA build (the kernels read the views of it)
+  cppmpas::FStorage<int> ivgtyp(nC), isltyp(nC);
+  cppmpas::FStorage<real> r1(std::size_t(nC) * NR1), s2(std::size_t(nsoil) * nC * NS2), a3(std::size_t(nC) * (nV + 1) * NA),
       sea(std::size_t(nC) * NSEA);
   auto rd = [&](void* p, std::size_t sz, std::size_t n) { return std::fread(p, sz, n, in) == n; };
   if (!rd(ivgtyp.data(), 4, nC) || !rd(isltyp.data(), 4, nC) || !rd(r1.data(), 8, r1.size()) ||

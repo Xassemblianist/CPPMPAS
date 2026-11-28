@@ -101,6 +101,9 @@ void driver_microphysics(const Mesh& m, State& s, FArray<real>& theta_m_a, FArra
   // module dims of physics_run_init (MGR:661-669): its..ite = 1..nCellsSolve, kts..kte = 1..nVertLevels,
   // kms..kme = 1..nVertLevels+1, jts = jte = 1
   const int ite = m.nCellsSolve(), kte = m.nVertLevels, kme = m.nVertLevels + 1;
+  // as microphysics_init (check_microphysics_supported): the surface pressure of PI:950-964 reads levels 1-2 and
+  // interface 3; a direct call with a thinner column is refused before any array is read
+  if (kte < 3) throw Error("driver_microphysics: nVertLevels < 3 (the surface pressure of PI:950-964)");
   int index_qv = 0, index_qc = 0, index_qr = 0;
   for (std::size_t q = 0; q < s.scalar_names.size(); ++q) {
     if (s.scalar_names[q] == "qv") index_qv = static_cast<int>(q) + 1;

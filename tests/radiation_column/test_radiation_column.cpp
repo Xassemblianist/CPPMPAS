@@ -26,8 +26,8 @@ namespace {
 struct Rec {
   std::string name;
   std::int32_t kind = 0, nd = 0, dims[4] = {1, 1, 1, 1};
-  std::vector<double> r;
-  std::vector<std::int32_t> iv;
+  cppmpas::FStorage<double> r;  // managed memory in the CUDA build: the kernels read the views of it
+  cppmpas::FStorage<std::int32_t> iv;
   std::size_t n() const {
     std::size_t s = 1;
     for (int d = 0; d < nd; ++d) s *= static_cast<std::size_t>(dims[d]);

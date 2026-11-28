@@ -8,12 +8,15 @@
 //                     [--unverified]
 //   cppmpas run       <init> <outdir> --namelist namelist.atmosphere --steps N [--scalars ...] [--file-id ID]
 //                     [--every K] [--write-at N1,N2,... --write-fields a,b,...] [--tables DIR --rrtmg DIR]
-//                     [--streams streams.atmosphere]
+//                     [--thompson DIR] [--streams streams.atmosphere]
 // With config_physics_suite = 'mesoscale_reference', run reads the input stream's physics fields and runs MPAS's
 // physics (physics/mpas_atmphys_driver.hpp): --tables names the directory with LANDUSE.TBL, VEGPARM.TBL, SOILPARM.TBL,
 // GENPARM.TBL and OZONE_*.TBL (the reference build's tables), --rrtmg the one with rrtmg_lw_tables.bin and
 // rrtmg_sw_tables.bin (the RRTMG tables MPAS's initialisation computes, physics/mpas_atmphys_radiation.hpp). The
-// physics runs on the host between the dycore's kernels.
+// physics runs on the host between the dycore's kernels. With 'convection_permitting', --thompson names the directory
+// with MP_THOMPSON_QRacrQG_DATA.DBL, MP_THOMPSON_QRacrQS_DATA.DBL, MP_THOMPSON_freezeH2O_DATA.DBL and
+// MP_THOMPSON_QIautQS_DATA.DBL (the tables build_tables wrote for the reference run, which thompson_init reads from
+// MPAS's run directory); the CPU build only (its GPU path is not verified).
 //   cppmpas device    (the backend: "cpu", or the CUDA device and a check that kernels run on it)
 // The CUDA build of this file is cppmpas_gpu: the same commands with every kernel on the GPU (core/backend.hpp); it
 // exits with status 77 (CTest's skip code) and a SKIP message only when the machine has no CUDA device; any other
@@ -95,7 +98,7 @@ struct Args {
   std::vector<std::string> pos;
   bool init = false, unverified = false;
   std::vector<std::string> scalars{"qv"}, fields;
-  std::string file_id, namelist, tables, rrtmg, streams;
+  std::string file_id, namelist, tables, rrtmg, streams, thompson;
   long steps = -1, every = 1;
   std::vector<long> write_at;
   std::vector<std::string> write_fields;
@@ -118,6 +121,7 @@ Args parse(int argc, char** argv) {
     else if (s == "--tables") a.tables = next();
     else if (s == "--rrtmg") a.rrtmg = next();
     else if (s == "--streams") a.streams = next();
+    else if (s == "--thompson") a.thompson = next();
     else if (s == "--steps") {
       a.steps = whole(s, next());
     } else if (s == "--every") {
@@ -309,6 +313,16 @@ int run(int argc, char** argv) {
     if (physics) {
       if (a.tables.empty() || a.rrtmg.empty()) throw Error("run: the physics suite needs --tables and --rrtmg");
       phys::check_physics_supported(pr.cfg);
+      if (pr.cfg.config_microp_scheme == "mp_thompson") {
+        if (a.thompson.empty()) throw Error("run: mp_thompson needs --thompson DIR (its MP_THOMPSON_*_DATA.DBL tables)");
+        pr.thompson_dir = a.thompson;
+      } else if (!a.thompson.empty()) {
+        throw Error("run: --thompson without mp_thompson");
+      }
+#if defined(CPPMPAS_USE_CUDA)
+      if (pr.cfg.config_physics_suite == "convection_permitting")
+        throw Error("run: config_physics_suite = 'convection_permitting' has no verified port on the GPU");
+#endif
       const std::map<std::string, int> dims = {{"nLags", pr.cfg.input_soil_temperature_lag},
                                                {"nOznLevels", pr.cfg.noznlev},
                                                {"nAerLevels", pr.cfg.naerlev},
