@@ -246,7 +246,12 @@ int main(int argc, char** argv) {
         dump_all(out);
       }
     }
-    std::fclose(out);
+    // a short write (a full disk) is a failed run, never an output that looks complete
+    const bool write_error = std::ferror(out) != 0;
+    if (std::fclose(out) != 0 || write_error) {
+      std::fprintf(stderr, "cannot write %s\n", argv[2]);
+      return 1;
+    }
   } catch (const std::exception& e) {
     std::fprintf(stderr, "%s\n", e.what());
     return 1;

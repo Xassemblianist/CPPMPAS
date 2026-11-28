@@ -9,11 +9,13 @@
 # MMM-physics' module_libmassv.F90, mp_radar.F90, mp_wsm6.F90, mp_wsm6_effectRad.F90 (the driver's other schemes).
 # Framework modules (pools, dmpar, I/O units, timers, log, physics_error_fatal) are the stand-ins of stubs.F90; the
 # harness program (harness.F90) and dump.c only move data.
-set -eu
+set -euo pipefail
 mpas=$(realpath "$1"); mmm=$(realpath "$2"); out=$3; here=$(dirname "$(realpath "$0")")
 FFLAGS="-O3 -ffree-line-length-none -fconvert=big-endian -ffree-form -fdefault-real-8 -fdefault-double-8"
 CPP="-D_MPI -DCORE_ATMOSPHERE -DMPAS_NAMELIST_SUFFIX=atmosphere -DMPAS_EXE_NAME=atmosphere_model -DMPAS_NATIVE_TIMERS -DMPAS_GIT_VERSION=v8.4.2 -DMPAS_BUILD_TARGET=gfortran -DMPAS_SMIOL_SUPPORT -DMPAS_USE_MPI_F08"
-gfortran --version | head -1
+gfortran --version | sed -n 1p  # sed reads all of it: no SIGPIPE under pipefail
+# the reference compiler is gfortran 14.2 (the build log of the mpas842 reference); another version is refused
+case "$(gfortran -dumpfullversion)" in 14.2.*) ;; *) echo "FAIL: gfortran $(gfortran -dumpfullversion), the reference is 14.2"; exit 1;; esac
 mkdir -p "$out"; cd "$out"
 phys=$mpas/src/core_atmosphere/physics
 c() { gfortran $FFLAGS "$@"; }
