@@ -1739,6 +1739,17 @@ MUTATIONS += [
      '          tend_scalars(m.index_ni, k, i) = tend_scalars(m.index_ni, k, i);', ["mynn_column"]),
 ]
 
+# the CUDA device probe (core/gpu_probe.hpp, gpu::init): only a missing device is a skip, any other CUDA error fails;
+# and the namelist options as global attributes of the step files (mpas_subdriver.F:532-557), which
+# tests/dycore_compare.py compares attribute by attribute (only file_id's value excepted)
+GP = "src/core/gpu_probe.hpp"
+STEP_CMP = ["dycore_MW_mpas_compare", "dycore_JW_mpas_compare", "dycore_SC_mpas_compare"]
+MUTATIONS += [
+    (GP, "  return DeviceProbe::error;\n}", "  return DeviceProbe::no_device;\n}", ["unit_gpu_probe"]),
+    (GP, "  if (err == kCudaErrorNoDevice) return DeviceProbe::no_device;",
+     "  if (err != kCudaSuccess) return DeviceProbe::no_device;", ["unit_gpu_probe"]),
+]
+
 MUTATIONS = [(p, o, n, [t for t in ts if t not in EQUIVALENT_ON_SC.get((p, n), [])]) for p, o, n, ts in MUTATIONS]
 
 

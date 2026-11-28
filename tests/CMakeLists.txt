@@ -52,6 +52,10 @@ endforeach()
 add_executable(test_backend test_backend.cpp)
 target_link_libraries(test_backend PRIVATE cppmpas)
 add_test(NAME unit_backend COMMAND test_backend)
+# the CUDA device probe's classification (core/gpu_probe.hpp, used by gpu::init): only a missing device is a skip
+add_executable(test_gpu_probe test_gpu_probe.cpp)
+target_link_libraries(test_gpu_probe PRIVATE cppmpas)
+add_test(NAME unit_gpu_probe COMMAND test_gpu_probe)
 
 # local edge / vertex order and in-memory arrays against an independent re-implementation
 foreach(case MW SC JW)

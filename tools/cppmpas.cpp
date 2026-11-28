@@ -16,7 +16,8 @@
 // physics runs on the host between the dycore's kernels.
 //   cppmpas device    (the backend: "cpu", or the CUDA device and a check that kernels run on it)
 // The CUDA build of this file is cppmpas_gpu: the same commands with every kernel on the GPU (core/backend.hpp); it
-// exits with status 77 (CTest's skip code) and a SKIP message when there is no usable CUDA device.
+// exits with status 77 (CTest's skip code) and a SKIP message only when the machine has no CUDA device; any other
+// CUDA error (a driver older than the runtime, an initialisation error, no memory) is an ERROR with exit status 1.
 // init runs what atm_core_init does to the fields of a cold start (core_atmosphere/atm_init.hpp: len_disp, the
 // compatibility checks, atm_mpas_init_block, xtime) on an init file and writes the
 // given fields as MPAS writes them to a history / restart file (global order, Registry layout).
@@ -536,16 +537,14 @@ int run(int argc, char** argv) {
 }  // namespace
 
 int main(int argc, char** argv) {
+  try {
 #if defined(CPPMPAS_USE_CUDA)
-  {
     std::string why;
-    if (!gpu::init(why)) {
+    if (!gpu::init(why)) {  // false only without a device; another CUDA error throws (core/gpu_probe.hpp)
       std::cerr << "cppmpas_gpu: SKIP: no usable CUDA device (" << why << ")\n";
       return gpu::kNoDeviceExit;
     }
-  }
 #endif
-  try {
     return run(argc, argv);
   } catch (const std::exception& e) {
     std::cerr << "ERROR: " << e.what() << "\n";
