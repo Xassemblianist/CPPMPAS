@@ -95,7 +95,7 @@ while :; do  # every minute: the run's status, and the jobs that ended
     [ -n "$BUNDLE" ] && [ "$fetched" != true ] || { cleanup; echo "[ci_submit] not waiting for the suite: $URL"; exit 0; }
   fi
   [ $((SECONDS - t0)) -lt $((HOURS * 3600)) ] || { echo "[ci_submit] still running after $HOURS h: $URL"; exit 1; }
-  sleep 60
+  sleep 60 & wait $!  # (a signal interrupts the wait at once, so the trap deletes the bundle at once)
 done
 cleanup
 OUT=${OUT:-$HOME/cppwrf_scratch/ci/cppmpas/$RUN}
