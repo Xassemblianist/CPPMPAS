@@ -1877,8 +1877,9 @@ MUTATIONS += [
      ["dycore_RGCP_history1h_hpbl", "dycore_RGCP_history2h_u"]),
     (DRV, '    q.refl10cm_max = p.v("refl10cm_max");', '    q.refl10cm_max = p.v("refl10cm_1km_max");',
      ["dycore_RGCP_streams_restart.2026-10-12_01.10.00", "dycore_RGCP_streams_all"]),
-    # (gsw read from glw and config_gfconv_closure_shallow = 7 both survive RGCP24: see the report)
-    (DRV, '    q.nt_c = cv(p.R("nt_c"));', '    q.nt_c = cv(p.R("mu_c"));',
+    # (nt_c read from mu_c stops the 24 h run: "Not Run", no kill; gsw from glw and closure_shallow 7 unresolved)
+    (DRV, "      q.config_len_disp = c.config_len_disp;\n      q.mynn = mynn_options(c);",
+     "      q.config_len_disp = 1.5 * c.config_len_disp;\n      q.mynn = mynn_options(c);",
      ["dycore_RGCP24_history.2026-10-13_00.00.00", "dycore_RGCP24_all"]),
     # the scalars of the suite (core/namelist.cpp active_scalars) and the dycore's check of them
     (NL, '  if (mynn || thompson) v.push_back("ni");', '  if (thompson) v.push_back("ni");', ["unit_namelist"]),
