@@ -645,6 +645,15 @@ endforeach()
 add_test(NAME dycore_RGR_restart_all COMMAND ${PY} ${T}/streams_compare.py ${CPPMPAS_MPAS_COMPARE}
   ${REF_RGR}/restart ${W}/dycore_RGR ${W}/dycore_RGR.json 5 712)
 set_tests_properties(dycore_RGR_restart_all PROPERTIES FIXTURES_REQUIRED dycore_RGR)
+# qv_init through a restart (tests/check_qv_init.py): the RGR checkpoint with a qv_init profile that is not 0 (RGR's is
+# 0); the next restart file must hold that profile, and every other variable must be the reference's
+add_test(NAME dycore_run_RGR_qvinit COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/dycore_RGR_qvinit' && mkdir -p '${W}/dycore_RGR_qvinit/in' && ${Python3_EXECUTABLE} -I '${T}/check_qv_init.py' make '${REF_RGR}/forecast/restart.2026-10-12_01.10.00.nc' '${W}/dycore_RGR_qvinit/in/restart.2026-10-12_01.10.00.nc' && '${EXE}' run '${W}/dycore_RGR_qvinit/in/restart.2026-10-12_01.10.00.nc' '${W}/dycore_RGR_qvinit' --namelist '${REF_RGR}/restart/namelist.atmosphere' --streams '${REF_RGR}/restart/streams.atmosphere' --scalars qv,qc,qr,qi,qs,qg --every 0 --tables '${CPPMPAS_MPAS_TABLES}' --rrtmg '${CPPMPAS_CPPWRF_RRTMG}'")
+set_tests_properties(dycore_run_RGR_qvinit PROPERTIES FIXTURES_SETUP dycore_RGR_qvinit TIMEOUT 1800)
+add_test(NAME dycore_RGR_qvinit COMMAND ${PY} ${T}/check_qv_init.py check
+  ${W}/dycore_RGR_qvinit/in/restart.2026-10-12_01.10.00.nc ${REF_RGR}/restart/restart.2026-10-12_02.10.00.nc
+  ${W}/dycore_RGR_qvinit/restart.2026-10-12_02.10.00.nc)
+set_tests_properties(dycore_RGR_qvinit PROPERTIES FIXTURES_REQUIRED dycore_RGR_qvinit)
 
 # RG's radiation calls replayed (tests/radiation_replay): cppmpas run of RG's steps configuration for 4 steps with
 # CPPMPAS_RADIATION_DUMP set writes the radiation calls of steps 1 and 4 (00:00 and 00:30: the inputs and the outputs

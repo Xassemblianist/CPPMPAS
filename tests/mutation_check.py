@@ -979,7 +979,7 @@ MUTATIONS += [
     (X, "    if (!cfg.config_do_restart) check_stream_time(", "    if (false) check_stream_time(", ["restart_refusals_MW"]),
     (X, '    if (cfg.config_do_restart)\n      throw Error("config_do_restart = true: init',
      '    if (false)\n      throw Error("config_do_restart = true: init', ["namelist_MW"]),
-    (X, "    if (cfg.config_do_restart) {\n      rst = read_mpas_restart", "    if (false) {\n      rst = read_mpas_restart",
+    (X, "    if (cfg.config_do_restart) {\n      // the physics suite (physics_namelist_check", "    if (false) {\n      // the physics suite (physics_namelist_check",
      ["dycore_restart0_run_MW"]),
     (A, "  s.xtime = stamp;                                    // :261-262",
      '  s.xtime = stamp + "x";                              // :261-262', ["dycore_restart0_MW_xtime", "dycore_MW_step0_xtime"]),
@@ -1825,7 +1825,8 @@ def RGR(files=None):
 # Shown once and removed, SURVIVED as equivalent mutants on RGR: physics_init's restart branches IN:216-251 and
 # IN:301-314 taken on a restart (RG's checkpoint holds the values they would set: the radiation accumulators are 0
 # with config_bucket_update = 'none', tlag and tyear_mean equal tmn with config_deepsoiltemp_update = false), and the
-# restart initflag of the surface layer and PBL drivers (only MYNN reads it, SL:1039-1070, PB:937).
+# restart initflag of the surface layer and PBL drivers (only MYNN reads it, SL:1039-1070, PB:937; physics_driver
+# now passes config_do_restart to the PBL driver, PB:814).
 MUTATIONS += [
     (R, "    return std::find(done.begin(), done.end(), n) != done.end() ||",
      "    return n == \"tslb\" || std::find(done.begin(), done.end(), n) != done.end() ||", RGR()),
@@ -1839,6 +1840,12 @@ MUTATIONS += [
      "  if (true) {                                            // :124", RGR()),
     ("src/physics/mpas_atmphys_convection.cpp", "  if (m.config_do_restart || itimestep > 1) initflag = 0;",
      "  if (itimestep > 1) initflag = 0;", RGR()),
+    # qv_init read with the restart stream (killed by the profile test only: RGR's checkpoint has qv_init = 0)
+    (R, '    if ((rv.var_struct == "mesh" && n != "qv_init") || rv.var_struct == "state") continue;',
+     '    if (rv.var_struct == "mesh" || rv.var_struct == "state") continue;', ["dycore_RGR_qvinit"]),
+    # the restart run's 'output' alarm not reset at the start: a history file at 01:10
+    ("src/io/mpas_streams.cpp", "    for (const char* n : {\"output\", \"diagnostics\"})", "    for (const char* n : {\"diagnostics\"})",
+     ["dycore_RGR_restart_all"]),
     # restart_recipe_RGR: the restart namelist may differ from its forecast's in the start time, the duration and
     # config_do_restart only
     ("tests/check_restart_recipe.py", 'RESTART_ALLOWED = {"config_run_duration", "config_start_time", "config_do_restart"}',

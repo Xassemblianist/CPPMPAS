@@ -633,7 +633,10 @@ void read_stream_pools(const std::string& path, MpasInput& in, const ActivePacka
     if (n == "scalars") continue;
     if (skip(n)) continue;
     const RegistryVar& rv = registry_var(n);
-    if (rv.var_struct == "mesh" || rv.var_struct == "state") continue;  // the reader's own (handled above)
+    // the reader's own (handled above), except qv_init: a mesh field of the restart stream the mesh reader does not
+    // hold: no routine of the atmosphere core sets it, so MPAS writes back what the restart stream read
+    // (Registry.xml:661, 1591; it is not in the input stream, so a cold start keeps the Registry default)
+    if ((rv.var_struct == "mesh" && n != "qv_init") || rv.var_struct == "state") continue;
     if (!packages.active(rv)) continue;  // "deactivated due to packages"
     if (!f.has_var(n)) {  // as for a scalar above
       in.warnings.push_back(std::string("Variable ") + n + " not in input file.");

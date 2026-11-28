@@ -50,7 +50,7 @@ MpasInput read_mpas_init(const std::string& path, const std::vector<std::string>
 void read_input_pools(const std::string& path, MpasInput& in, const ActivePackages& packages,
                       const std::map<std::string, int>& dims);
 // The same for a restart run (mpas_atm_core.F:129-149): the pool fields of the restart stream (Registry.xml:650-
-// 925: the physics tendencies, the surface and soil state, diag_physics_noahmp's active fields, relhum, ...), read
+// 925: the physics tendencies, the surface and soil state, relhum, the mesh field qv_init, ...), read
 // after read_mpas_restart. held: restart-stream fields the caller reads into its own arrays (the dycore's ru_p, rw_p,
 // rt_diabatic_tend, rthdynten); the fields read_mpas_restart read are skipped too. A pool field the restart stream
 // does not hold keeps its Registry default, as in MPAS, which reads only the restart stream on a restart.
