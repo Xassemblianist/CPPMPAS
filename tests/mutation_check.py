@@ -405,8 +405,8 @@ MUTATIONS = [
     (NL, "      if (!groups.insert(record).second)", "      if (false)", ["unit_namelist"]),
     (NL, "    const auto at = [&] { return path + \":\" + std::to_string(name_line); };",
      "    const auto at = [&] { return path + \":\" + std::to_string(line); };", ["unit_namelist"]),
-    (NL, "  if (kessler || wsm6) v.push_back(\"qr\");",
-     "  if (wsm6) v.push_back(\"qr\");", ["unit_namelist", "err_scalars_missing"]),
+    (NL, "  if (kessler || thompson || wsm6) v.push_back(\"qr\");",
+     "  if (thompson || wsm6) v.push_back(\"qr\");", ["unit_namelist", "err_scalars_missing"]),
     (NL, "  t(\"config_microp_scheme\", c.config_microp_scheme);", "", ["err_scalars_missing"]),
     (X, "    if (a.scalars != want) {", "    if (false) {", ["err_scalars_extra", "err_scalars_missing"]),
     (A, "  if (mo < 1 || mo > 12 || v(3) < 1 || v(3) > days[mo] || v(4) > 23 || v(5) > 59 || v(6) > 59)", "  if (false)",
@@ -553,8 +553,10 @@ MUTATIONS = [
     (NL, "    out[key] = match;", "    out[key] = v;", ["unit_namelist"]),
     (NL, "  } else {\n    throw Error(\"active scalars: config_physics_suite", "  } else if (false) {\n    throw Error(\"active scalars: config_physics_suite", ["unit_namelist"]),
     (NL, "  if (c.config_les_model != \"none\") throw", "  if (false) throw", ["unit_namelist"]),
-    (NL, "  if (cu != \"off\" && cu != \"cu_ntiedtke\") throw", "  if (false) throw", ["unit_namelist"]),
-    (NL, "  if (pbl != \"off\" && pbl != \"bl_ysu\") throw", "  if (false) throw", ["unit_namelist"]),
+    (NL, "  if (cu != \"off\" && cu != \"cu_ntiedtke\" && cu != \"cu_grell_freitas\")\n    throw", "  if (false)\n    throw",
+     ["unit_namelist"]),
+    (NL, "  if (pbl != \"off\" && pbl != \"bl_ysu\" && pbl != \"bl_mynn\")\n    throw", "  if (false)\n    throw",
+     ["unit_namelist"]),
     ("tools/gen_namelist_table.py", "            if rec in seen:", "            if False:", ["namelist_gen_errors"]),
     (W, "    if (!names.insert(n).second) throw", "    if (false) throw", ["unit_io_core"]),
     (W, "    if (ref.c && ref.c->size() > kStrLen) throw", "    if (false) throw", ["unit_io_core"]),
@@ -1730,8 +1732,8 @@ MUTATIONS += [
     (PBD, '      m.kzq(k, i) = kzh_p(i, k);  // PB:604: kzh_p, as MPAS\n    }\n  });\n  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // PB:659-690',
      '      m.kzq(k, i) = kzm_p(i, k);  // PB:604: kzh_p, as MPAS\n    }\n  });\n  parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {  // PB:659-690',
      ["mynn_column"]),
-    (PIF, '        for (int k = kts; k <= kte; ++k) v.ni_p(i, k) = fmax0(m.scalars(m.index_ni, k, i));',
-     '        for (int k = kts; k <= kte; ++k) v.ni_p(i, k) = m.scalars(m.index_ni, k, i);', ["mynn_column"]),
+    (PIF, '          v.ni_p(i, k) = (tail_src && i == ite) ? fmax0_src(m.scalars(m.index_ni, k, i)) : fmax0(m.scalars(m.index_ni, k, i));',
+     '          v.ni_p(i, k) = m.scalars(m.index_ni, k, i);', ["mynn_column"]),
     (PTD, '          tend_scalars(m.index_qs, k, i) = tend_scalars(m.index_qs, k, i) + m.rqsblten(k, i) * mass(k, i);',
      '          tend_scalars(m.index_qs, k, i) = tend_scalars(m.index_qs, k, i) + m.rqiblten(k, i) * mass(k, i);',
      ["mynn_column"]),
@@ -1940,6 +1942,61 @@ MUTATIONS += [
     # config_do_restart only
     ("tests/check_restart_recipe.py", 'RESTART_ALLOWED = {"config_run_duration", "config_start_time", "config_do_restart"}',
      'RESTART_ALLOWED = {"config_run_duration", "config_do_restart"}', ["restart_recipe_RGR"]),
+]
+
+# The convection_permitting suite in cppmpas run (physics/mpas_atmphys_driver.cpp), against mpas842-dbl-rgcp-001
+# (dycore_RGCP_*: the steps, the restart and history fields, the forecast's streams) and mpas842-dbl-rgcp24-001
+# (dycore_RGCP24_*, label long): Thompson's n_microp sub-steps and nt_c / mu_c, the sf_mynn inputs, MYNN's initflag
+# and grid length, the ni tendency of physics_get_tend, the Grell-Freitas closures, and the
+# l_diags reflectivity maximum; the suite's scalars, the refused convection_permitting restart. Indices 854-865 (after main's).
+DRV = "src/physics/mpas_atmphys_driver.cpp"
+MUTATIONS += [
+    (DRV, "    q.n_microp = r.n_microp;", "    q.n_microp = 1;", ["dycore_RGCP_step1_qr"]),
+    (DRV, '    init_thompson_clouddroplets_forMPAS(nCellsSolve, cv(p.I("landmask")), p.v("nt_c"), p.v("mu_c"));',
+     '    init_thompson_clouddroplets_forMPAS(nCellsSolve, cv(p.I("landmask")), p.v("mu_c"), p.v("nt_c"));',
+     ["dycore_RGCP_restart_nt_c", "dycore_RGCP_restart_mu_c"]),
+    (DRV, '      q.snowh = cv(p.R("snowh"));', '      q.snowh = cv(p.R("snow"));', ["dycore_RGCP_step1_qv"]),
+    (DRV, "    q.config_do_restart = c.config_do_restart;  // PB:814, 821, 935",
+     "    q.config_do_restart = true;  // PB:814, 821, 935", ["dycore_RGCP_step1_u", "dycore_RGCP_restart_qke"]),
+    (DRV, "      CPPMPAS_C(rqsblten) CPPMPAS_C(rniblten)", '      CPPMPAS_C(rqsblten) q.rniblten = cv(p.R("rqsblten"));',
+     ["dycore_RGCP_step5_ni", "dycore_RGCP_step10_ni"]),
+    (DRV, "    q.config_gfconv_closure_deep = r.cfg.config_gfconv_closure_deep;", "    q.config_gfconv_closure_deep = 1;",
+     ["dycore_RGCP_step1_qv", "dycore_RGCP_restart_xmb_total"]),
+    (DRV, "      q.config_len_disp = c.config_len_disp;\n      q.mynn = mynn_options(c);",
+     "      q.config_len_disp = 2. * c.config_len_disp;\n      q.mynn = mynn_options(c);",
+     ["dycore_RGCP_history1h_hpbl", "dycore_RGCP_history2h_u"]),
+    (DRV, '    q.refl10cm_max = p.v("refl10cm_max");', '    q.refl10cm_max = p.v("refl10cm_1km_max");',
+     ["dycore_RGCP_streams_restart.2026-10-12_01.10.00", "dycore_RGCP_streams_all"]),
+    # (nt_c read from mu_c stops the 24 h run: "Not Run", no kill; gsw from glw and closure_shallow 7 unresolved)
+    (DRV, "      q.config_len_disp = c.config_len_disp;\n      q.mynn = mynn_options(c);",
+     "      q.config_len_disp = 1.5 * c.config_len_disp;\n      q.mynn = mynn_options(c);",
+     ["dycore_RGCP24_history.2026-10-13_00.00.00", "dycore_RGCP24_all"]),
+    # the scalars of the suite (core/namelist.cpp active_scalars) and the dycore's check of them
+    (NL, '  if (mynn || thompson) v.push_back("ni");', '  if (thompson) v.push_back("ni");', ["unit_namelist"]),
+    ("src/core_atmosphere/atm_dycore.cpp", '  const bool suite = c.config_physics_suite == "mesoscale_reference" || cp;',
+     '  const bool suite = c.config_physics_suite == "mesoscale_reference";', ["unit_dycore"]),
+    ("src/physics/mpas_atmphys_control.cpp", "    if (c.config_do_restart) no(\"config_do_restart = true with convection_permitting",
+     "    if (false) no(\"config_do_restart = true with convection_permitting", ["unit_namelist"]),
+]
+
+# The MYNN review's findings (tests/mynn_column, tests/sfmynn_column): MPAS_to_physics' ni_p odd-tail lane of the
+# reference object code (PI:397), the kte bounds of get_pblh's and mym_length's DO WHILE loops, the index -1 of an
+# inactive constituent in physics_get_tend, init_pbl not called, unset bl_mynn pool arrays, sf_mynn with one level.
+# Indices 866-872 (after main's).
+MUTATIONS += [
+    (PIF, "    const bool tail_src = n >= 18 && (n & 1);", "    const bool tail_src = false;", ["mynn_column"]),
+    (MYK, "    if (k > kte) {\n      kernel_fail(\"get_pblh:", "    if (false) {\n      kernel_fail(\"get_pblh:",
+     ["mynn_column"]),
+    (MYK, "    if (k > kte) {\n      kernel_fail(\"mym_length:", "    if (false) {\n      kernel_fail(\"mym_length:",
+     ["mynn_column"]),
+    (PTD, "  if (pbl == \"bl_mynn\" && (mp.index_qs <= 0 || mp.index_ni <= 0))",
+     "  if (pbl == \"bl_mynn\" && (!mp.index_qs || !mp.index_ni))", ["mynn_column"]),
+    (PBD, "  if (!(mp.mynn_const.cp > 0.) || !(mp.mynn_const.grav > 0.) || !(mp.mynn_const.r_d > 0.))",
+     "  if (false)", ["mynn_column"]),
+    (PBD, "      if (!q) throw Error(\"driver_pbl: the bl_mynn pool arrays are not all set\");",
+     "      (void)q;", ["mynn_column"]),
+    ("src/physics/mpas_atmphys_sfclayer.cpp", "  if (mynn && vp.kme < 3)", "  if (mynn && vp.kme < 2)",
+     ["sfmynn_column"]),
 ]
 
 

@@ -12,6 +12,8 @@ namespace cppmpas::phys {
 
 namespace {
 CPPMPAS_HD inline real fmax0(real x) { return x > 0.0 ? x : 0.0; }  // max(0., x): maxsd with x as the destination
+// max(0., x) as maxsd with +0.0 as the destination and x as the (memory) source: -0.0 and NaN are kept
+CPPMPAS_HD inline real fmax0_src(real x) { return 0.0 > x ? 0.0 : x; }
 // CPPWRF's lane rule (CPPWRF 7fac5bf src/core/backend.hpp:197): libmvec for the pairs of i from its, the scalar
 // libm for an odd last i and a 1-trip loop
 CPPMPAS_HD inline bool lane(int i, int n) { return n > 1 && !((n & 1) && i == n - 1); }
@@ -81,6 +83,13 @@ void MPAS_to_physics(const ToPhysicsPools& mp, PhysicsVars& vp, int its, int ite
 
   if (mp.pbl_scheme == "bl_mynn") {  // PI:377-425
     const bool f_ni = mp.f_ni;
+    // PI:397 in the reference object code (mpas_atmphys_interface.o, the gfortran 14.2 -O3 build): the i loop is
+    // vectorised when ite - its >= 17 (it holds 18 or more cells; the run-time alias check between ni_p and scalars
+    // always passes, they are distinct arrays): pairs of i from its with maxpd, ni the destination (fmax0); for an
+    // odd count the last i is a scalar maxsd whose destination is +0.0 and whose source is ni loaded from memory,
+    // which keeps ni = -0.0 (and NaN). Fewer than 18 cells: the scalar loop, ni the destination (fmax0).
+    const int n = ite - its + 1;
+    const bool tail_src = n >= 18 && (n & 1);
     parallel_for(its, ite, [=] CPPMPAS_LAMBDA(int i) {
       for (int k = kts; k <= kte; ++k) {  // PI:379-386
         v.nc_p(i, k) = 0.;
@@ -89,7 +98,8 @@ void MPAS_to_physics(const ToPhysicsPools& mp, PhysicsVars& vp, int its, int ite
         v.nwfa_p(i, k) = 0.;
       }
       if (f_ni)  // PI:388-398
-        for (int k = kts; k <= kte; ++k) v.ni_p(i, k) = fmax0(m.scalars(m.index_ni, k, i));
+        for (int k = kts; k <= kte; ++k)
+          v.ni_p(i, k) = (tail_src && i == ite) ? fmax0_src(m.scalars(m.index_ni, k, i)) : fmax0(m.scalars(m.index_ni, k, i));
     });
   }
 

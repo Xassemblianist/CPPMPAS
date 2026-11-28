@@ -70,6 +70,26 @@ PhysicsConfig read_physics_config(const std::string& namelist_path, const InitCo
   c.config_bucket_rainc = r("config_bucket_rainc");
   c.config_bucket_rainnc = r("config_bucket_rainnc");
   c.config_sounding_interval = get("config_sounding_interval");
+  c.config_gfconv_closure_deep = i("config_gfconv_closure_deep");
+  c.config_gfconv_closure_shallow = i("config_gfconv_closure_shallow");
+  c.config_do_DAcycling = l("config_do_dacycling");
+  c.config_mynn_tkeadvect = l("config_mynn_tkeadvect");
+  c.config_mynn_tkebudget = i("config_mynn_tkebudget");
+  c.config_mynn_closure = r("config_mynn_closure");
+  c.config_mynn_cloudpdf = i("config_mynn_cloudpdf");
+  c.config_mynn_mixlength = i("config_mynn_mixlength");
+  c.config_mynn_stfunc = i("config_mynn_stfunc");
+  c.config_mynn_topdown = i("config_mynn_topdown");
+  c.config_mynn_scaleaware = i("config_mynn_scaleaware");
+  c.config_mynn_dheat_opt = i("config_mynn_dheat_opt");
+  c.config_mynn_edmf = i("config_mynn_edmf");
+  c.config_mynn_edmf_dd = i("config_mynn_edmf_dd");
+  c.config_mynn_edmf_mom = i("config_mynn_edmf_mom");
+  c.config_mynn_edmf_tke = i("config_mynn_edmf_tke");
+  c.config_mynn_edmf_output = i("config_mynn_edmf_output");
+  c.config_mynn_mixscalars = i("config_mynn_mixscalars");
+  c.config_mynn_mixclouds = i("config_mynn_mixclouds");
+  c.config_mynn_mixqt = i("config_mynn_mixqt");
   c.config_sfclayer_scheme_namelist = c.config_sfclayer_scheme;
   physics_namelist_check(c, log);
   return c;
@@ -193,19 +213,46 @@ ActivePackages physics_packages(const PhysicsConfig& c) {
 void check_physics_supported(const PhysicsConfig& c) {
   auto no = [](const std::string& what) { throw Error("physics: " + what + " has no verified port"); };
   if (c.config_physics_suite == "none") return;  // the dycore's own checks refuse any scheme it does not run
-  if (c.config_physics_suite != "mesoscale_reference") no("config_physics_suite = '" + c.config_physics_suite + "'");
+  const bool cp = c.config_physics_suite == "convection_permitting";
+  if (c.config_physics_suite != "mesoscale_reference" && !cp)
+    no("config_physics_suite = '" + c.config_physics_suite + "'");
+  const char* suite = cp ? "convection_permitting" : "mesoscale_reference";
   auto want = [&](const std::string& v, const char* name, const char* value) {
-    if (v != value) no(std::string(name) + " = '" + v + "' (mesoscale_reference: '" + value + "')");
+    if (v != value) no(std::string(name) + " = '" + v + "' (" + suite + ": '" + value + "')");
   };
-  want(c.config_microp_scheme, "config_microp_scheme", "mp_wsm6");
-  want(c.config_convection_scheme, "config_convection_scheme", "cu_ntiedtke");
-  want(c.config_pbl_scheme, "config_pbl_scheme", "bl_ysu");
+  want(c.config_microp_scheme, "config_microp_scheme", cp ? "mp_thompson" : "mp_wsm6");
+  want(c.config_convection_scheme, "config_convection_scheme", cp ? "cu_grell_freitas" : "cu_ntiedtke");
+  want(c.config_pbl_scheme, "config_pbl_scheme", cp ? "bl_mynn" : "bl_ysu");
   want(c.config_gwdo_scheme, "config_gwdo_scheme", "bl_ysu_gwdo");
   want(c.config_radt_lw_scheme, "config_radt_lw_scheme", "rrtmg_lw");
   want(c.config_radt_sw_scheme, "config_radt_sw_scheme", "rrtmg_sw");
   want(c.config_radt_cld_scheme, "config_radt_cld_scheme", "cld_fraction");
-  want(c.config_sfclayer_scheme, "config_sfclayer_scheme", "sf_monin_obukhov_rev");
+  want(c.config_sfclayer_scheme, "config_sfclayer_scheme", cp ? "sf_mynn" : "sf_monin_obukhov_rev");
   want(c.config_lsm_scheme, "config_lsm_scheme", "sf_noah");
+  if (cp) {  // RGCP's values (the Registry defaults): the ones the column checks and the RGCP runs verify
+    if (c.config_gfconv_closure_deep != 0) no("config_gfconv_closure_deep /= 0 in the model run");
+    if (c.config_gfconv_closure_shallow != 8) no("config_gfconv_closure_shallow /= 8 in the model run");
+    if (c.config_mynn_tkeadvect) no("config_mynn_tkeadvect = true");
+    if (c.config_mynn_tkebudget != 0) no("config_mynn_tkebudget /= 0");
+    if (c.config_mynn_closure != 2.5) no("config_mynn_closure /= 2.5");
+    if (c.config_mynn_cloudpdf != 2) no("config_mynn_cloudpdf /= 2");
+    if (c.config_mynn_mixlength != 2) no("config_mynn_mixlength /= 2");
+    if (c.config_mynn_stfunc != 1) no("config_mynn_stfunc /= 1");
+    if (c.config_mynn_topdown != 0) no("config_mynn_topdown /= 0");
+    if (c.config_mynn_scaleaware != 1) no("config_mynn_scaleaware /= 1 in the model run");
+    if (c.config_mynn_dheat_opt != 1) no("config_mynn_dheat_opt /= 1 in the model run");
+    if (c.config_mynn_edmf != 1) no("config_mynn_edmf /= 1");
+    if (c.config_mynn_edmf_dd != 0) no("config_mynn_edmf_dd /= 0");
+    if (c.config_mynn_edmf_mom != 0) no("config_mynn_edmf_mom /= 0");
+    if (c.config_mynn_edmf_tke != 0) no("config_mynn_edmf_tke /= 0");
+    if (c.config_mynn_edmf_output != 0) no("config_mynn_edmf_output /= 0");
+    if (c.config_mynn_mixscalars != 1) no("config_mynn_mixscalars /= 1");
+    if (c.config_mynn_mixclouds != 1) no("config_mynn_mixclouds /= 1");
+    if (c.config_mynn_mixqt != 0) no("config_mynn_mixqt /= 0");
+    if (c.config_do_DAcycling) no("config_do_DAcycling = true in the model run");
+    // a restart run is proven with mesoscale_reference only (RGR); none of convection_permitting
+    if (c.config_do_restart) no("config_do_restart = true with convection_permitting (a restart run)");
+  }
   if (c.config_les_model != "none") no("config_les_model = '" + c.config_les_model + "'");
   // the time-dependent surface updates and the bucket limits: not ported
   if (c.config_sst_update) no("config_sst_update = true (physics_update_sst)");
@@ -214,7 +261,7 @@ void check_physics_supported(const PhysicsConfig& c) {
   if (c.config_bucket_update != "none") no("config_bucket_update = '" + c.config_bucket_update + "'");
   if (c.config_conv_interval != "none") no("config_conv_interval = '" + c.config_conv_interval + "'");
   if (c.config_pbl_interval != "none") no("config_pbl_interval = '" + c.config_pbl_interval + "'");
-  if (c.config_microp_re) no("config_microp_re = true (the WSM6 effective radii)");
+  if (c.config_microp_re) no("config_microp_re = true (the WSM6 / Thompson effective radii)");
   if (c.config_oml1d) no("config_oml1d = true");
   if (c.config_ngw_scheme) no("config_ngw_scheme = true");
   if (c.config_urban_physics) no("config_urban_physics = true");

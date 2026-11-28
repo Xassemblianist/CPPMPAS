@@ -10,7 +10,7 @@
 # (the reflectivity and relhum of the step before a diagnostics alarm). The default list covers 1, 2, 3, 7, 14 and 64
 # cells, 55 levels as RG and odd / even level counts (the rain-slope and dBZ loops' libmvec pairs from kte), RG's
 # dt = 600 s (n_microp = 7 sub-steps of 600/7 s), 90 s (one), 300 s (three) and 45 s, and mp_top_level < nVertLevels.
-set -u
+set -euo pipefail
 mpas=$1; mmm=$2; tables=$3; work=$4; cpp=$5; shift 5
 here=$(dirname "$(realpath "$0")")
 cases=${*:-"1:55:2:55:600:1 2:55:2:55:600:2 3:56:3:56:600:3 7:55:3:55:600:4 14:55:3:55:300:5 64:55:3:55:600:6 64:56:2:56:90:7 9:41:2:33:600:8 7:30:4:30:45:9 1:55:2:55:600:11:d 2:56:2:56:600:12:d 7:55:3:55:600:14:d 64:55:3:55:600:15:d 64:56:2:56:90:16:d 9:41:2:33:600:17:d 7:55:2:55:130:18 14:55:2:55:130:19:d 7:70:2:70:600:20 14:70:2:70:300:21:d"}
@@ -32,7 +32,7 @@ ncase=0
 for c in $cases; do
   IFS=: read -r nc nv ns top dt seed d <<< "$c"
   diag=""; [ "${d:-}" = d ] && diag=l_diags
-  in=$work/in_$c.bin; rm -f "$work/ref_$c.bin" "$work/cpp_$c.bin"
+  in=$work/in_$c.bin; rm -f "$in" "$work/ref_$c.bin" "$work/cpp_$c.bin"  # no file of an earlier run can stand in
   python3 -I "$here/columns.py" make "$in" "$nc" "$nv" "$ns" "$top" "$dt" "$seed" || { echo "FAIL: columns $c"; rc=1; continue; }
   (cd "$work/run" && "$work/ref/thompson_column_ref" "$in" "$work/ref_$c.bin" "$work/ref_init.bin" $diag) || { echo "FAIL: reference run $c"; rc=1; continue; }
   "$cpp" "$in" "$work/cpp_$c.bin" "$work/cpp_init.bin" "$tables" $diag || { echo "FAIL: CPPMPAS run $c"; rc=1; continue; }

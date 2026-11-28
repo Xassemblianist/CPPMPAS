@@ -143,17 +143,19 @@ void check_dycore_supported(const DycoreConfig& c, const Mesh& m, const State& s
   if (!(c.config_v_theta_eddy_visc2 >= 0.0)) no("config_v_theta_eddy_visc2 < 0");
   if (c.config_apply_lbcs) no("config_apply_lbcs = true");
   if (c.config_IAU_option != "off") no("config_IAU_option = '" + c.config_IAU_option + "' (TI:2168)");
-  // the physics suite: 'none' (the schemes the dycore runs itself: Kessler) or 'mesoscale_reference' with every
-  // scheme 'suite' (physics/mpas_atmphys_control.hpp check_physics_supported; atm_srk3 needs the physics hooks)
+  // the physics suite: 'none' (the schemes the dycore runs itself: Kessler), 'mesoscale_reference' or
+  // 'convection_permitting' with every scheme 'suite' (physics/mpas_atmphys_control.hpp check_physics_supported;
+  // atm_srk3 needs the physics hooks)
   const auto off = [](const std::string& x) { return x == "suite" || x == "off"; };
-  const bool suite = c.config_physics_suite == "mesoscale_reference";
+  const bool cp = c.config_physics_suite == "convection_permitting";
+  const bool suite = c.config_physics_suite == "mesoscale_reference" || cp;
   if (c.config_physics_suite != "none" && !suite) no("config_physics_suite = '" + c.config_physics_suite + "'");
   const bool kessler = !suite && c.config_microp_scheme == "mp_kessler";  // TI:2806 (SC, atm_microphysics.cpp)
   if (suite) {
     for (const std::string* x : {&c.config_microp_scheme, &c.config_convection_scheme, &c.config_pbl_scheme,
                                  &c.config_radt_lw_scheme, &c.config_radt_sw_scheme, &c.config_radt_cld_scheme,
                                  &c.config_lsm_scheme, &c.config_sfclayer_scheme, &c.config_gwdo_scheme})
-      if (*x != "suite") no("a scheme other than 'suite' with config_physics_suite = 'mesoscale_reference'");
+      if (*x != "suite") no("a scheme other than 'suite' with config_physics_suite = '" + c.config_physics_suite + "'");
   } else {
     // mpas_atmphys_control.F:180-190: with the suite 'none', 'suite' is 'off'
     if (!off(c.config_microp_scheme) && !kessler) no("config_microp_scheme = '" + c.config_microp_scheme + "' (TI:2806)");
@@ -174,12 +176,16 @@ void check_dycore_supported(const DycoreConfig& c, const Mesh& m, const State& s
   if (!(c.config_dt > 0.0) || c.config_dt != std::floor(c.config_dt) || c.config_dt > 86400.0)
     no("config_dt that is not a whole number of seconds in 1..86400");
   if (c.config_number_of_sub_steps < 2) no("config_number_of_sub_steps < 2");
-  const std::vector<std::string> want = suite     ? std::vector<std::string>{"qv", "qc", "qr", "qi", "qs", "qg"}
+  // convection_permitting: Thompson's and MYNN's number concentrations ni, nr (array_group "number") follow the moist
+  // group (Registry.xml:1725-1736)
+  const std::vector<std::string> want = cp      ? std::vector<std::string>{"qv", "qc", "qr", "qi", "qs", "qg", "ni", "nr"}
+                                        : suite ? std::vector<std::string>{"qv", "qc", "qr", "qi", "qs", "qg"}
                                         : kessler ? std::vector<std::string>{"qv", "qc", "qr"}
                                                   : std::vector<std::string>{"qv"};
   if (s.scalar_names != want)
-    no(suite ? "scalars other than qv, qc, qr, qi, qs, qg with mesoscale_reference"
-             : kessler ? "scalars other than qv, qc, qr with Kessler" : "scalars other than qv alone");
+    no(cp ? "scalars other than qv, qc, qr, qi, qs, qg, ni, nr with convection_permitting"
+          : suite ? "scalars other than qv, qc, qr, qi, qs, qg with mesoscale_reference"
+          : kessler ? "scalars other than qv, qc, qr with Kessler" : "scalars other than qv alone");
   if (s.scalar_names.size() > 1 && !c.config_scalar_advection) no("moist scalars without scalar advection");
   // odd nVertLevels: the last level of the rk_step-3 Exner pow is scalar pow@plt (TI:4439), never exercised
   // an odd nVertLevels (RG: 55) takes the scalar pow@plt of the last level of the rk_step-3 Exner pow (TI:4439):

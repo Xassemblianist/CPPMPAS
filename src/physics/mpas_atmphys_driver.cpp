@@ -185,7 +185,46 @@ ConvectionPools convection_pools(PhysicsRun& r, const Mesh& m, RegistryPools& p,
   q.f_qc = r.f_qc;
   q.f_qi = r.f_qi;
   q.l_acrain = r.l_acrain;
+  if (r.cfg.config_convection_scheme == "cu_grell_freitas") {  // CV:427-433, 655-720: cu_grell_freitas_in
+    q.config_gfconv_closure_deep = r.cfg.config_gfconv_closure_deep;
+    q.config_gfconv_closure_shallow = r.cfg.config_gfconv_closure_shallow;
+    q.areaCell = cv(m.areaCell);
+    q.zgrid = cv(m.zgrid);
+    q.gsw = cv(p.R("gsw"));
+    q.kpbl = cv(p.I("kpbl"));
+#define CPPMPAS_P(x) q.x = p.v(#x);
+    CPPMPAS_P(cubot) CPPMPAS_P(cutop) CPPMPAS_P(xmb_total) CPPMPAS_P(xmb_shallow) CPPMPAS_P(qc_cu) CPPMPAS_P(qi_cu)
+#undef CPPMPAS_P
+    q.k22_shallow = p.vi("k22_shallow");
+    q.kbcon_shallow = p.vi("kbcon_shallow");
+    q.ktop_shallow = p.vi("ktop_shallow");
+    q.ktop_deep = p.vi("ktop_deep");
+  }
   return q;
+}
+
+// mynn::Options of the namelist (PB:854-870: mynn_bl_driver's bl_mynn_* arguments) and config_do_DAcycling (PB:813)
+mynn::Options mynn_options(const PhysicsConfig& c) {
+  mynn::Options o;
+  o.tkeadvect = c.config_mynn_tkeadvect;
+  o.tkebudget = c.config_mynn_tkebudget;
+  o.cloudpdf = c.config_mynn_cloudpdf;
+  o.mixlength = c.config_mynn_mixlength;
+  o.stfunc = c.config_mynn_stfunc;
+  o.topdown = c.config_mynn_topdown;
+  o.scaleaware = c.config_mynn_scaleaware;
+  o.dheat_opt = c.config_mynn_dheat_opt;
+  o.edmf = c.config_mynn_edmf;
+  o.edmf_dd = c.config_mynn_edmf_dd;
+  o.edmf_mom = c.config_mynn_edmf_mom;
+  o.edmf_tke = c.config_mynn_edmf_tke;
+  o.output = c.config_mynn_edmf_output;
+  o.mixscalars = c.config_mynn_mixscalars;
+  o.cloudmix = c.config_mynn_mixclouds;
+  o.mixqt = c.config_mynn_mixqt;
+  o.closure = c.config_mynn_closure;
+  o.do_DAcycling = c.config_do_DAcycling;
+  return o;  // icloud_bl = spp_pbl = 0 (mpas_atmphys_vars.F:418-419)
 }
 
 }  // namespace
@@ -298,6 +337,15 @@ void physics_core_init(PhysicsRun& r, const Mesh& m, State& s, Diag& d, Registry
   r.f_qi = r.index_qi > -1;
   r.f_qs = r.index_qs > -1;
   r.f_qg = r.index_qg > -1;
+  r.index_nc = scalar_index(s, "nc");
+  r.index_ni = scalar_index(s, "ni");
+  r.index_nifa = scalar_index(s, "nifa");
+  r.index_nwfa = scalar_index(s, "nwfa");
+  r.index_nr = scalar_index(s, "nr");  // the state's index_nr (Thompson's microphysics_from_MPAS, PI:710-714)
+  r.f_nc = r.index_nc > -1;
+  r.f_ni = r.index_ni > -1;
+  r.f_nifa = r.index_nifa > -1;
+  r.f_nwfa = r.index_nwfa > -1;
   const int nCellsSolve = m.nCellsSolve();
   if (!c.config_do_restart && c.config_convection_scheme != "off") {  // IN:189-193
     auto& i_rainc = p.I("i_rainc");
@@ -363,12 +411,21 @@ void physics_core_init(PhysicsRun& r, const Mesh& m, State& s, Diag& d, Registry
     lc.xice_threshold = r.xice_threshold;
     r.isurban = landuse_init_forMPAS(r.table_dir, julday, lc, m, p, log);
   }
-  // IN:323-324 init_convection: nothing for cu_ntiedtke (CV: Kain-Fritsch only)
-  if (c.config_microp_scheme != "off") r.wsm6 = module_mp_wsm6::mpas_wsm6_params();  // IN:327-328, DRV:305-307
-  if (c.config_microp_scheme == "mp_wsm6")  // mp_wsm6_init MW6:174-184 (denr = rho_r, dens = rho_s, DRV:305)
+  // IN:323-324 init_convection: nothing for cu_ntiedtke and cu_grell_freitas (CV:387-400: Kain-Fritsch only)
+  // IN:327-328 init_microphysics (DRV:260-314)
+  if (c.config_microp_scheme == "mp_wsm6") {  // mp_wsm6_init MW6:174-184 (denr = rho_r, dens = rho_s, DRV:305)
+    r.wsm6 = module_mp_wsm6::mpas_wsm6_params();
     r.wsm6_radar = wsm6::wsm6_radar_init(r.wsm6.pi, physics_constants::rho_r, physics_constants::rho_s, r.wsm6.deng,
                                          r.wsm6.n0g);
-  // IN:331 init_pbl: nothing for bl_ysu
+  } else if (c.config_microp_scheme == "mp_thompson") {  // DRV:294-296
+    if (r.thompson_dir.empty()) throw Error("physics_init: mp_thompson needs the directory of its MP_THOMPSON_*_DATA.DBL tables");
+    thompson::thompson_init(r.thompson_dir, r.thompson);  // l_mp_tables = .true.: the tables are read
+    init_thompson_clouddroplets_forMPAS(nCellsSolve, cv(p.I("landmask")), p.v("nt_c"), p.v("mu_c"));
+  } else if (c.config_microp_scheme != "off") {
+    throw Error("physics_init: config_microp_scheme = '" + c.config_microp_scheme + "' has no verified port");
+  }
+  // IN:331 init_pbl (PB:727-754): nothing for bl_ysu; bl_mynn_init for bl_mynn
+  if (c.config_pbl_scheme == "bl_mynn") r.mynn_const = mynn_init_pbl();
   if (c.config_sfclayer_scheme != "off") init_sfclayer(c.config_sfclayer_scheme, r.sfclayrev_tables);  // IN:334
   if (c.config_lsm_scheme == "sf_noah") {  // IN:337-345
     log.push_back("--- initialize NOAH LSM tables");
@@ -466,6 +523,11 @@ void physics_driver(PhysicsRun& r, const Mesh& m, State& s, Diag& d, RegistryPoo
     tp.index_qi = r.index_qi;
     tp.index_qs = r.index_qs;
     tp.index_qg = r.index_qg;
+    tp.index_ni = r.index_ni;  // bl_mynn (PI:390-397)
+    tp.f_ni = r.f_ni;
+    tp.f_nc = r.f_nc;
+    tp.f_nifa = r.f_nifa;
+    tp.f_nwfa = r.f_nwfa;
     tp.surface_pressure = s.surface_pressure.view();
     tp.exner = cv(d.exner);
     tp.pressure_base = cv(d.pressure_base);
@@ -507,6 +569,11 @@ void physics_driver(PhysicsRun& r, const Mesh& m, State& s, Diag& d, RegistryPoo
     CPPMPAS_P(znt) CPPMPAS_P(zol) CPPMPAS_P(q2) CPPMPAS_P(t2m) CPPMPAS_P(th2m) CPPMPAS_P(u10) CPPMPAS_P(v10)
     CPPMPAS_P(cd) CPPMPAS_P(cda) CPPMPAS_P(ck) CPPMPAS_P(cka) CPPMPAS_P(fh) CPPMPAS_P(fm)
 #undef CPPMPAS_P
+    if (c.config_sfclayer_scheme == "sf_mynn") {  // SL:568-587, 773-790
+      q.qcg = cv(p.R("qcg"));
+      q.snowh = cv(p.R("snowh"));
+      q.ch = p.v("ch");
+    }
     q.xice_threshold = r.xice_threshold;
     driver_sfclayer(itimestep, r.sfclayrev_tables, q, v, its, ite, &sea);
   }
@@ -554,7 +621,10 @@ void physics_driver(PhysicsRun& r, const Mesh& m, State& s, Diag& d, RegistryPoo
 #define CPPMPAS_P(x) q.x = p.v(#x);
     CPPMPAS_C(hfx) CPPMPAS_C(qfx) CPPMPAS_C(ust) CPPMPAS_C(wspd) CPPMPAS_C(znt) CPPMPAS_C(br) CPPMPAS_C(fm)
     CPPMPAS_C(fh) CPPMPAS_C(u10) CPPMPAS_C(v10)
-    CPPMPAS_P(hpbl) CPPMPAS_P(delta) CPPMPAS_P(wstar) CPPMPAS_P(kzh) CPPMPAS_P(kzm) CPPMPAS_P(kzq) CPPMPAS_P(exch_h)
+    CPPMPAS_P(hpbl) CPPMPAS_P(kzh) CPPMPAS_P(kzm) CPPMPAS_P(kzq)
+    if (c.config_pbl_scheme == "bl_ysu") {  // delta, wstar, exch_h: bl_ysu_in (Registry.xml), YSU's (PB:316-338)
+      CPPMPAS_P(delta) CPPMPAS_P(wstar) CPPMPAS_P(exch_h)
+    }
     CPPMPAS_C(rthratenlw) CPPMPAS_C(rthratensw)
     CPPMPAS_P(rublten) CPPMPAS_P(rvblten) CPPMPAS_P(rthblten) CPPMPAS_P(rqvblten) CPPMPAS_P(rqcblten)
     CPPMPAS_P(rqiblten)
@@ -564,6 +634,29 @@ void physics_driver(PhysicsRun& r, const Mesh& m, State& s, Diag& d, RegistryPoo
     q.dt_pbl = r.dt_pbl;
     q.f_qc = r.f_qc;
     q.f_qi = r.f_qi;
+    if (c.config_pbl_scheme == "bl_mynn") {  // PB:316-338, 423-506, 551-562, 627-706
+      q.config_len_disp = c.config_len_disp;
+      q.mynn = mynn_options(c);
+      q.mynn_const = r.mynn_const;
+      q.f_qs = r.f_qs;
+      q.f_qoz = false;  // IN:505: qoz is not in the Registry
+      q.f_nc = r.f_nc;
+      q.f_ni = r.f_ni;
+      q.f_nifa = r.f_nifa;
+      q.f_nwfa = r.f_nwfa;
+      q.f_nbca = false;  // IN:524: nbca is not in the Registry
+      q.meshDensity = cv(m.meshDensity);
+#define CPPMPAS_C(x) q.x = cv(p.R(#x));
+#define CPPMPAS_P(x) q.x = p.v(#x);
+      CPPMPAS_C(skintemp) CPPMPAS_C(ch) CPPMPAS_C(qsfc) CPPMPAS_C(rmol)
+      CPPMPAS_P(el_pbl) CPPMPAS_P(cov) CPPMPAS_P(qke) CPPMPAS_P(qke_adv) CPPMPAS_P(qsq) CPPMPAS_P(tsq) CPPMPAS_P(tke_pbl)
+      CPPMPAS_P(sh3d) CPPMPAS_P(sm3d) CPPMPAS_P(cldfrac_bl) CPPMPAS_P(qc_bl) CPPMPAS_P(qi_bl) CPPMPAS_P(edmf_a)
+      CPPMPAS_P(edmf_ent) CPPMPAS_P(edmf_qc) CPPMPAS_P(edmf_qt) CPPMPAS_P(edmf_thl) CPPMPAS_P(edmf_w) CPPMPAS_P(sub_thl)
+      CPPMPAS_P(sub_qv) CPPMPAS_P(det_thl) CPPMPAS_P(det_qv) CPPMPAS_P(dqke) CPPMPAS_P(qbuoy) CPPMPAS_P(qdiss)
+      CPPMPAS_P(qshear) CPPMPAS_P(qwt) CPPMPAS_P(rqsblten) CPPMPAS_P(rniblten)
+#undef CPPMPAS_C
+#undef CPPMPAS_P
+    }
     driver_pbl(itimestep, q, v, its, ite);
   }
   if (c.config_gwdo_scheme != "off") {  // DR:308-316
@@ -621,11 +714,15 @@ void physics_get_tend_for_dynamics(PhysicsRun& r, const Mesh& m, const State& s,
   q.index_qr = r.index_qr;
   q.index_qi = r.index_qi;
   q.index_qs = r.index_qs;
+  q.index_ni = r.index_ni;
   q.tend_u_phys = p.v("tend_u_phys");
   if (c.config_pbl_scheme != "off") {
 #define CPPMPAS_C(x) q.x = cv(p.R(#x));
     CPPMPAS_C(rublten) CPPMPAS_C(rvblten) CPPMPAS_C(rthblten) CPPMPAS_C(rqvblten) CPPMPAS_C(rqcblten) CPPMPAS_C(rqiblten)
     q.rublten_Edge = p.v("rublten_Edge");
+    if (c.config_pbl_scheme == "bl_mynn") {  // TD:405-412
+      CPPMPAS_C(rqsblten) CPPMPAS_C(rniblten)
+    }
   }
   if (c.config_convection_scheme != "off") {
     CPPMPAS_C(rucuten) CPPMPAS_C(rvcuten) CPPMPAS_C(rthcuten) CPPMPAS_C(rqvcuten) CPPMPAS_C(rqccuten) CPPMPAS_C(rqicuten)
@@ -675,8 +772,9 @@ void microphysics_for_dynamics(PhysicsRun& r, const Mesh& m, State& s, Diag& d, 
   (void)itimestep;
   const PhysicsConfig& c = r.cfg;
   if (c.config_microp_scheme == "off") return;
-  if (c.config_microp_scheme != "mp_wsm6")
+  if (c.config_microp_scheme != "mp_wsm6" && c.config_microp_scheme != "mp_thompson")
     throw Error("microphysics: config_microp_scheme = '" + c.config_microp_scheme + "' with the physics suite");
+  const bool thompson = c.config_microp_scheme == "mp_thompson";
   MicrophysicsPools q;
   q.nVertLevels = m.nVertLevels;
   q.zgrid = cv(m.zgrid);
@@ -719,10 +817,21 @@ void microphysics_for_dynamics(PhysicsRun& r, const Mesh& m, State& s, Diag& d, 
     q.refl10cm_max = p.v("refl10cm_max");
     q.refl10cm_1km = p.v("refl10cm_1km");
     q.refl10cm_1km_max = p.v("refl10cm_1km_max");
-    q.radar = &r.wsm6_radar;
+    if (!thompson) q.radar = &r.wsm6_radar;
   }
   q.l_acrain = r.l_acrain;
-  driver_microphysics_wsm6(r.wsm6, q, 1, m.nCellsSolve());
+  if (thompson) {  // DRV:378-398: ni, nr, nt_c, mu_c, rnimpten, rnrmpten and n_microp sub-steps
+    q.index_ni = r.index_ni;
+    q.index_nr = r.index_nr;
+    q.nt_c = cv(p.R("nt_c"));
+    q.mu_c = cv(p.R("mu_c"));
+    q.rnimpten = p.v("rnimpten");
+    q.rnrmpten = p.v("rnrmpten");
+    q.n_microp = r.n_microp;
+    driver_microphysics_thompson(r.thompson.v, q, 1, m.nCellsSolve());
+  } else {
+    driver_microphysics_wsm6(r.wsm6, q, 1, m.nCellsSolve());
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------------

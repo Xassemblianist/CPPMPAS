@@ -333,12 +333,16 @@ InitConfig read_init_config(const std::string& path) {
 
 std::vector<std::string> active_scalars(const InitConfig& c) {
   if (c.config_les_model != "none") throw Error("active scalars: config_les_model = '" + c.config_les_model + "' is not handled");
-  // physics_namelist_check (mpas_atmphys_control.F:157-196): 'suite' resolved by the physics suite
+  // physics_namelist_check (mpas_atmphys_control.F:132-166): 'suite' resolved by the physics suite
   std::string mp = c.config_microp_scheme, cu = c.config_convection_scheme, pbl = c.config_pbl_scheme;
   if (c.config_physics_suite == "mesoscale_reference") {
     if (mp == "suite") mp = "mp_wsm6";
     if (cu == "suite") cu = "cu_ntiedtke";
     if (pbl == "suite") pbl = "bl_ysu";
+  } else if (c.config_physics_suite == "convection_permitting") {
+    if (mp == "suite") mp = "mp_thompson";
+    if (cu == "suite") cu = "cu_grell_freitas";
+    if (pbl == "suite") pbl = "bl_mynn";
   } else if (c.config_physics_suite == "none") {
     if (mp == "suite") mp = "off";
     if (cu == "suite") cu = "off";
@@ -346,22 +350,28 @@ std::vector<std::string> active_scalars(const InitConfig& c) {
   } else {
     throw Error("active scalars: config_physics_suite = '" + c.config_physics_suite + "' is not handled");
   }
-  // atmphys_setup_packages (mpas_atmphys_packages.F:84-176) and the packages of the scalars (Registry.xml:1701-1748):
-  // qv always; qc with bl_ysu_in, cu_ntiedtke_in, mp_kessler_in, mp_wsm6_in (and Thompson / MYNN); qr with
-  // mp_kessler_in or mp_wsm6_in; qi with bl_ysu_in, cu_ntiedtke_in or mp_wsm6_in; qs, qg with mp_wsm6_in
-  if (cu != "off" && cu != "cu_ntiedtke") throw Error("active scalars: config_convection_scheme = '" + cu + "' is not handled");
-  if (pbl != "off" && pbl != "bl_ysu") throw Error("active scalars: config_pbl_scheme = '" + pbl + "' is not handled");
-  if (mp != "off" && mp != "mp_kessler" && mp != "mp_wsm6")
+  // atmphys_setup_packages (mpas_atmphys_packages.F:84-176) and the packages of the scalars (Registry.xml:1701-1748),
+  // in the Registry's order (var_array scalars: the moist group, then the number group):
+  // qv always; qc with bl_mynn_in, bl_ysu_in, cu_ntiedtke_in, mp_kessler_in, mp_thompson_in or mp_wsm6_in; qr with
+  // mp_kessler_in, mp_thompson_in or mp_wsm6_in; qi with bl_mynn_in, bl_ysu_in, cu_ntiedtke_in, mp_thompson_in or
+  // mp_wsm6_in; qs with bl_mynn_in, mp_thompson_in or mp_wsm6_in; qg with mp_thompson_in or mp_wsm6_in; ni with
+  // bl_mynn_in or mp_thompson_in; nr with mp_thompson_in (cu_grell_freitas_in has no scalar)
+  if (cu != "off" && cu != "cu_ntiedtke" && cu != "cu_grell_freitas")
+    throw Error("active scalars: config_convection_scheme = '" + cu + "' is not handled");
+  if (pbl != "off" && pbl != "bl_ysu" && pbl != "bl_mynn")
+    throw Error("active scalars: config_pbl_scheme = '" + pbl + "' is not handled");
+  if (mp != "off" && mp != "mp_kessler" && mp != "mp_wsm6" && mp != "mp_thompson")
     throw Error("active scalars: config_microp_scheme = '" + mp + "' is not handled");
-  const bool wsm6 = mp == "mp_wsm6", kessler = mp == "mp_kessler", ntiedtke = cu == "cu_ntiedtke", ysu = pbl == "bl_ysu";
+  const bool wsm6 = mp == "mp_wsm6", kessler = mp == "mp_kessler", thompson = mp == "mp_thompson";
+  const bool ntiedtke = cu == "cu_ntiedtke", ysu = pbl == "bl_ysu", mynn = pbl == "bl_mynn";
   std::vector<std::string> v = {"qv"};
-  if (ysu || ntiedtke || kessler || wsm6) v.push_back("qc");
-  if (kessler || wsm6) v.push_back("qr");
-  if (ysu || ntiedtke || wsm6) v.push_back("qi");
-  if (wsm6) {
-    v.push_back("qs");
-    v.push_back("qg");
-  }
+  if (mynn || ysu || ntiedtke || kessler || thompson || wsm6) v.push_back("qc");
+  if (kessler || thompson || wsm6) v.push_back("qr");
+  if (mynn || ysu || ntiedtke || thompson || wsm6) v.push_back("qi");
+  if (mynn || thompson || wsm6) v.push_back("qs");
+  if (thompson || wsm6) v.push_back("qg");
+  if (mynn || thompson) v.push_back("ni");
+  if (thompson) v.push_back("nr");
   return v;
 }
 

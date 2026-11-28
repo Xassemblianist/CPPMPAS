@@ -260,6 +260,12 @@ void driver_sfclayer(int itimestep, const sfclayrev::SFClayRevTables<real>& tabl
     throw Error("driver_sfclayer: config_sfclayer_scheme = '" + mp.sfclayer_scheme + "' has no verified port");
   if (its != 1) throw Error("driver_sfclayer: its /= 1");
   if (vp.ime < ite) throw Error("driver_sfclayer: MPAS_to_physics has not filled its..ite");
+  // sf_mynn_pre reads level kts+1 of dz8w, u3d and v3d (sf_mynn_pre.F:127-140): at least 2 levels
+  if (mynn && vp.kme < 3) throw Error("driver_sfclayer: sf_mynn with fewer than 2 levels (it reads level 2)");
+  if (mynn && (!mp.qcg.p || !mp.snowh.p || !mp.ch.p))
+    throw Error("driver_sfclayer: sf_mynn's qcg, snowh and ch (SL:568-587) are not set");
+  if (mp.config_frac_seaice && (!mp.sst.p || !mp.xice.p))
+    throw Error("driver_sfclayer: config_frac_seaice needs sst and xice (SL:352-592)");
   const SfclayerArrays m = mp;
   const PhysicsVarsView v = vp.view();
   const bool seaice = m.config_frac_seaice;

@@ -55,6 +55,11 @@ contains
     integer, intent(in), optional :: intArgs(:), messageType
     real(kind=8), intent(in), optional :: realArgs(:)
     logical, intent(in), optional :: logicArgs(:)
+    ! MPAS_LOG_CRIT (= 4, mpas_log_types.inc:8) aborts the run as MPAS's mpas_log_write does; a nonzero exit
+    ! status, so the check cannot take the run for a finished one
+    if (present(messageType)) then
+      if (messageType == 4) error stop 'MPAS_LOG_CRIT'
+    end if
   end subroutine
 end module mpas_log
 
@@ -124,7 +129,7 @@ contains
         return
       end if
     end do
-    stop 'pool stub full'
+    error stop 'pool stub full'
   end function
   integer function find(names, name)
     character(len=64), intent(in) :: names(nmax)
@@ -205,21 +210,21 @@ contains
     type(mpas_pool_type), intent(in) :: pool
     character(len=*), intent(in) :: name
     character(len=StrKIND), pointer :: p
-    if (name /= 'config_microp_scheme') stop 'pool stub: config'
+    if (name /= 'config_microp_scheme') error stop 'pool stub: config'
     p => cfg_microp_scheme
   end subroutine
   subroutine cfg_r(pool, name, p)
     type(mpas_pool_type), intent(in) :: pool
     character(len=*), intent(in) :: name
     real(kind=RKIND), pointer :: p
-    if (name /= 'config_bucket_rainnc') stop 'pool stub: config'
+    if (name /= 'config_bucket_rainnc') error stop 'pool stub: config'
     p => cfg_bucket_rainnc
   end subroutine
   subroutine cfg_l(pool, name, p)
     type(mpas_pool_type), intent(in) :: pool
     character(len=*), intent(in) :: name
     logical, pointer :: p
-    if (name /= 'config_do_restart') stop 'pool stub: config'
+    if (name /= 'config_do_restart') error stop 'pool stub: config'
     p => cfg_do_restart
   end subroutine
 end module mpas_pool_routines
