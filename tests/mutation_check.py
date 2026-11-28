@@ -1739,6 +1739,35 @@ MUTATIONS += [
      '          tend_scalars(m.index_ni, k, i) = tend_scalars(m.index_ni, k, i);', ["mynn_column"]),
 ]
 
+# The convection_permitting suite in cppmpas run (physics/mpas_atmphys_driver.cpp), against mpas842-dbl-rgcp-001
+# (dycore_RGCP_*: the steps, the restart and history fields, the forecast's streams) and mpas842-dbl-rgcp24-001
+# (dycore_RGCP24_*, label long): Thompson's n_microp sub-steps and nt_c / mu_c, the sf_mynn inputs, MYNN's initflag
+# and DA-cycling option, the ni tendency of physics_get_tend, the Grell-Freitas closure and shortwave input, and the
+# l_diags reflectivity maximum; the suite's scalars. Indices 789-799.
+DRV = "src/physics/mpas_atmphys_driver.cpp"
+MUTATIONS += [
+    (DRV, "    q.n_microp = r.n_microp;", "    q.n_microp = 1;", ["dycore_RGCP_step1_qr"]),
+    (DRV, '    init_thompson_clouddroplets_forMPAS(nCellsSolve, cv(p.I("landmask")), p.v("nt_c"), p.v("mu_c"));',
+     "    (void)nCellsSolve;", ["dycore_RGCP_restart_nt_c", "dycore_RGCP_restart_mu_c"]),
+    (DRV, '      q.qcg = cv(p.R("qcg"));', '      q.qcg = cv(p.R("qsfc"));', ["dycore_RGCP_step1_qv"]),
+    (DRV, "      q.config_do_restart = c.config_do_restart;\n      q.config_len_disp",
+     "      q.config_do_restart = true;\n      q.config_len_disp", ["dycore_RGCP_step1_u", "dycore_RGCP_restart_qke"]),
+    (DRV, "      CPPMPAS_C(rqsblten) CPPMPAS_C(rniblten)", '      CPPMPAS_C(rqsblten) q.rniblten = cv(p.R("rqsblten"));',
+     ["dycore_RGCP_step1_ni"]),
+    (DRV, "    q.config_gfconv_closure_deep = r.cfg.config_gfconv_closure_deep;", "    q.config_gfconv_closure_deep = 1;",
+     ["dycore_RGCP_step1_qv", "dycore_RGCP_restart_xmb_total"]),
+    (DRV, "  o.do_DAcycling = c.config_do_DAcycling;", "  o.do_DAcycling = true;",
+     ["dycore_RGCP_history1h_hpbl", "dycore_RGCP_history2h_u"]),
+    (DRV, '    q.refl10cm_max = p.v("refl10cm_max");', '    q.refl10cm_max = p.v("refl10cm_1km_max");',
+     ["dycore_RGCP_streams_restart.2026-10-12_01.10.00", "dycore_RGCP_streams_all"]),
+    (DRV, '    q.gsw = cv(p.R("gsw"));', '    q.gsw = cv(p.R("glw"));',
+     ["dycore_RGCP24_history.2026-10-13_00.00.00", "dycore_RGCP24_all"]),
+    # the scalars of the suite (core/namelist.cpp active_scalars) and the dycore's check of them
+    (NL, '  if (mynn || thompson) v.push_back("ni");', '  if (thompson) v.push_back("ni");', ["unit_namelist"]),
+    ("src/core_atmosphere/atm_dycore.cpp", '  const bool suite = c.config_physics_suite == "mesoscale_reference" || cp;',
+     '  const bool suite = c.config_physics_suite == "mesoscale_reference";', ["unit_dycore"]),
+]
+
 MUTATIONS = [(p, o, n, [t for t in ts if t not in EQUIVALENT_ON_SC.get((p, n), [])]) for p, o, n, ts in MUTATIONS]
 
 
