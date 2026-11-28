@@ -280,8 +280,20 @@ PHYSICS_MUTATIONS = [
 ]
 
 
+# the restart runs on the GPU (RGR, RGR24): tests/mutation_check.py mutants of the restart stream's physics fields
+# and physics_init's restart branches, which reach the device through managed memory (appended after the above)
+RGRG = ["gpu_dycore_RGR_restart_all", "gpu_dycore_RGR_restart_restart.2026-10-12_02.10.00"]
+RESTART_MUTANTS = [
+    # read_restart_pools skips tslb (the RG run reads it with the input stream)
+    ('    return std::find(done.begin(), done.end(), n) != done.end() ||', RGRG + ["gpu_dycore_RGR24_restart_all"]),
+    # lsminit's cold-start part on a restart
+    ("  if (!cfg.config_do_restart) {                                            // :124", RGRG),
+]
+
+
 def mutants():
-    return [m for m in GPU_MUTATIONS] + [cpu_mutant(p) + (t,) for p, t in CPU_MUTANTS] + PHYSICS_MUTATIONS
+    return ([m for m in GPU_MUTATIONS] + [cpu_mutant(p) + (t,) for p, t in CPU_MUTANTS] + PHYSICS_MUTATIONS
+            + [cpu_mutant(p) + (t,) for p, t in RESTART_MUTANTS])
 
 
 def build(b):

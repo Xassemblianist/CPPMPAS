@@ -2,6 +2,7 @@
 # LAN PC timings in tests/CMakeLists.txt; ci/summary.py writes the measured times of a run (costs_measured.tsv).
 dycore_run_long_SC	3000
 dycore_run_long_RG24	1500
+dycore_run_long_RGR24	800
 dycore_run_long_JW	700
 dycore_run_long_MW	350
 dycore_restart_run_long_MW	200

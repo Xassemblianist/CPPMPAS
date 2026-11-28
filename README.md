@@ -29,7 +29,9 @@ glibc's vector `log` uses `rcpps`, whose result differs between the two vendors.
   702 variables in the 5 forecast stream files.
 - **RGR (restart with physics).** A restart run with `mesoscale_reference` physics from the 01:10 checkpoint
   matches `mpas842-dbl-rgr-001` in all 712 variables of its 5 stream files (history and diagnostics at 02:00 and
-  02:50, restart at 02:10) on the CPU. MPAS's own restarted run differs from its uninterrupted forecast at 02:00
+  02:50, restart at 02:10) on the CPU and the GPU. RGR24, the long restart from RG24's 12:10 checkpoint to 24:00,
+  matches `mpas842-dbl-rgr24-001` in all 920 variables of its 7 stream files (history and diagnostics at 15:10,
+  18:10 and 21:10, restart at 24:00) on the CPU and the GPU. MPAS's own restarted run differs from its uninterrupted forecast at 02:00
   (45 of 99 history variables). One known cause: its alarms start again at the restart time, so the radiation
   runs at 01:10 and 01:40 instead of 01:30.
 - **Idealized cases.** MW (mountain wave), JW (Jablonowski–Williamson baroclinic wave) and SC (supercell with

@@ -1851,6 +1851,14 @@ MUTATIONS += [
     ("tests/check_restart_recipe.py", 'RESTART_ALLOWED = {"config_run_duration", "config_start_time", "config_do_restart"}',
      'RESTART_ALLOWED = {"config_run_duration", "config_do_restart"}', ["restart_recipe_RGR"]),
 ]
+# RGR24 (label long, mpas842-dbl-rgr24-001): the recipe check compares the NetCDF files by tools/mpas_compare.py (the
+# init file and the 12:10 checkpoint hold the random file_id / parent_id of their run), and the long restart run's
+# duration is a verified namelist value
+MUTATIONS += [
+    ("tests/check_restart_recipe.py", '    if p.suffix == ".nc":', '    if False and p.suffix == ".nc":',
+     ["restart_recipe_RGR24"]),
+    ("src/core/namelist_table.inc", "\\n1_00:00:00\\n0_11:50:00\")", "\\n1_00:00:00\")", ["dycore_run_long_RGR24"]),
+]
 
 
 def ctest(build, regex):
