@@ -20,6 +20,13 @@ Selection: "short" is every test without the label "long", "long" every test wit
   longest comparison, or the summed time / PARALLEL), from ci/costs.tsv (seconds per test on a GitHub runner;
   unknown tests DEFAULT_COST). A small group (< SMALL seconds) joins the job it adds the fewest bytes of downloads to.
 
+Caching: only the inputs of at most CACHE_MAX_BYTES (compressed) get an Actions cache key ("common" and the small,
+often used references: mw, sc); a matrix entry's key<i> is empty for a bigger one. The workflow restores what has a
+key, downloads every input the cache did not give from its release (a miss is never a failure), and checks each one
+against its SHA-256 (ci/data.sh). The big references are downloaded fresh in every job that needs them: a release
+download is about as fast as a cache restore on a GitHub runner, and the cache (10 GB for the repository) then holds
+the image and about 1 GB of data instead of every release.
+
 Writes <out>/matrix.json (the jobs: name, tests file, reference tags, timeout), <out>/data.json (the items to fetch),
 <out>/<job>.txt (test names, one per line, for ctest --tests-from-file), <out>/expected.tsv (name, labels, job of
 every selected test) and <out>/plan.txt (a readable summary).
@@ -35,7 +42,8 @@ LIGHT_FIXTURES = {"inputs", "work_dir"}
 DEFAULT_COST = 2.0
 PARALLEL = 4
 SMALL = 60.0
-MAX_REFS = 6  # the workflow's cache slots per job
+MAX_REFS = 6  # the workflow's data slots per job
+CACHE_MAX_BYTES = 500_000_000  # larger inputs are not cached (module docstring)
 TAG_RE = re.compile(r"mpas842-dbl-[a-z0-9]+-[0-9]{3}")
 SRC_IN_CONTAINER = "/w/src/"  # ci/in_container.sh mounts the CPPMPAS checkout there
 
@@ -228,8 +236,8 @@ def main():
                  "timeout_min": int(min(330, max(60, 3 * est / 60 + 45)))}
         for i in range(MAX_REFS):
             entry[f"ref{i + 1}"] = refs[i] if i < len(refs) else ""
-            entry[f"key{i + 1}"] = (f"cpu-suite-{refs[i]}-{item_sha(data_rows, refs[i])[:16]}"
-                                    if i < len(refs) else "")
+            entry[f"key{i + 1}"] = (cache_key(data_rows, refs[i])
+                                    if i < len(refs) and item_bytes[refs[i]] <= CACHE_MAX_BYTES else "")
         matrix.append(entry)
         for n in job["tests"]:
             if n in names_used and n in chosen:
@@ -242,7 +250,8 @@ def main():
 
     items = sorted({t for j in jobs for t in j["refs"]})
     data = [{"item": "common", "key": f"cpu-suite-common-{common_key(data_rows)}"}]
-    data += [{"item": t, "key": f"cpu-suite-{t}-{item_sha(data_rows, t)[:16]}"} for t in items]
+    data += [{"item": t, "key": cache_key(data_rows, t) if item_bytes[t] <= CACHE_MAX_BYTES else ""}
+             for t in items]
     (out / "matrix.json").write_text(json.dumps({"include": matrix}))
     (out / "data.json").write_text(json.dumps({"include": data}))
     (out / "expected.tsv").write_text("".join("\t".join(r) + "\n" for r in expected))
@@ -250,14 +259,19 @@ def main():
              f"{len(members) - len(cpu)} setup tests added"]
     for m, job in zip(matrix, jobs):
         gb = sum(item_bytes[t] for t in job["refs"]) / 1e9
+        refs = [t + ("" if item_bytes[t] <= CACHE_MAX_BYTES else "(fetched)") for t in sorted(job["refs"])]
         lines.append(f"  {m['name']:<28} {m['count']:5d} tests  ~{m['estimate_s']:5d} s  {gb:5.2f} GB  "
-                     f"timeout {m['timeout_min']} min  {' '.join(sorted(job['refs']))}")
+                     f"timeout {m['timeout_min']} min  {' '.join(refs)}")
     (out / "plan.txt").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
 
 
 def item_sha(rows, item):
     return next(r[2] for r in rows if r[0] == item)
+
+
+def cache_key(rows, item):
+    return f"cpu-suite-{item}-{item_sha(rows, item)[:16]}"
 
 
 def common_key(rows):

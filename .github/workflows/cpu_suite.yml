@@ -2,10 +2,13 @@
 # The CPPMPAS CPU test suite (CTest, tests/CMakeLists.txt) on GitHub-hosted runners, against the MPAS 8.4.2 FP64
 # references of Xassemblianist/cppmpas-data at tolerance 0.
 # - build: the Debian 13 image of the references (ci/Dockerfile: glibc 2.41, gcc / gfortran 14.2), the Release CPU
-#   build, the Intel libmvec preload, and the split of the selected tests into jobs (ci/plan.py).
-# - data: every input the jobs need (ci/data.tsv), checked against its SHA-256 and kept in the Actions cache (one
-#   entry per release tag and SHA-256).
-# - test: one job per part of the split; ctest under LD_PRELOAD of the preload (ci/run_tests.sh).
+#   build, the Intel libmvec preload, and the split of the selected tests into jobs (ci/plan.py). The image goes to
+#   the test jobs as the artifact "image", with its SHA-256 as a job output.
+# - test: one job per part of the split; ctest under LD_PRELOAD of the preload (ci/run_tests.sh). Its inputs
+#   (ci/data.tsv): the ones the plan gives a cache key (the small, often used ones) are restored from the Actions
+#   cache; every input the cache did not give is downloaded from its release, and a downloaded cacheable one is saved.
+#   Every input is checked against its SHA-256 before use (ci/data.sh). A cache miss or an evicted entry is never a
+#   failure: nothing in a run depends on a cache entry (the repository's cache is 10 GB, the releases more).
 # - summary: every selected test must pass; the GPU tests must be skipped (this is a CPU build) and are counted
 #   as skipped, never as passed (ci/summary.py).
 # Start: gh workflow run cpu_suite.yml --ref <branch holding this file> -f ref=<branch or commit> -f labels=all
@@ -18,9 +21,11 @@
 #   build.sh, the plan (plan.py, data.tsv, costs.tsv), data.sh, run_tests.sh and summary.py. A commit can so add a
 #   reference release to ci/data.tsv, or change the planner, and be tested before it is on main.
 # The guarantees that must not depend on the commit under test are kept by this file itself: the bundle's SHA-256
-# (fetch_bundle.sh), the image's SHA-256 recorded when it was built and checked on every load, at most 10 test jobs at
-# once, and the verdict job's own check of every JUnit result (every selected CPU test passed, every GPU test skipped,
-# at least one CPU test, every job succeeded).
+# (fetch_bundle.sh), the image's SHA-256 recorded when it was built and checked on every load, the download of every
+# input the cache did not give, at most 10 test jobs at once, and the verdict job's own check of every JUnit result
+# (every selected CPU test passed, every GPU test skipped, at least one CPU test, every job succeeded).
+# cache_salt (tools/ci/ci_submit.sh --cache-salt): appended to every cache key, so that nothing restores (the proof
+# that a run does not need the cache); its entries are deleted afterwards (gh cache delete).
 name: cpu_suite
 run-name: ${{ inputs.tag || format('cpu_suite {0} {1}', inputs.labels || 'all', inputs.ref || github.sha) }}
 on:
@@ -34,6 +39,7 @@ on:
       bundle_sha256: {description: "SHA-256 of the bundle", default: ""}
       tag: {description: "a name for the run (ci_submit.sh finds the run by it)", default: ""}
       max_parallel: {description: "test jobs at once (at most 10)", default: "10"}
+      cache_salt: {description: "appended to every cache key (empty: the normal keys)", default: ""}
   push:
     branches: [main]
 permissions:
@@ -52,6 +58,7 @@ env:
   MVEC_REPO: Xassemblianist/cppmpas-data
   MVEC_COMMIT: 6065fe34c6cc846f2153a314dc28ffcb425192d8
   GH_TOKEN: ${{ github.token }}
+  SALT: ${{ inputs.cache_salt && format('-{0}', inputs.cache_salt) || '' }}
 jobs:
   build:
     # a push runs the suite only on main
@@ -60,11 +67,9 @@ jobs:
     timeout-minutes: 75
     outputs:
       commit: ${{ steps.src.outputs.commit }}
-      image_key: ${{ steps.image.outputs.image_key }}
       image_sha256: ${{ steps.image.outputs.image_sha256 }}
       common_key: ${{ steps.plan.outputs.common_key }}
       matrix: ${{ steps.plan.outputs.matrix }}
-      data: ${{ steps.plan.outputs.data }}
     steps:
       # the workflow's own ref: only ci/fetch_bundle.sh is used from it
       - uses: actions/checkout@v4
@@ -91,11 +96,13 @@ jobs:
           if [[ $REF =~ ^[0-9a-f]{40}$ ]] && [ "$commit" != "$REF" ]; then echo "src is $commit, not $REF"; exit 1; fi
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
           mkdir -p plan && git -C src log -1 --format='%H %s' | tee plan/commit.txt
-      # the image of the commit under test (src/ci/Dockerfile). Its cache entry's key ends in the SHA-256 of the
-      # image archive, recorded when the archive was made; every load (here and in each test job) checks it.
+      # the image of the commit under test (src/ci/Dockerfile). Its cache entry (only this job reads it: it saves the
+      # docker build) has a key that ends in the SHA-256 of the image archive, recorded when the archive was made;
+      # every load checks it. The test jobs get the archive as the artifact "image" and check it against the
+      # SHA-256 of this job's output (an evicted cache entry means a docker build here, never a failed test job).
       - name: image key
         id: key
-        run: echo "prefix=cpu-suite-image-$(cat src/ci/Dockerfile src/ci/debian-packages.txt | sha256sum | cut -c1-16)-" >> "$GITHUB_OUTPUT"
+        run: echo "prefix=cpu-suite-image$SALT-$(cat src/ci/Dockerfile src/ci/debian-packages.txt | sha256sum | cut -c1-16)-" >> "$GITHUB_OUTPUT"
       - uses: actions/cache/restore@v4
         id: cache
         with: {path: dl/image, key: "${{ steps.key.outputs.prefix }}none", restore-keys: "${{ steps.key.outputs.prefix }}"}
@@ -122,7 +129,10 @@ jobs:
           ls -l dl/image; echo "image archive sha256 $sha"
       - uses: actions/cache/save@v4
         if: steps.image.outputs.built == 'true'
+        continue-on-error: true
         with: {path: dl/image, key: "${{ steps.image.outputs.image_key }}"}
+      - uses: actions/upload-artifact@v4
+        with: {name: image, path: dl/image/image.tar.zst, retention-days: 3, compression-level: 0, if-no-files-found: error}
       - name: build (Release, CPU) and the libmvec preload
         run: bash src/ci/in_container.sh "$PWD/w" bash /w/ci/build.sh build
       - name: plan
@@ -130,7 +140,6 @@ jobs:
         run: |
           python3 src/ci/plan.py w/out/tests.json "$LABELS" plan --src-root src | tee -a "$GITHUB_STEP_SUMMARY"
           echo "matrix=$(cat plan/matrix.json)" >> "$GITHUB_OUTPUT"
-          echo "data=$(cat plan/data.json)" >> "$GITHUB_OUTPUT"
           echo "common_key=$(python3 -c 'import json; print(json.load(open("plan/data.json"))["include"][0]["key"])')" >> "$GITHUB_OUTPUT"
           cp w/out/tests.json w/out/versions.txt packages.tsv plan/
       - name: pack the build tree and the source tree
@@ -148,34 +157,8 @@ jobs:
         if: always()
         with: {name: logs-build, path: "w/out/*.log\nw/out/*.txt", retention-days: 30}
 
-  data:
-    needs: build
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      max-parallel: 4
-      matrix: ${{ fromJSON(needs.build.outputs.data) }}
-    name: data ${{ matrix.item }}
-    steps:
-      - uses: actions/cache/restore@v4
-        id: c
-        with: {path: "dl/${{ matrix.item }}", key: "${{ matrix.key }}", lookup-only: true}
-      # the commit under test's ci/data.sh and ci/data.tsv (the SHA-256 of every file)
-      - uses: actions/download-artifact@v4
-        if: steps.c.outputs.cache-hit != 'true'
-        with: {name: src, path: .}
-      - name: fetch and check
-        if: steps.c.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p src && zstd -dc src.tar.zst | tar -xf - -C src ./ci && rm src.tar.zst
-          bash src/ci/data.sh fetch "${{ matrix.item }}" "dl/${{ matrix.item }}"
-      - uses: actions/cache/save@v4
-        if: steps.c.outputs.cache-hit != 'true'
-        with: {path: "dl/${{ matrix.item }}", key: "${{ matrix.key }}"}
-
   test:
-    needs: [build, data]
+    needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.timeout_min }}
     strategy:
@@ -188,7 +171,10 @@ jobs:
     steps:
       - name: disk
         run: |
-          if [ "${{ matrix.ref1 }}" != "" ]; then
+          # the run directory needs at most about 25 GB (the 6-release job: the archives and what they hold); the
+          # runner's preinstalled tools are removed only when less than 60 GB is free (that takes about 3 minutes)
+          free_ws=$(df --output=avail -B1 "$GITHUB_WORKSPACE" | tail -1)
+          if [ "${{ matrix.ref1 }}" != "" ] && [ "$free_ws" -lt 60000000000 ]; then
             sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache \
               /usr/local/share/boost /usr/share/swift /usr/local/julia* /usr/local/share/powershell /usr/local/share/chromium
             sudo docker image prune -af > /dev/null
@@ -210,34 +196,96 @@ jobs:
         with: {name: plan, path: plan}
       - uses: actions/download-artifact@v4
         with: {name: build, path: .}
+      # the image archive the build job made or checked (an artifact of this run, never a cache entry)
+      - uses: actions/download-artifact@v4
+        with: {name: image, path: dl/image}
+      # the inputs with a cache key (ci/plan.py: the small, often used ones); a miss is not an error
       - uses: actions/cache/restore@v4
-        with: {path: dl/image, key: "${{ needs.build.outputs.image_key }}", fail-on-cache-miss: true}
-      - uses: actions/cache/restore@v4
+        id: rc
         if: ${{ !matrix.gpu }}
-        with: {path: dl/common, key: "${{ needs.build.outputs.common_key }}", fail-on-cache-miss: true}
+        with: {path: dl/common, key: "${{ needs.build.outputs.common_key }}${{ env.SALT }}"}
       - uses: actions/cache/restore@v4
-        if: matrix.ref1 != ''
-        with: {path: "dl/${{ matrix.ref1 }}", key: "${{ matrix.key1 }}", fail-on-cache-miss: true}
+        id: r1
+        if: matrix.key1 != ''
+        with: {path: "dl/${{ matrix.ref1 }}", key: "${{ matrix.key1 }}${{ env.SALT }}"}
       - uses: actions/cache/restore@v4
-        if: matrix.ref2 != ''
-        with: {path: "dl/${{ matrix.ref2 }}", key: "${{ matrix.key2 }}", fail-on-cache-miss: true}
+        id: r2
+        if: matrix.key2 != ''
+        with: {path: "dl/${{ matrix.ref2 }}", key: "${{ matrix.key2 }}${{ env.SALT }}"}
       - uses: actions/cache/restore@v4
-        if: matrix.ref3 != ''
-        with: {path: "dl/${{ matrix.ref3 }}", key: "${{ matrix.key3 }}", fail-on-cache-miss: true}
+        id: r3
+        if: matrix.key3 != ''
+        with: {path: "dl/${{ matrix.ref3 }}", key: "${{ matrix.key3 }}${{ env.SALT }}"}
       - uses: actions/cache/restore@v4
-        if: matrix.ref4 != ''
-        with: {path: "dl/${{ matrix.ref4 }}", key: "${{ matrix.key4 }}", fail-on-cache-miss: true}
+        id: r4
+        if: matrix.key4 != ''
+        with: {path: "dl/${{ matrix.ref4 }}", key: "${{ matrix.key4 }}${{ env.SALT }}"}
       - uses: actions/cache/restore@v4
-        if: matrix.ref5 != ''
-        with: {path: "dl/${{ matrix.ref5 }}", key: "${{ matrix.key5 }}", fail-on-cache-miss: true}
+        id: r5
+        if: matrix.key5 != ''
+        with: {path: "dl/${{ matrix.ref5 }}", key: "${{ matrix.key5 }}${{ env.SALT }}"}
       - uses: actions/cache/restore@v4
-        if: matrix.ref6 != ''
-        with: {path: "dl/${{ matrix.ref6 }}", key: "${{ matrix.key6 }}", fail-on-cache-miss: true}
+        id: r6
+        if: matrix.key6 != ''
+        with: {path: "dl/${{ matrix.ref6 }}", key: "${{ matrix.key6 }}${{ env.SALT }}"}
+      # every input the cache did not give (no key, a miss, an evicted entry, a restored entry whose files do not
+      # match ci/data.tsv): downloaded from its release and checked against its SHA-256 (ci/data.sh fetch), at
+      # most 3 attempts
+      - name: data (cache or release)
+        env: {ITEMS: "${{ !matrix.gpu && 'common' || '' }} ${{ matrix.ref1 }} ${{ matrix.ref2 }} ${{ matrix.ref3 }} ${{ matrix.ref4 }} ${{ matrix.ref5 }} ${{ matrix.ref6 }}"}
+        run: |
+          for i in $ITEMS; do
+            t0=$SECONDS
+            if [ -d "dl/$i" ]; then
+              if awk -F'\t' -v i="$i" -v d="dl/$i" '$1 == i {print $3 "  " d "/" $2}' src/ci/data.tsv |
+                 sha256sum --strict -c --quiet -; then
+                echo "$i: from the cache, checked ($(du -sh "dl/$i" | cut -f1), $((SECONDS - t0)) s)"; continue
+              fi
+              echo "$i: the cache entry does not match ci/data.tsv; downloading it"
+            fi
+            ok=
+            for a in 1 2 3; do
+              rm -rf "dl/$i"
+              if bash src/ci/data.sh fetch "$i" "dl/$i"; then ok=1; break; fi
+              echo "$i: download attempt $a failed"; sleep 20
+            done
+            [ -n "$ok" ] || { echo "$i: not downloaded from its release after 3 attempts"; exit 1; }
+            echo "$i: downloaded from its release, checked ($(du -sh "dl/$i" | cut -f1), $((SECONDS - t0)) s)"
+          done
+      # a cacheable input that was downloaded is saved for the next runs (several jobs may try; one wins)
+      - uses: actions/cache/save@v4
+        if: ${{ !matrix.gpu && steps.rc.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        with: {path: dl/common, key: "${{ needs.build.outputs.common_key }}${{ env.SALT }}"}
+      - uses: actions/cache/save@v4
+        if: matrix.key1 != '' && steps.r1.outputs.cache-hit != 'true'
+        continue-on-error: true
+        with: {path: "dl/${{ matrix.ref1 }}", key: "${{ matrix.key1 }}${{ env.SALT }}"}
+      - uses: actions/cache/save@v4
+        if: matrix.key2 != '' && steps.r2.outputs.cache-hit != 'true'
+        continue-on-error: true
+        with: {path: "dl/${{ matrix.ref2 }}", key: "${{ matrix.key2 }}${{ env.SALT }}"}
+      - uses: actions/cache/save@v4
+        if: matrix.key3 != '' && steps.r3.outputs.cache-hit != 'true'
+        continue-on-error: true
+        with: {path: "dl/${{ matrix.ref3 }}", key: "${{ matrix.key3 }}${{ env.SALT }}"}
+      - uses: actions/cache/save@v4
+        if: matrix.key4 != '' && steps.r4.outputs.cache-hit != 'true'
+        continue-on-error: true
+        with: {path: "dl/${{ matrix.ref4 }}", key: "${{ matrix.key4 }}${{ env.SALT }}"}
+      - uses: actions/cache/save@v4
+        if: matrix.key5 != '' && steps.r5.outputs.cache-hit != 'true'
+        continue-on-error: true
+        with: {path: "dl/${{ matrix.ref5 }}", key: "${{ matrix.key5 }}${{ env.SALT }}"}
+      - uses: actions/cache/save@v4
+        if: matrix.key6 != '' && steps.r6.outputs.cache-hit != 'true'
+        continue-on-error: true
+        with: {path: "dl/${{ matrix.ref6 }}", key: "${{ matrix.key6 }}${{ env.SALT }}"}
       - name: unpack (image, build tree, data)
         env: {REFS: "${{ matrix.ref1 }} ${{ matrix.ref2 }} ${{ matrix.ref3 }} ${{ matrix.ref4 }} ${{ matrix.ref5 }} ${{ matrix.ref6 }}",
               GPU: "${{ matrix.gpu }}", IMAGE_SHA256: "${{ needs.build.outputs.image_sha256 }}"}
         run: |
-          # the image archive the build job made or checked (its SHA-256 from the build job, not from the cache)
+          # the image archive against the SHA-256 the build job recorded when it made or checked it
           [[ $IMAGE_SHA256 =~ ^[0-9a-f]{64}$ ]] || { echo "no image SHA-256 from the build job"; exit 1; }
           echo "$IMAGE_SHA256  dl/image/image.tar.zst" | sha256sum --strict -c -
           zstd -dc dl/image/image.tar.zst | docker load && rm -rf dl/image
@@ -255,7 +303,7 @@ jobs:
         with: {name: "logs-${{ matrix.name }}", path: "${{ env.BASE }}/out/", retention-days: 30}
 
   summary:
-    needs: [build, data, test]
+    needs: [build, test]
     if: always() && needs.build.result != 'skipped'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -267,7 +315,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with: {pattern: "logs-*", path: results}
       - name: verdict
-        env: {RB: "${{ needs.build.result }}", RD: "${{ needs.data.result }}", RT: "${{ needs.test.result }}",
+        env: {RB: "${{ needs.build.result }}", RT: "${{ needs.test.result }}",
               COMMIT: "${{ needs.build.outputs.commit }}"}
         run: |
           mkdir -p src && zstd -dc src.tar.zst | tar -xf - -C src ./ci
@@ -307,7 +355,7 @@ jobs:
           EOF
           [ $? = 0 ] || st=1
           cat guard.txt; { echo; echo "Workflow check: $(head -1 guard.txt)"; } >> "$GITHUB_STEP_SUMMARY"
-          for r in "build $RB" "data $RD" "test $RT"; do
+          for r in "build $RB" "test $RT"; do
             set -- $r
             [ "$2" = success ] || { echo "job $1: $2" | tee -a guard.txt "$GITHUB_STEP_SUMMARY"; st=1; }
           done

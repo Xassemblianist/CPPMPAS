@@ -864,6 +864,76 @@ else()
   add_test(NAME gpu_backend COMMAND ${GPU} device)
 endif()
 cppmpas_gpu_props(gpu_backend)
+# The GPU audit's situations (tests/test_hardening.cpp, tests/hardening_columns.py): direct calls and columns that
+# reach what MPAS leaves undefined or the port's capacities end at, on the CPU build (hardening_*) and the same
+# source built by nvcc (gpu_hardening_*): the same Errors on both builds, the same values (kernel against host) where
+# the input is valid; the column programs of both builds on ordinary columns give the same bytes.
+set(HARDENING_CHECKS views sfclayrev ntclamp raw thin seaice capacity radius prep)
+add_executable(test_hardening test_hardening.cpp)
+target_link_libraries(test_hardening PRIVATE cppmpas)
+foreach(c IN LISTS HARDENING_CHECKS)
+  add_test(NAME hardening_${c} COMMAND test_hardening ${c})
+endforeach()
+set(_hc ${PY} ${T}/hardening_columns.py)
+add_test(NAME hardening_wsm6_1km COMMAND ${_hc} wsm6_1km $<TARGET_FILE:test_wsm6_column> ${W}/hardening_wsm6)
+add_test(NAME hardening_mcica COMMAND ${_hc} mcica $<TARGET_FILE:test_radiation_column> ${W}/hardening_mcica
+  ${CPPMPAS_MPAS_TABLES} ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_lw_tables.bin ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_sw_tables.bin)
+add_test(NAME hardening_lw_layers COMMAND ${_hc} lw_layers $<TARGET_FILE:test_radiation_column> ${W}/hardening_lw
+  ${CPPMPAS_MPAS_TABLES} ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_lw_tables.bin ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_sw_tables.bin)
+add_test(NAME hardening_noah COMMAND ${_hc} noah $<TARGET_FILE:test_noah_column> ${W}/hardening_noah
+  ${CPPMPAS_NOAH_TABLES})
+set_tests_properties(hardening_wsm6_1km hardening_mcica hardening_lw_layers hardening_noah PROPERTIES
+  FIXTURES_REQUIRED work_dir)
+set(GPU_HARDENING_COLUMNS wsm6_1km mcica lw_layers noah)
+if(CPPMPAS_ENABLE_CUDA)
+  # the CUDA build of a test source: a generated .cu that includes it (as the library's sources, CMakeLists.txt)
+  function(cppmpas_cuda_test name src)
+    set(_cu ${CMAKE_BINARY_DIR}/cuda_src/tests/${src}.cu)
+    file(CONFIGURE OUTPUT ${_cu} CONTENT "// generated: the CUDA build of tests/${src}\n#include \"${CMAKE_CURRENT_SOURCE_DIR}/${src}\"\n")
+    add_executable(${name} ${_cu})
+    target_link_libraries(${name} PRIVATE cppmpas_cuda)
+    set_target_properties(${name} PROPERTIES CUDA_SEPARABLE_COMPILATION ON CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+  endfunction()
+  cppmpas_cuda_test(test_gpu_hardening test_hardening.cpp)
+  foreach(c IN LISTS HARDENING_CHECKS)
+    add_test(NAME gpu_hardening_${c} COMMAND test_gpu_hardening ${c})
+  endforeach()
+  cppmpas_cuda_test(test_gpu_wsm6_column wsm6_column/test_wsm6_column.cpp)
+  cppmpas_cuda_test(test_gpu_radiation_column radiation_column/test_radiation_column.cpp)
+  cppmpas_cuda_test(test_gpu_noah_column noah_column/test_noah_column.cpp)
+  add_test(NAME gpu_hardening_wsm6_1km COMMAND ${_hc} wsm6_1km $<TARGET_FILE:test_gpu_wsm6_column>
+    ${W}/gpu_hardening_wsm6 --vs $<TARGET_FILE:test_wsm6_column>)
+  add_test(NAME gpu_hardening_mcica COMMAND ${_hc} mcica $<TARGET_FILE:test_gpu_radiation_column>
+    ${W}/gpu_hardening_mcica ${CPPMPAS_MPAS_TABLES} ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_lw_tables.bin
+    ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_sw_tables.bin --vs $<TARGET_FILE:test_radiation_column>)
+  add_test(NAME gpu_hardening_lw_layers COMMAND ${_hc} lw_layers $<TARGET_FILE:test_gpu_radiation_column>
+    ${W}/gpu_hardening_lw ${CPPMPAS_MPAS_TABLES} ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_lw_tables.bin
+    ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_sw_tables.bin --vs $<TARGET_FILE:test_radiation_column>)
+  add_test(NAME gpu_hardening_noah COMMAND ${_hc} noah $<TARGET_FILE:test_gpu_noah_column> ${W}/gpu_hardening_noah
+    ${CPPMPAS_NOAH_TABLES} --vs $<TARGET_FILE:test_noah_column>)
+  set_tests_properties(gpu_hardening_wsm6_1km gpu_hardening_mcica gpu_hardening_lw_layers gpu_hardening_noah
+    PROPERTIES FIXTURES_REQUIRED work_dir)
+  # libm::log / log10 and the libmvec lanes mvec_log / mvec_log10 on the device against the host, bit for bit
+  add_executable(test_gpu_mvec_log test_gpu_mvec_log.cu)
+  target_link_libraries(test_gpu_mvec_log PRIVATE cppmpas_cuda)
+  set_target_properties(test_gpu_mvec_log PROPERTIES CUDA_SEPARABLE_COMPILATION ON CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+  add_test(NAME gpu_mvec_log COMMAND test_gpu_mvec_log 200000)
+  # core/backend.hpp refuses a CUDA source compiled without relocatable device code (its kernel_fail would record
+  # nothing): the preprocessor stops without -rdc=true and passes with it
+  file(WRITE ${CMAKE_BINARY_DIR}/cuda_src/tests/rdc_probe.cu "#include \"core/backend.hpp\"\nint main() { return 0; }\n")
+  add_test(NAME cmake_cuda_requires_rdc COMMAND ${CMAKE_COMMAND} -E env sh -c
+    "p='${CMAKE_BINARY_DIR}/cuda_src/tests/rdc_probe.cu'; out=$('${CMAKE_CUDA_COMPILER}' -std=c++20 -E -x cu -I'${CMAKE_SOURCE_DIR}/src' \"$p\" -o /dev/null 2>&1); rc=$?; echo \"$out\" | tail -3; [ $rc -ne 0 ] && echo \"$out\" | grep -q 'compile CUDA sources with -rdc=true' && '${CMAKE_CUDA_COMPILER}' -std=c++20 -E -x cu -rdc=true -I'${CMAKE_SOURCE_DIR}/src' \"$p\" -o /dev/null")
+  set_tests_properties(cmake_cuda_requires_rdc PROPERTIES LABELS gpu)
+else()
+  foreach(c IN LISTS HARDENING_CHECKS GPU_HARDENING_COLUMNS)
+    add_test(NAME gpu_hardening_${c} COMMAND ${GPU} device)
+  endforeach()
+  add_test(NAME gpu_mvec_log COMMAND ${GPU} device)
+endif()
+foreach(c IN LISTS HARDENING_CHECKS GPU_HARDENING_COLUMNS)
+  cppmpas_gpu_props(gpu_hardening_${c})
+endforeach()
+cppmpas_gpu_props(gpu_mvec_log)
 # RG's radiation calls at 00:00 and 00:30 on the device (tests/radiation_replay, the CUDA build of the same test):
 # every loop of the cloudiness, ozone and radiation drivers and every RRTMG stage a kernel, against the CPU run's
 # outputs at tolerance 0
@@ -877,11 +947,18 @@ if(CPPMPAS_ENABLE_CUDA)
     add_test(NAME gpu_radiation_RG_${t} COMMAND test_gpu_radiation_replay ${RADIATION_DUMP_RG}/radiation.${t}.bin
       ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_lw_tables.bin ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_sw_tables.bin)
     cppmpas_gpu_props(gpu_radiation_RG_${t} FIXTURES_REQUIRED radiation_dump_RG)
+    # the same calls in chunks of 7 columns (module_ra_rrtmg.cpp chunk_buffers: the chunk a smaller device, or an
+    # allocation failure, leaves): the chunk groups columns into launches only, the outputs are the same bits
+    add_test(NAME gpu_radiation_RG_${t}_chunk7 COMMAND ${CMAKE_COMMAND} -E env CPPMPAS_RRTMG_CHUNK=7
+      $<TARGET_FILE:test_gpu_radiation_replay> ${RADIATION_DUMP_RG}/radiation.${t}.bin
+      ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_lw_tables.bin ${CPPMPAS_CPPWRF_RRTMG}/rrtmg_sw_tables.bin)
+    cppmpas_gpu_props(gpu_radiation_RG_${t}_chunk7 FIXTURES_REQUIRED radiation_dump_RG)
   endforeach()
 else()
   foreach(t IN LISTS RADIATION_RG_CALLS)
     add_test(NAME gpu_radiation_RG_${t} COMMAND ${GPU} device)
-    cppmpas_gpu_props(gpu_radiation_RG_${t})
+    add_test(NAME gpu_radiation_RG_${t}_chunk7 COMMAND ${GPU} device)
+    cppmpas_gpu_props(gpu_radiation_RG_${t} gpu_radiation_RG_${t}_chunk7)
   endforeach()
 endif()
 # atm_mpas_init_block on the GPU: every initdump field of MW, SC and JW against MPAS, and against the CPU build

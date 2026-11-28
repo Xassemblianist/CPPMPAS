@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Synthetic columns for the WSM6 column check, and the comparison of the two programs' outputs.
 
-  columns.py make <in.bin> <nCells> <nVertLevels> <nsteps> <mp_top_level> <dt> <seed>
+  columns.py make <in.bin> <nCells> <nVertLevels> <nsteps> <mp_top_level> <dt> <seed> [depth]
   columns.py compare <in.bin> <ref out.bin> <cpp out.bin> [l_diags]
 
 in.bin (native-endian stream, read by harness.F90 and test_wsm6_column.cpp): int32 nCells, nVertLevels, nsteps,
@@ -13,7 +13,8 @@ out.bin: per step, the OUT fields below in that order, then (l_diags) the DIAGS 
 Cell i gets regime i % 5: 0 warm rain (cloud and rain below the freezing level), 1 cloud ice (cold, ice
 supersaturated), 2 snow, 3 graupel (deep mixed-phase column), 4 everything with some negative mixing ratios from
 "the dynamics" and dry layers. Temperatures, pressures and densities are hydrostatic and consistent; amplitudes
-are perturbed per cell.
+are perturbed per cell. depth (m): the column is that deep above the terrain, its levels evenly spaced (the default:
+a model top at 30 km, levels following the terrain); a shallow column has no level midpoint at or above 1 km AGL.
 """
 import sys
 
@@ -32,7 +33,7 @@ DIAGS = [("refl10cm", "v"), ("refl10cm_max", "c"), ("refl10cm_1km", "c"), ("refl
          ("relhum", "v")]
 
 
-def make(path, nC, nV, nsteps, mp_top, dt, seed):
+def make(path, nC, nV, nsteps, mp_top, dt, seed, depth=None):
     rng = np.random.default_rng(seed)
     ztop = 30000.0
     eta = np.linspace(0.0, 1.0, nV + 1)
@@ -48,9 +49,13 @@ def make(path, nC, nV, nsteps, mp_top, dt, seed):
     for i in range(nC):
         reg = i % 5
         hs = rng.uniform(0.0, 1500.0)
-        zg[i] = hs + eta * (ztop - hs) + 30.0 * np.sin(np.pi * eta) * rng.uniform(-1, 1)
+        if depth is None:
+            zg[i] = hs + eta * (ztop - hs) + 30.0 * np.sin(np.pi * eta) * rng.uniform(-1, 1)
+            zz[i] = (ztop / (ztop - hs)) * (1.0 + 0.01 * rng.uniform(-1, 1, nV))
+        else:
+            zg[i] = hs + eta * depth
+            zz[i] = 1.0 + 0.01 * rng.uniform(-1, 1, nV)
         zm = 0.5 * (zg[i, 1:] + zg[i, :-1])
-        zz[i] = (ztop / (ztop - hs)) * (1.0 + 0.01 * rng.uniform(-1, 1, nV))
         tsfc = {0: 303.0, 1: 255.0, 2: 268.0, 3: 296.0, 4: 290.0}[reg] + rng.uniform(-3, 3)
         T = np.maximum(tsfc - 0.0065 * (zm - hs), 205.0 + rng.uniform(0, 5))
         p = np.empty(nV)
@@ -157,6 +162,7 @@ def compare(inp, ref, cpp, diags=None):
 
 if __name__ == "__main__":
     if sys.argv[1] == "make":
-        make(sys.argv[2], *map(int, sys.argv[3:7]), float(sys.argv[7]), int(sys.argv[8]))
+        make(sys.argv[2], *map(int, sys.argv[3:7]), float(sys.argv[7]), int(sys.argv[8]),
+             *(float(a) for a in sys.argv[9:10]))
     else:
         sys.exit(compare(*sys.argv[2:6]))

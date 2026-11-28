@@ -990,15 +990,16 @@ MUTATIONS += [
      ["dycore_restart0_MW_qv", "dycore_MW_step0_qv"]),
     ("src/core/namelist_table.inc", r'"config_do_restart", "logical", "false", "false\ntrue")',
      r'"config_do_restart", "logical", "false", "false")', ["dycore_restart0_run_MW", "namelist_MW"]),
-    # the CPU build has none of the GPU's capacity limits (core/backend.hpp, operators/vector_operations.cpp)
-    ("src/core/backend.cpp", "#if !defined(CPPMPAS_USE_CUDA)\n  (void)nVertLevels;", "#if 0\n  (void)nVertLevels;",
+    # the CPU build refuses the inputs the GPU's work arrays cannot hold (core/backend.hpp,
+    # operators/vector_operations.cpp, atm_advance_scalars.cpp): 256 levels refused
+    ("src/core/backend.cpp", "  if (nVertLevels + 2 > kMaxColumn)", "  if (nVertLevels + 1 > kMaxColumn)",
      ["unit_backend"]),
     ("src/core/backend.hpp", "    if (n_ > N) {\n      big_.assign", "    if (n_ > N) {\n      n_ = N;\n      big_.assign",
      ["unit_backend"]),
-    (V, "#if defined(CPPMPAS_USE_CUDA)\n  if (N > kMaxRbfPoints + 2)", "#if 1\n  if (N > kMaxRbfPoints + 2)",
-     ["unit_backend"]),
-    (V, "#if defined(CPPMPAS_USE_CUDA)\n  if (pointCount > kMaxRbfPoints)", "#if 1\n  if (pointCount > kMaxRbfPoints)",
-     ["unit_backend"]),
+    (V, "  if (N > kMaxRbfPoints + 2) return kernel_fail(", "  if (false) return kernel_fail(", ["unit_backend"]),
+    (V, "  if (pointCount > kMaxRbfPoints)  // both builds", "  if (false)  // both builds", ["unit_backend"]),
+    ("src/core_atmosphere/atm_advance_scalars.cpp", "  if (num_scalars > kMaxScalars)  // both builds",
+     "  if (false)  // both builds", ["unit_backend"]),
 ]
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -1241,9 +1242,8 @@ MUTATIONS += [
     # lsm_from_MPAS (:460-468), correct_tsk_over_seaice's xice < 0.1 limit (lsm_shared.F:49), usemonalb =
     # config_sfc_albedo (driver_lsm.F:735, case 'as'), the sfc-diagnostics cqs2 threshold (regime 9), the sea-ice
     # TBOT (seaice_drv.F, shared kernel), SFLX_GLACIAL's LVCOEF (snow ageing on land ice)
-    (L, "CPPMPAS_FORCEINLINE double log10(double x) { return ::cppwrf::glibc::log10(arg(x)); }",
-     "CPPMPAS_FORCEINLINE double log10(double x) { return ::cppwrf::glibc::log(arg(x)) / 2.302585092994046; }",
-     ["noah_column"]),
+    (L, "  return x < 0.0 ? __builtin_nan(\"\") : ::cppwrf::glibc::log10(x);",
+     "  return x < 0.0 ? __builtin_nan(\"\") : ::cppwrf::glibc::log(x) / 2.302585092994046;", ["noah_column"]),
     ("src/physics/mpas_atmphys_lsm_noahinit.cpp", "&t.satpsi[lc], &t.satdk[lc], &t.satdw[lc], &t.wltsmc[lc]",
      "&t.satpsi[lc], &t.satdw[lc], &t.satdk[lc], &t.wltsmc[lc]", ["noah_column"]),
     ("src/physics/mpas_atmphys_driver_lsm.cpp", "real fk = libm::pow((hlice / (pc::gravity * (-psisat)))",
@@ -1763,6 +1763,96 @@ MUTATIONS += [
     ("CMakeLists.txt", 'cppmpas_check_fp_directory("${CMAKE_SOURCE_DIR}")', '# cppmpas_check_fp_directory', ["cmake_fp_flags"]),
     ("CMakeLists.txt", '    if(_v MATCHES "^CMAKE_[A-Za-z]+_FLAGS(_[A-Za-z0-9_]+)?$" OR',
      '    if(_v MATCHES "^CMAKE_[A-Za-z]+_FLAGS(_RELEASE)?$" OR', ["cmake_fp_flags"]),
+]
+
+# the GPU audit's situations (tests/test_hardening.cpp, tests/hardening_columns.py, tests/test_libm.cpp): each check
+# fails when its refusal, its semantics or its arithmetic is undone
+NTH, YSUH, KSH, NOAHH = "src/physics/cu_ntiedtke.hpp", "src/physics/bl_ysu.hpp", "src/physics/mp_kessler.hpp", \
+    "src/physics/sf_noah.hpp"
+SFCH, GWH = "src/physics/sf_sfclayrev.hpp", "src/physics/bl_gwdo.hpp"
+SWC, LWC = "src/physics/rrtmg/rrtmg_sw_cldprmc.hpp", "src/physics/rrtmg/rrtmg_lw_cldprmc.hpp"
+LSMD, NDRV = "src/physics/mpas_atmphys_driver_lsm.cpp", "src/physics/module_sf_noahdrv.cpp"
+OFF3 = "    return std::ptrdiff_t(i) + std::ptrdiff_t(j) * sj + std::ptrdiff_t(k) * sk;"
+MUTATIONS += [
+    # G1: log10@plt's SVID wrapper (+qNaN for x < 0) left out of the lane and of the scalar wrapper
+    (L, "  return x < 0.0 ? __builtin_nan(\"\") : ::cppwrf::mvec::log10(x);", "  return ::cppwrf::mvec::log10(x);",
+     ["unit_libm"]),
+    (L, "  return x < 0.0 ? __builtin_nan(\"\") : ::cppwrf::glibc::log10(x);", "  return ::cppwrf::glibc::log10(x);",
+     ["unit_libm"]),
+    # G2: MIN(x, 0.) with the constant first (a -0.0 operand stays -0.0), and cuadjtqn's zcond clamp in that order
+    (NTH, "CPPMPAS_HD inline T cmin(T x, T c) { return sel_lt(x, c); }", "CPPMPAS_HD inline T cmin(T x, T c) { return sel_lt(c, x); }",
+     ["hardening_ntclamp"]),
+    (NTH, "      zcond = cmin(zcond, T(0.));\n      pt[kk] = pt[kk] + foeldcpm(c, pt[kk]) * zcond;",
+     "      zcond = T(0.) < zcond ? T(0.) : zcond;\n      pt[kk] = pt[kk] + foeldcpm(c, pt[kk]) * zcond;", ["hardening_ntclamp"]),
+    (NTH, "CPPMPAS_HD inline T vmin(T a, T b) { return sel_lt(b, a); }", "CPPMPAS_HD inline T vmin(T a, T b) { return sel_lt(a, b); }",
+     ["hardening_ntclamp"]),
+    # G3: the stable lookups accept s = 100 z/L down to -2 (a negative table index for s <= -1)
+    (SFCH, "  if (!(s > static_cast<T>(-1.0) && s < static_cast<T>(2147483647.0)))",
+     "  if (!(s > static_cast<T>(-2.0) && s < static_cast<T>(2147483647.0)))", ["hardening_sfclayrev"]),
+    (SFCH, "  if (!(s > static_cast<T>(-1.0) && s < static_cast<T>(2147483647.0)))",
+     "  if (!(s > static_cast<T>(-1.0) && s < static_cast<T>(1e300)))", ["hardening_sfclayrev"]),
+    # M1: the offsets in int again
+    (YSUH, OFF3, "    return i + j * sj + k * sk;", ["hardening_views"]),
+    (KSH, OFF3, "    return i + j * sj + k * sk;", ["hardening_views"]),
+    (NOAHH, OFF3, "    return i + j * sj + k * sk;", ["hardening_views"]),
+    (NOAHH, "  CPPMPAS_HD std::ptrdiff_t offset(int i, int j) const { return std::ptrdiff_t(i) + std::ptrdiff_t(j) * sj; }",
+     "  CPPMPAS_HD std::ptrdiff_t offset(int i, int j) const { return i + j * sj; }", ["hardening_views"]),
+    # M2
+    ("src/physics/mpas_atmphys_control.cpp", "  if (!c.config_frac_seaice) no(", "  if (false) no(", ["hardening_seaice"]),
+    (LSMD, "    if (!f->p) throw Error(\"driver_seaice:", "    if (false) throw Error(\"driver_seaice:", ["hardening_seaice"]),
+    # M3: refl10cm_1km interpolates past the column again
+    (MC, "      if (kp >= kte) kernel_fail(\"refl10cm_1km:", "      if (false) kernel_fail(\"refl10cm_1km:",
+     ["hardening_wsm6_1km"]),
+    # M5: the raw column routines without their level checks
+    (NTH, "  if (km < 1 || km > kMaxLevels) kernel_fail(", "  if (km < 1) kernel_fail(", ["hardening_raw"]),
+    (NTH, "  if (km < 1 || km > kMaxLevels) kernel_fail(", "  if (km > kMaxLevels) kernel_fail(", ["hardening_raw"]),
+    (YSUH, "    if (nz < 1 || nz > MaxLevels) kernel_fail(", "    if (nz < 1) kernel_fail(", ["hardening_raw"]),
+    ("src/physics/mp_wsm6.hpp", "        if (nz < 1 || nz > MaxLevels) kernel_fail(", "        if (nz < 1) kernel_fail(",
+     ["hardening_raw"]),
+    (KSH, "    if (nz < 2 || nz > kMaxLevels) kernel_fail(", "    if (nz > kMaxLevels) kernel_fail(", ["hardening_raw"]),
+    (KSH, "    if (nz < 2 || nz > kMaxLevels) kernel_fail(", "    if (nz < 1) kernel_fail(", ["hardening_raw"]),
+    (GWH, "  if (kte < 2 || kte > kMaxLevels) kernel_fail(", "  if (kte > kMaxLevels) kernel_fail(", ["hardening_raw"]),
+    (GWH, "  if (kte < 2 || kte > kMaxLevels) kernel_fail(", "  if (kte < 2) kernel_fail(", ["hardening_raw"]),
+    # M4: thin columns, Noah categories and roots, McICA layers
+    ("src/physics/mpas_atmphys_gwdo.cpp", "  if (kte < 2) throw Error(\"driver_gwdo:", "  if (false) throw Error(\"driver_gwdo:",
+     ["hardening_thin"]),
+    (MC, "  if (kte < 2) throw Error(\"driver_microphysics:", "  if (false) throw Error(\"driver_microphysics:",
+     ["hardening_thin"]),
+    ("src/core_atmosphere/atm_microphysics.cpp", "  if (kte < 3) throw Error(\"driver_microphysics:",
+     "  if (kte < 2) throw Error(\"driver_microphysics:", ["hardening_thin"]),
+    (LSMD, "  if (p.nSoilLevels < 2 || p.nSoilLevels > noah::kMaxSoilLevels)",
+     "  if (p.nSoilLevels < 1 || p.nSoilLevels > noah::kMaxSoilLevels)", ["hardening_thin"]),
+    (NDRV, "  if (a.num_soil_layers < 2 || a.num_soil_layers > noah::kMaxSoilLevels)\n    throw Error(\"module_sf_noahdrv.F lsm:",
+     "  if (a.num_soil_layers < 1 || a.num_soil_layers > noah::kMaxSoilLevels)\n    throw Error(\"module_sf_noahdrv.F lsm:",
+     ["hardening_thin"]),
+    (NDRV, "  if (a.num_soil_layers < 2 || a.num_soil_layers > noah::kMaxSoilLevels)\n    throw Error(\"module_sf_noah_seaice_drv.F:",
+     "  if (a.num_soil_layers < 1 || a.num_soil_layers > noah::kMaxSoilLevels)\n    throw Error(\"module_sf_noah_seaice_drv.F:",
+     ["hardening_thin"]),
+    (NOAHH, "    if (styp < 1 || vtyp < 1 || slop < 1) {", "    if (styp < 1 || slop < 1) {", ["hardening_noah"]),
+    (NOAHH, "      if (nroot < 1) { raise_fatal(kFatalNoahNoRootsCanres); return; }", "", ["hardening_noah"]),
+    (NOAHH, "        if (nroot < 1) raise_fatal(kFatalNoahNoRootsTransp);", "", ["hardening_noah"]),
+    (LSMD, "      if (p.isltyp(iCell) > tables.slcats)", "      if (false)", ["hardening_noah"]),
+    (LSMD, "      if (!cfg.config_sfc_snowalbedo && (p.ivgtyp(iCell) < 1 || p.ivgtyp(iCell) > tables.lucats))",
+     "      if (!cfg.config_sfc_snowalbedo && p.ivgtyp(iCell) > tables.lucats)", ["hardening_noah"]),
+    (RAD, "  if (nlay < 4) kernel_fail(\"MCICA_SUBCOL: fewer than 4 layers", "  if (false) kernel_fail(\"MCICA_SUBCOL: fewer than 4 layers",
+     ["hardening_mcica"]),
+    # L1.1 / L1.2: the size stops and the prep stages' layer checks
+    (SWC, "          if (radice < rb(5.0) || radice > rb(131.0))", "          if (radice < rb(5.0))", ["hardening_radius"]),
+    (SWC, "          if (radice < rb(5.0) || radice > rb(140.0))", "          if (radice > rb(140.5))", ["hardening_radius"]),
+    (SWC, "          if (radsno < rb(5.0) || radsno > rb(140.0))", "          if (radsno > rb(140.0))", ["hardening_radius"]),
+    (LWC, "              if (radice < rb(5.0) || radice > rb(131.0))", "              if (radice > rb(140.0))", ["hardening_radius"]),
+    (LWC, "              if (radice < rb(5.0) || radice > rb(140.0))", "              if (radice < rb(5.0))", ["hardening_radius"]),
+    (LWC, "            if (radsno < rb(5.0) || radsno > rb(140.0))", "            if (radsno < rb(5.0))", ["hardening_radius"]),
+    ("src/physics/rrtmg/rrtmg_lw_stages.hpp", "  if (nlayers < 1 || nlayers > kMcicaMaxLayers) ::cppmpas::kernel_fail(\"rrtmg_lw_prep:",
+     "  if (nlayers < 1) ::cppmpas::kernel_fail(\"rrtmg_lw_prep:", ["hardening_prep"]),
+    ("src/physics/rrtmg/rrtmg_sw_stages.hpp", "  if (nlayers < 1 || nlayers > kMcicaMaxLayers) ::cppmpas::kernel_fail(\"rrtmg_sw_prep:",
+     "  if (nlayers < 1) ::cppmpas::kernel_fail(\"rrtmg_sw_prep:", ["hardening_prep"]),
+    # M5: the LW layer limit of the port (128) not checked: the sweep arrays overrun
+    (RAD, "    if (nl > rrtmg::RRTMG_LW_SWEEP_MAX) kernel_fail(", "    if (nl > rrtmg::RRTMG_LW_SWEEP_MAX + 64) kernel_fail(",
+     ["hardening_lw_layers"]),
+    # G5 in a kernel (the unit_backend mutants above cover the host calls)
+    (V, "  if (pointCount > kMaxRbfPoints)  // both builds", "  if (pointCount > kMaxRbfPoints + 1)  // both builds",
+     ["hardening_capacity"]),
 ]
 
 MUTATIONS = [(p, o, n, [t for t in ts if t not in EQUIVALENT_ON_SC.get((p, n), [])]) for p, o, n, ts in MUTATIONS]

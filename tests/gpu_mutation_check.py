@@ -280,8 +280,37 @@ PHYSICS_MUTATIONS = [
 ]
 
 
+# --- the GPU audit's situations (tests/test_hardening.cpp, test_gpu_mvec_log.cu, hardening_columns.py, the chunked
+# radiation replay, the rdc refusal), each mutant in the device code only where the CPU build must stay right ---
+OFF3 = "    return std::ptrdiff_t(i) + std::ptrdiff_t(j) * sj + std::ptrdiff_t(k) * sk;"
+SFCG = "  if (!(s > static_cast<T>(-1.0) && s < static_cast<T>(2147483647.0)))"
+SWCOL = "      rrtmg_swrad_column(a, albedo, xlong, xtime, gmt, radt, degrad, declin, out, its + c0 + ci,"
+KP = '      if (kp >= kte) kernel_fail("refl10cm_1km: no level midpoint at or above 1 km AGL (MPAS reads zp(kte+1))");'
+HARDENING_MUTATIONS = [
+    # the libmvec log lanes' scalar fallback on the device: CUDA's log / log10 (no CPPWRF_GLIBC_MATH there)
+    (L, "#ifndef CPPWRF_GLIBC_MATH\n#define CPPWRF_GLIBC_MATH 1\n#endif",
+     "#if !defined(CPPWRF_GLIBC_MATH) && !defined(__CUDA_ARCH__)\n#define CPPWRF_GLIBC_MATH 1\n#endif", ["gpu_mvec_log"]),
+    # New Tiedtke's MIN on the device as the C++ conditional: nvcc makes it min.f64 (-0.0 below +0.0)
+    ("src/physics/cu_ntiedtke.hpp", "CPPMPAS_HD inline T sel_lt(T a, T b) {\n#if defined(__CUDA_ARCH__)",
+     "CPPMPAS_HD inline T sel_lt(T a, T b) {\n#if 0", ["gpu_hardening_ntclamp"]),
+    # the surface layer's table index unchecked on the device
+    ("src/physics/sf_sfclayrev.hpp", SFCG, dev(SFCG, "  if (false)"), ["gpu_hardening_sfclayrev"]),
+    # YSU's offsets in int on the device
+    ("src/physics/bl_ysu.hpp", OFF3, dev(OFF3, "    return i + j * sj + k * sk;"), ["gpu_hardening_views"]),
+    # refl10cm_1km past the column on the device
+    (PH + "mpas_atmphys_microphysics.cpp", KP, dev(KP, KP.replace("if (kp >= kte)", "if (false && kp >= kte)")),
+     ["gpu_hardening_wsm6_1km"]),
+    # the SW chunk's columns from 0 in every chunk (a chunk of 4096 columns, RG's one, hides it)
+    (PH + "module_ra_rrtmg.cpp", SWCOL, dev(SWCOL, SWCOL.replace("its + c0 + ci,", "its + c0 * 0 + ci,")),
+     ["gpu_radiation_RG_0_chunk7", "gpu_radiation_RG_1800_chunk7"]),
+    # a CUDA source without -rdc=true accepted
+    (B, "#if defined(__CUDACC__) && !defined(__HIP__) && !defined(__CUDACC_RDC__)", "#if 0", ["cmake_cuda_requires_rdc"]),
+]
+
+
 def mutants():
-    return [m for m in GPU_MUTATIONS] + [cpu_mutant(p) + (t,) for p, t in CPU_MUTANTS] + PHYSICS_MUTATIONS
+    return ([m for m in GPU_MUTATIONS] + [cpu_mutant(p) + (t,) for p, t in CPU_MUTANTS] + PHYSICS_MUTATIONS +
+            HARDENING_MUTATIONS)
 
 
 def build(b):

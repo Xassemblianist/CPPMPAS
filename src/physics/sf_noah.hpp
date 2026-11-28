@@ -28,6 +28,7 @@
 // config_sfc_albedo; LOCAL = .false., AOASIS = 1 and IRRIGATION_CHANNEL = 0 (sf_urban_physics = 0).
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <string>
 
 #include "core/backend.hpp"
@@ -42,12 +43,18 @@ namespace cppmpas::phys::noah {
 template <class T> struct View3 {
   T* p = nullptr;
   int sj = 0, sk = 0;
-  CPPMPAS_HD T& operator()(int i, int j, int k) const { return p[i + j * sj + k * sk]; }
+  // the offset in std::ptrdiff_t: i + j*sj + k*sk exceeds 2^31 - 1 on large meshes (e.g. 38'347'923 columns of
+  // 56 interface levels), where int arithmetic overflows (undefined behaviour on both builds)
+  CPPMPAS_HD std::ptrdiff_t offset(int i, int j, int k) const {
+    return std::ptrdiff_t(i) + std::ptrdiff_t(j) * sj + std::ptrdiff_t(k) * sk;
+  }
+  CPPMPAS_HD T& operator()(int i, int j, int k) const { return p[offset(i, j, k)]; }
 };
 template <class T> struct View2 {
   T* p = nullptr;
   int sj = 0;
-  CPPMPAS_HD T& operator()(int i, int j) const { return p[i + j * sj]; }
+  CPPMPAS_HD std::ptrdiff_t offset(int i, int j) const { return std::ptrdiff_t(i) + std::ptrdiff_t(j) * sj; }
+  CPPMPAS_HD T& operator()(int i, int j) const { return p[offset(i, j)]; }
 };
 
 // The FATAL_ERROR stops of SFLX / REDPRM / SNOPAC (module_sf_noahlsm.F) and of the ice modules
@@ -58,6 +65,12 @@ enum FatalCode {
   kFatalNoahLanduseTypes = 5,  // REDPRM (:2441)
   kFatalNoahSlopeTypes = 6,    // REDPRM (:2444)
   kFatalNoahRootLayers = 7,    // REDPRM (:2511, NROOT > NSOIL)
+  // not stops of MPAS: a category below 1 (REDPRM checks the upper bounds only and then reads its tables at that
+  // index) and a vegetated point without root layers (CANRES reads ZSOIL(NROOT) = ZSOIL(0), TRANSP divides by
+  // NROOT) have no defined result in MPAS
+  kFatalNoahCategoryBelow1 = 8,
+  kFatalNoahNoRootsCanres = 9,
+  kFatalNoahNoRootsTransp = 10,
 };
 // CPPMPAS_HD: kernel_fail (core/backend.hpp) throws the same Error on the host and ends the thread on the device
 CPPMPAS_HD inline void raise_fatal(int code) {
@@ -66,6 +79,12 @@ CPPMPAS_HD inline void raise_fatal(int code) {
                   : code == kFatalNoahLanduseTypes ? "module_sf_noahlsm.F: Warning: too many input landuse types"
                   : code == kFatalNoahSlopeTypes   ? "module_sf_noahlsm.F: Warning: too many input slope types"
                   : code == kFatalNoahRootLayers   ? "module_sf_noahlsm.F: Error: too many root layers"
+                  : code == kFatalNoahCategoryBelow1
+                      ? "module_sf_noahlsm.F: a soil, vegetation or slope category below 1 (REDPRM would read its tables out of bounds)"
+                  : code == kFatalNoahNoRootsCanres
+                      ? "module_sf_noahlsm.F: a vegetated point (SHDFAC > 0, XLAI > 0) with NROOT = 0 (CANRES reads ZSOIL(0))"
+                  : code == kFatalNoahNoRootsTransp
+                      ? "module_sf_noahlsm.F: a vegetated point (SHDFAC > 0) with NROOT = 0 (TRANSP divides by NROOT)"
                                                    : "module_sf_noahlsm.F: Noah: fatal error";
   ::cppmpas::kernel_fail(m);
 }
@@ -501,6 +520,7 @@ struct NoahKernel {
         devap(edir, etp1, smc[0], zsoil[0], shdfac, smcmax, bexp, dksat, dwsat, smcdry, smcref, smcwlt, fxexp);
       }
       if (shdfac > real(0.0)) {
+        if (nroot < 1) raise_fatal(kFatalNoahNoRootsTransp);
         transp(et, nsoil, etp1, sh2o, cmc, zsoil, shdfac, smcwlt, cmcmax, pc, cfactr, smcref, sfctmp, q2, nroot, rtdis);
         for (int k = 0; k < nsoil; ++k) ett += et[k];
         if (cmc > real(0.0)) {
@@ -1235,6 +1255,7 @@ struct NoahKernel {
     }
     const NoahTables& tb = *tables;
     // REDPRM: categories beyond the tables and more root layers than soil layers stop WRF
+    if (styp < 1 || vtyp < 1 || slop < 1) { raise_fatal(kFatalNoahCategoryBelow1); return; }
     if (styp > tb.slcats) { raise_fatal(kFatalNoahSoilTypes); return; }
     if (vtyp > tb.lucats) { raise_fatal(kFatalNoahLanduseTypes); return; }
     if (slop > tb.slpcats) { raise_fatal(kFatalNoahSlopeTypes); return; }
@@ -1481,6 +1502,7 @@ struct NoahKernel {
     real pc_val = real(0.0);
     real rcs_val, rct_val, rcq_val, rcsoil_val;
     if (cur_shdfac > real(0.0) && cur_xlai > real(0.0)) {
+      if (nroot < 1) { raise_fatal(kFatalNoahNoRootsCanres); return; }
       canres(soldn(i, j), ch(i, j), cur_sfctmp, cur_q2, sfcprs(i, j), sh2o_col, zsoil, nsoil,
              smcwlt, smcref, rsmin_val, rc_val, pc_val, nroot, q2sat(i, j), dqsdt2(i, j),
              topt, rsmax, rgl, hs, cur_xlai, rcs_val, rct_val, rcq_val, rcsoil_val, cur_emissi);

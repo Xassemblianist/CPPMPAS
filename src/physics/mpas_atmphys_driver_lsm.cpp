@@ -22,8 +22,9 @@ namespace {
 void check_lsm_config(const LsmConfig& cfg, const LsmPools& p) {
   if (cfg.config_lsm_scheme != "sf_noah")
     throw Error("config_lsm_scheme = '" + cfg.config_lsm_scheme + "': only 'sf_noah' is ported");
-  if (p.nSoilLevels < 1 || p.nSoilLevels > noah::kMaxSoilLevels)
-    throw Error("nSoilLevels = " + std::to_string(p.nSoilLevels) + ": the Noah port takes 1.." +
+  // one layer: SHFLX / SMFLX / the ice and glacial HRT read layer 2 of zsoil, stc, smc (undefined in MPAS)
+  if (p.nSoilLevels < 2 || p.nSoilLevels > noah::kMaxSoilLevels)
+    throw Error("nSoilLevels = " + std::to_string(p.nSoilLevels) + ": the Noah port takes 2.." +
                 std::to_string(noah::kMaxSoilLevels));
 }
 
@@ -377,10 +378,17 @@ void init_lsm(const LsmConfig& cfg, LsmPools& p, const std::string& table_dir, n
     int errflag = 0;
     for (int iCell = 1; iCell <= p.nCells; ++iCell) {  // :127-135
       if (p.isltyp(iCell) < 1) errflag = 1;
+      // :129 reads MAXALB(IVGTYP) with no check of the category: outside 1..LUCATS MPAS reads out of bounds
+      if (!cfg.config_sfc_snowalbedo && (p.ivgtyp(iCell) < 1 || p.ivgtyp(iCell) > tables.lucats))
+        throw Error("module_sf_noahlsm.F: lsminit: IVGTYP outside the vegetation table (MAXALB(IVGTYP) out of bounds)");
       if (!cfg.config_sfc_snowalbedo) p.snoalb(iCell) = tables.maxalb[p.ivgtyp(iCell) - 1] * 0.01;
     }
     if (errflag == 1)  // :136-138
       throw Error("module_sf_noahlsm.F: lsminit: out of range value of ISLTYP. Is this field in the input?");
+    // :140-170 read BB, MAXSMC, SATPSI(ISLTYP) with no upper check: a category above SLCATS is out of bounds
+    for (int iCell = 1; iCell <= p.nCells; ++iCell)
+      if (p.isltyp(iCell) > tables.slcats)
+        throw Error("module_sf_noahlsm.F: lsminit: ISLTYP above the soil table (BB(ISLTYP) out of bounds)");
     constexpr real blim = 5.5, hlice = 3.335e5, t0 = 273.15;  // :101-103
     for (int iCell = 1; iCell <= p.nCells; ++iCell) {  // :140-170
       const int st = p.isltyp(iCell) - 1;
@@ -453,6 +461,12 @@ void driver_lsm(int itimestep, const LsmConfig& cfg, const noah::NoahTables& tab
 void driver_seaice(const LsmConfig& cfg, LsmPools& p, const LsmVars& v, int its, int ite) {
   check_lsm_config(cfg, p);
   if (v.num_soils != p.nSoilLevels) throw Error("driver_seaice: num_soils /= nSoilLevels");
+  // seaice_from_MPAS / seaice_to_MPAS read the open-water values of the surface layer (*_sea) of every sea-ice cell
+  // (:275-281, 387-405); physics_driver fills them with config_frac_seaice = true only (false, xice_threshold 0.5,
+  // is not ported: check_physics_supported refuses it)
+  for (const FView<const real>* f : {&v.cpm_sea, &v.chs_sea, &v.chs2_sea, &v.cqs2_sea, &v.hfx_sea, &v.qfx_sea,
+                                     &v.qgh_sea, &v.qsfc_sea, &v.lh_sea})
+    if (!f->p) throw Error("driver_seaice: the surface layer's open-water arrays (*_sea) are not set");
   Local L(v);  // allocate_seaice (:36-101)
   seaice_from_MPAS(cfg, p, v, L, its, ite);  // :484
   noahdrv::SeaiceArgs a;                     // :488-516

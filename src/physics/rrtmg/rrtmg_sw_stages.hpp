@@ -181,6 +181,9 @@ CPPMPAS_HD inline void rrtmg_sw_prep(const RrtmgSwCallConfig& c, const SwColumnI
   v.iscal[0] = in.coszen > rb(0.0) ? 1 : 0;
   if (in.coszen <= rb(0.0)) return;  // the sun below the horizon
   const int num_levels = c.num_levels, nlayers = c.nlayers;
+  // the column arrays hold kMcicaMaxLayers layers (hgt): a larger nlayers writes past them (CPPMPAS's wrappers
+  // check it before; a direct call is checked here)
+  if (nlayers < 1 || nlayers > kMcicaMaxLayers) ::cppmpas::kernel_fail("rrtmg_sw_prep: nlayers outside 1..128");
   const rb xland = in.xland;
   auto qc_of = [&](int k) { return in.has_qc ? in.qc3d[k] : rb(0.0); };
   auto qi_of = [&](int k) { return in.has_qi ? in.qi3d[k] : rb(0.0); };
