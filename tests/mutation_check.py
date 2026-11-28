@@ -1778,11 +1778,11 @@ MUTATIONS += [
     (L, "  return x < 0.0 ? __builtin_nan(\"\") : ::cppwrf::glibc::log10(x);", "  return ::cppwrf::glibc::log10(x);",
      ["unit_libm"]),
     # G2: MIN(x, 0.) with the constant first (a -0.0 operand stays -0.0), and cuadjtqn's zcond clamp in that order
-    (NTH, "CPPMPAS_HD inline T cmin(T x, T c) { return x < c ? x : c; }", "CPPMPAS_HD inline T cmin(T x, T c) { return c < x ? c : x; }",
+    (NTH, "CPPMPAS_HD inline T cmin(T x, T c) { return sel_lt(x, c); }", "CPPMPAS_HD inline T cmin(T x, T c) { return sel_lt(c, x); }",
      ["hardening_ntclamp"]),
     (NTH, "      zcond = cmin(zcond, T(0.));\n      pt[kk] = pt[kk] + foeldcpm(c, pt[kk]) * zcond;",
      "      zcond = T(0.) < zcond ? T(0.) : zcond;\n      pt[kk] = pt[kk] + foeldcpm(c, pt[kk]) * zcond;", ["hardening_ntclamp"]),
-    (NTH, "CPPMPAS_HD inline T vmin(T a, T b) { return b < a ? b : a; }", "CPPMPAS_HD inline T vmin(T a, T b) { return a < b ? a : b; }",
+    (NTH, "CPPMPAS_HD inline T vmin(T a, T b) { return sel_lt(b, a); }", "CPPMPAS_HD inline T vmin(T a, T b) { return sel_lt(a, b); }",
      ["hardening_ntclamp"]),
     # G3: the stable lookups accept s = 100 z/L down to -2 (a negative table index for s <= -1)
     (SFCH, "  if (!(s > static_cast<T>(-1.0) && s < static_cast<T>(2147483647.0)))",

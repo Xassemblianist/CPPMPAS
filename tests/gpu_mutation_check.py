@@ -284,17 +284,15 @@ PHYSICS_MUTATIONS = [
 # radiation replay, the rdc refusal), each mutant in the device code only where the CPU build must stay right ---
 OFF3 = "    return std::ptrdiff_t(i) + std::ptrdiff_t(j) * sj + std::ptrdiff_t(k) * sk;"
 SFCG = "  if (!(s > static_cast<T>(-1.0) && s < static_cast<T>(2147483647.0)))"
-ZC = "      zcond = cmin(zcond, T(0.));\n      pt[kk] = pt[kk] + foeldcpm(c, pt[kk]) * zcond;"
 SWCOL = "      rrtmg_swrad_column(a, albedo, xlong, xtime, gmt, radt, degrad, declin, out, its + c0 + ci,"
 KP = '      if (kp >= kte) kernel_fail("refl10cm_1km: no level midpoint at or above 1 km AGL (MPAS reads zp(kte+1))");'
 HARDENING_MUTATIONS = [
     # the libmvec log lanes' scalar fallback on the device: CUDA's log / log10 (no CPPWRF_GLIBC_MATH there)
     (L, "#ifndef CPPWRF_GLIBC_MATH\n#define CPPWRF_GLIBC_MATH 1\n#endif",
      "#if !defined(CPPWRF_GLIBC_MATH) && !defined(__CUDA_ARCH__)\n#define CPPWRF_GLIBC_MATH 1\n#endif", ["gpu_mvec_log"]),
-    # cuadjtqn's zcond clamp through CUDA's min.f64 (-0.0 below +0.0) on the device
-    ("src/physics/cu_ntiedtke.hpp", ZC,
-     dev("      zcond = cmin(zcond, T(0.));", "      zcond = std::fmin(zcond, T(0.));") +
-     "\n      pt[kk] = pt[kk] + foeldcpm(c, pt[kk]) * zcond;", ["gpu_hardening_ntclamp"]),
+    # New Tiedtke's MIN on the device as the C++ conditional: nvcc makes it min.f64 (-0.0 below +0.0)
+    ("src/physics/cu_ntiedtke.hpp", "CPPMPAS_HD inline T sel_lt(T a, T b) {\n#if defined(__CUDA_ARCH__)",
+     "CPPMPAS_HD inline T sel_lt(T a, T b) {\n#if 0", ["gpu_hardening_ntclamp"]),
     # the surface layer's table index unchecked on the device
     ("src/physics/sf_sfclayrev.hpp", SFCG, dev(SFCG, "  if (false)"), ["gpu_hardening_sfclayrev"]),
     # YSU's offsets in int on the device

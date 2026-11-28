@@ -213,6 +213,8 @@ void check_ntclamp() {
   });
   real h[2];
   run(h);
+  std::printf("     ntclamp: kernel pt %016llx pq %016llx, host pt %016llx pq %016llx\n", (unsigned long long)bits(out(1)),
+              (unsigned long long)bits(out(2)), (unsigned long long)bits(h[0]), (unsigned long long)bits(h[1]));
   check(out(1) == 8.0 && bits(h[0]) == bits(8.0), std::string("ntclamp: cuadjtqn at 8 K leaves pt (") + kBuild + ")");
   check(bits(out(2)) == 0x8000000000000000ull && bits(h[1]) == 0x8000000000000000ull,
         std::string("ntclamp: cuadjtqn of pq = -0.0 at 8 K: zcond = min(-0.0, 0.) = +0.0, pq stays -0.0 (") + kBuild +

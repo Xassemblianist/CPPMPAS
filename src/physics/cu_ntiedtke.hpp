@@ -68,15 +68,52 @@ inline constexpr int KM = kMaxLevels + 2;
 // the MIN_EXPR(b, a) order without a site-by-site reading: their operands are not +-0 or NaN in a column (static
 // energies, mass fluxes against a positive maximum). std::fmin / std::fmax are neither: glibc's fmin(a, b) is
 // a < b ? a : b with the other operand of a NaN, and CUDA's min.f64 orders -0.0 below +0.0, so the CPU and the GPU
-// differed on a tie of signed zeros (cuadjtqn of a -0.0 humidity at a temperature where qsat underflows to 0).
+// differed on a tie of signed zeros (cuadjtqn of a -0.0 humidity at a temperature where qsat underflows to 0); and
+// on the device the C++ conditional itself is min.f64 / max.f64 (sel_lt / sel_gt below).
+// a < b ? a : b and a > b ? a : b as the comparison and the selection they are. On the device nvcc turns the
+// C++ conditional into min.f64 / max.f64 (nvcc 12.4 -arch=sm_75 with this build's flags: `x < c ? x : c` is
+// `min.f64 %fd2, %fd1, 0d0000000000000000`), whose -0.0 is below +0.0 and which return the non-NaN operand: the
+// selection is written in PTX there (setp + selp), which nvcc leaves as it is.
 template <typename T>
-CPPMPAS_HD inline T cmin(T x, T c) { return x < c ? x : c; }  // MIN(x, c) and MIN(c, x), c a constant
+CPPMPAS_HD inline T sel_lt(T a, T b) {
+#if defined(__CUDA_ARCH__)
+  if constexpr (sizeof(T) == 8) {
+    double r;
+    asm("{\n\t.reg .pred p;\n\tsetp.lt.f64 p, %1, %2;\n\tselp.f64 %0, %1, %2, p;\n\t}" : "=d"(r) : "d"(double(a)), "d"(double(b)));
+    return T(r);
+  } else {
+    float r;
+    asm("{\n\t.reg .pred p;\n\tsetp.lt.f32 p, %1, %2;\n\tselp.f32 %0, %1, %2, p;\n\t}" : "=f"(r) : "f"(float(a)), "f"(float(b)));
+    return T(r);
+  }
+#else
+  return a < b ? a : b;
+#endif
+}
 template <typename T>
-CPPMPAS_HD inline T cmax(T x, T c) { return x > c ? x : c; }  // MAX(x, c) and MAX(c, x)
+CPPMPAS_HD inline T sel_gt(T a, T b) {
+#if defined(__CUDA_ARCH__)
+  if constexpr (sizeof(T) == 8) {
+    double r;
+    asm("{\n\t.reg .pred p;\n\tsetp.gt.f64 p, %1, %2;\n\tselp.f64 %0, %1, %2, p;\n\t}" : "=d"(r) : "d"(double(a)), "d"(double(b)));
+    return T(r);
+  } else {
+    float r;
+    asm("{\n\t.reg .pred p;\n\tsetp.gt.f32 p, %1, %2;\n\tselp.f32 %0, %1, %2, p;\n\t}" : "=f"(r) : "f"(float(a)), "f"(float(b)));
+    return T(r);
+  }
+#else
+  return a > b ? a : b;
+#endif
+}
 template <typename T>
-CPPMPAS_HD inline T vmin(T a, T b) { return b < a ? b : a; }  // MIN(a, b) of two variables
+CPPMPAS_HD inline T cmin(T x, T c) { return sel_lt(x, c); }  // MIN(x, c) and MIN(c, x), c a constant
 template <typename T>
-CPPMPAS_HD inline T vmax(T a, T b) { return b > a ? b : a; }  // MAX(a, b) of two variables
+CPPMPAS_HD inline T cmax(T x, T c) { return sel_gt(x, c); }  // MAX(x, c) and MAX(c, x)
+template <typename T>
+CPPMPAS_HD inline T vmin(T a, T b) { return sel_lt(b, a); }  // MIN(a, b) of two variables
+template <typename T>
+CPPMPAS_HD inline T vmax(T a, T b) { return sel_gt(b, a); }  // MAX(a, b) of two variables
 
 // cu_ntiedtke_common (module data and cu_ntiedtke_init)
 template <typename T>
@@ -977,8 +1014,8 @@ CPPMPAS_HD inline void cuddrafn(const NtConst<T>& c, int klev, bool lddraf, ColC
       // then 0x51fa7a minsd %xmm2,%xmm0 with %xmm2 = +0
       const T zbnd1 = T(0.3) * pmfd[jk - 1];
       const T zbnd2 = -T(0.75) * pmfu[jk] - (pmfd[jk - 1] - zdmfde);
-      const T zbnd = zbnd2 > zbnd1 ? zbnd2 : zbnd1;
-      zdmfen = zdmfen > zbnd ? zdmfen : zbnd;
+      const T zbnd = sel_gt(zbnd2, zbnd1);
+      zdmfen = sel_gt(zdmfen, zbnd);
       zdmfen = cmin(zdmfen, T(0.));
     }
     pmfd[jk] = pmfd[jk - 1] + zdmfen - zdmfde;
