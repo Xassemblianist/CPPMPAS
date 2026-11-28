@@ -1948,7 +1948,7 @@ MUTATIONS += [
 # (dycore_RGCP_*: the steps, the restart and history fields, the forecast's streams) and mpas842-dbl-rgcp24-001
 # (dycore_RGCP24_*, label long): Thompson's n_microp sub-steps and nt_c / mu_c, the sf_mynn inputs, MYNN's initflag
 # and grid length, the ni tendency of physics_get_tend, the Grell-Freitas closures, and the
-# l_diags reflectivity maximum; the suite's scalars, the refused convection_permitting restart. Indices 809-820.
+# l_diags reflectivity maximum; the suite's scalars, the refused convection_permitting restart. Indices 854-865 (after main's).
 DRV = "src/physics/mpas_atmphys_driver.cpp"
 MUTATIONS += [
     (DRV, "    q.n_microp = r.n_microp;", "    q.n_microp = 1;", ["dycore_RGCP_step1_qr"]),
@@ -1982,7 +1982,7 @@ MUTATIONS += [
 # The MYNN review's findings (tests/mynn_column, tests/sfmynn_column): MPAS_to_physics' ni_p odd-tail lane of the
 # reference object code (PI:397), the kte bounds of get_pblh's and mym_length's DO WHILE loops, the index -1 of an
 # inactive constituent in physics_get_tend, init_pbl not called, unset bl_mynn pool arrays, sf_mynn with one level.
-# Indices 821-827.
+# Indices 866-872 (after main's).
 MUTATIONS += [
     (PIF, "    const bool tail_src = n >= 18 && (n & 1);", "    const bool tail_src = false;", ["mynn_column"]),
     (MYK, "    if (k > kte) {\n      kernel_fail(\"get_pblh:", "    if (false) {\n      kernel_fail(\"get_pblh:",
