@@ -27,3 +27,22 @@ The superseded RG releases used the runner's system `libmvec`. Their results dep
 Extract the releases used by the tests into separate tag directories under `CPPMPAS_REFS_DIR`, as named in
 [tests/CMakeLists.txt](../tests/CMakeLists.txt). The data repository documents the download and verification steps.
 [Fetch a reference](https://github.com/Xassemblianist/cppmpas-data#fetch-a-reference)
+
+## Google Drive mirror for GPU runtimes
+
+A Colab runtime fetches the references from a Google Drive mirror instead of the GitHub release, which can take
+hours there. The mirror is the folder `cppmpas-data/<tag>/<asset>` of the rclone remote `cppwrf-drive`
+(scope `drive.file`), with every release asset as published, split archives included.
+[tools/colab/drive_manifest.tsv](../tools/colab/drive_manifest.tsv) lists each mirrored asset with its size,
+the release's SHA-256, the MD5 that Drive reports and its Drive path.
+
+- `tools/colab/drive_fetch.sh REFS TAG ...` runs on the runtime. It copies each tag's assets from Drive (rclone, or
+  `--src` a mounted Drive folder) and checks their sizes and SHA-256 against the manifest. It joins the parts and
+  checks the archive against `<tag>.sha256`, then extracts into `REFS/<tag>/` and checks the archive's
+  `SHA256SUMS`. With `--github`, an asset that fails on Drive comes from the release.
+  Pass `REFS` as `CPPMPAS_REFS_DIR`.
+- `tools/colab/drive_mirror.py sync` brings the mirror up to date from the workstation. It reads only metadata
+  there. The cloud box downloads each missing asset, checks it against the release's SHA-256, uploads it and
+  compares Drive's MD5. Assets already on Drive with the recorded size and MD5 are skipped.
+  `plan` lists what a sync would copy. `check [--deep]` verifies every manifest row, and `--deep` re-reads the
+  Drive copies on the box.
