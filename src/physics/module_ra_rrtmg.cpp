@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 
 #include "core/error.hpp"
@@ -82,6 +83,41 @@ constexpr int kChunk = 4096;
 #else
 constexpr int kChunk = 1;
 #endif
+
+// The work buffers of a chunk of columns. The chunk only groups columns into launches: every column's arithmetic and
+// its stages' order are the same in any chunk (the views are the chunk's, column ci of n), so the bits do not depend
+// on its size. CUDA build: at most kChunk columns, or CPPMPAS_RRTMG_CHUNK (a positive integer) when it is set, for a
+// device with less memory; and when a managed allocation fails ("device memory too small": a device without
+// oversubscription, WSL, Windows), the chunk is halved and the buffers allocated again, down to one column.
+struct ChunkBuffers {
+  FStorage<rb> d, w;
+  FStorage<int> i;
+  int chunk = 0;
+};
+ChunkBuffers chunk_buffers(int ncol, std::size_t nd, std::size_t nw, std::size_t ni) {
+  int chunk = std::min(ncol, kChunk);
+#if defined(CPPMPAS_USE_CUDA)
+  if (const char* e = std::getenv("CPPMPAS_RRTMG_CHUNK")) {
+    char* end = nullptr;
+    const long v = std::strtol(e, &end, 10);
+    if (end == e || *end != '\0' || v < 1) throw Error(std::string("CPPMPAS_RRTMG_CHUNK = '") + e + "': not a positive integer");
+    if (v < chunk) chunk = int(v);
+  }
+#endif
+  for (;;) {
+    try {
+      ChunkBuffers b;
+      b.d = FStorage<rb>(nd * std::size_t(chunk));
+      b.w = FStorage<rb>(nw * std::size_t(chunk));
+      b.i = FStorage<int>(ni * std::size_t(chunk));
+      b.chunk = chunk;
+      return b;
+    } catch (const Error& e) {
+      if (chunk == 1 || std::string(e.what()).rfind("device memory too small", 0) != 0) throw;
+      chunk = (chunk + 1) / 2;
+    }
+  }
+}
 
 // The wrappers' column arrays that are not rrtmg_lw's / rrtmg_sw's inputs (LW 11613-11663, SW 10086-10130), in the
 // chunk's work buffer with the column index fastest, as the stages' views (rrtmg_lw_stages.hpp LwLayout); element
@@ -188,7 +224,9 @@ CPPMPAS_HD bool mcica_subcol(int icld, int permuteseed, int nsubcol, int nlay, S
     kernel_fail("config_radt_cld_overlap = 'exponential' has no verified port (MPAS's -O3 runs its alpha loop in "
                 "_ZGVbN2v_exp lanes, module_ra_rrtmg_lw.F:2552)");
   if (nlay > rrtmg::kMcicaMaxLayers) kernel_fail("mcica_subcol: more than 128 layers");
-  // generate_stochastic_clouds: KISS seed from the bottom four layers (LW 2441-2452)
+  // generate_stochastic_clouds: KISS seed from the bottom four layers (LW 2441-2452); with fewer layers MPAS reads
+  // pmid past its column (undefined): refused before the pressure view is read
+  if (nlay < 4) kernel_fail("MCICA_SUBCOL: fewer than 4 layers (the KISS seed reads the bottom four layers)");
   if (play[0] * 1.e2 < play[1] * 1.e2)
     kernel_fail("MCICA_SUBCOL: KISSVEC SEED GENERATOR REQUIRES PMID FROM BOTTOM FOUR LAYERS.");
   rrtmg::KissRng rng;
@@ -731,15 +769,14 @@ void rrtmg_lwrad(const RrtmgRadIn& in, PCView emiss, const RrtmgLwradOut& out, c
   });
   int nlmax = 0;
   for (int c = 0; c < ncol; ++c) nlmax = std::max(nlmax, nlay[c]);
-  const int chunk = std::min(ncol, kChunk);
   const int noz = in.o3input == 2 ? in.noznlevels : 0;
   const std::size_t nd = rrtmg::LwLayout(nlmax, false).nd, ni = rrtmg::LwLayout(nlmax, false).ni;
   const std::size_t nw = RadWorkLayout(in.kte, nlmax, noz).nd;
-  FStorage<rb> dbuf(nd * std::size_t(chunk)), wbuf(nw * std::size_t(chunk));
-  FStorage<int> ibuf(ni * std::size_t(chunk));
-  rb* const d = dbuf.data();
-  rb* const wd = wbuf.data();
-  int* const ip = ibuf.data();
+  ChunkBuffers buf = chunk_buffers(ncol, nd, nw, ni);
+  const int chunk = buf.chunk;
+  rb* const d = buf.d.data();
+  rb* const wd = buf.w.data();
+  int* const ip = buf.i.data();
   for (int c0 = 0; c0 < ncol; c0 += chunk) {
     const int n = std::min(chunk, ncol - c0);
     int nlc = 0;  // the chunk's largest number of layers: its layer dimension
@@ -810,15 +847,14 @@ void rrtmg_swrad(const RrtmgRadIn& in, PCView albedo, PCView xlong, real xtime, 
   cfg.heatfac = heatfac;
   cfg.adjflux = adjes * (scon / rrsw_scon);  // inatm_sw (SW 9909-9916)
   const RrtmgRadIn a = in;
-  const int chunk = std::min(ncol, kChunk);
   const int noz = in.o3input == 2 ? in.noznlevels : 0;
   const rrtmg::SwLayout lay(nlay);
   const RadWorkLayout wl(kte, nlay, noz);
-  FStorage<rb> dbuf(lay.nd * std::size_t(chunk)), wbuf(wl.nd * std::size_t(chunk));
-  FStorage<int> ibuf(lay.ni * std::size_t(chunk));
-  rb* const d = dbuf.data();
-  rb* const wd = wbuf.data();
-  int* const ip = ibuf.data();
+  ChunkBuffers buf = chunk_buffers(ncol, lay.nd, wl.nd, lay.ni);
+  const int chunk = buf.chunk;
+  rb* const d = buf.d.data();
+  rb* const wd = buf.w.data();
+  int* const ip = buf.i.data();
   for (int c0 = 0; c0 < ncol; c0 += chunk) {
     const int n = std::min(chunk, ncol - c0);
     const std::size_t sn = std::size_t(n);

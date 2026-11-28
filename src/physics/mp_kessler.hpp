@@ -26,6 +26,7 @@
 // No FMA, no ymm register. NINT is lround@plt (0x355e36, 0x3563d9).
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 
 #include "core/backend.hpp"
 #include "core/libm.hpp"
@@ -36,12 +37,18 @@ namespace cppmpas::phys::kessler {
 template <class T> struct View3 {
   T* p = nullptr;
   int sj = 0, sk = 0;
-  CPPMPAS_HD T& operator()(int i, int j, int k) const { return p[i + j * sj + k * sk]; }
+  // the offset in std::ptrdiff_t: i + j*sj + k*sk exceeds 2^31 - 1 on large meshes (e.g. 38'347'923 columns of
+  // 56 interface levels), where int arithmetic overflows (undefined behaviour on both builds)
+  CPPMPAS_HD std::ptrdiff_t offset(int i, int j, int k) const {
+    return std::ptrdiff_t(i) + std::ptrdiff_t(j) * sj + std::ptrdiff_t(k) * sk;
+  }
+  CPPMPAS_HD T& operator()(int i, int j, int k) const { return p[offset(i, j, k)]; }
 };
 template <class T> struct View2 {
   T* p = nullptr;
   int sj = 0;
-  CPPMPAS_HD T& operator()(int i, int j) const { return p[i + j * sj]; }
+  CPPMPAS_HD std::ptrdiff_t offset(int i, int j) const { return std::ptrdiff_t(i) + std::ptrdiff_t(j) * sj; }
+  CPPMPAS_HD T& operator()(int i, int j) const { return p[offset(i, j)]; }
 };
 CPPMPAS_HD inline double rpow(double a, double b) { return ::cppmpas::libm::pow(a, b); }
 namespace vm {
@@ -91,6 +98,10 @@ struct KesslerKernel {
     using std::min;
     using std::sqrt;
     using std::round;
+    // the column arrays hold kMaxLevels levels, and the sedimentation reads level nz - 2 (module_mp_kessler.F:
+    // 116-129, z(k+1) of k = nz-1 and below): a direct call outside 2..kMaxLevels is refused before any array is used
+    // (the wrapper checks both, atm_microphysics.cpp)
+    if (nz < 2 || nz > kMaxLevels) kernel_fail("kessler: nz outside 2..128 (the column arrays)");
 
     // Fixed-size local arrays per column (Fortran module_mp_kessler.F lines 65)
     real vt[kMaxLevels];

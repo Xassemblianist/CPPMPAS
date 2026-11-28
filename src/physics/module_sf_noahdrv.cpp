@@ -62,9 +62,10 @@ void lsm(const noah::NoahTables& tables, const LsmArgs& a) {
   refuse(a.frpcpn, "frpcpn = .true.");
   refuse(a.opt_thcnd != 1, "opt_thcnd /= 1");
   refuse(a.kts != a.kms, "kts /= kms");
-  if (a.num_soil_layers < 1 || a.num_soil_layers > noah::kMaxSoilLevels)
+  // one layer: SHFLX / SMFLX / the ice and glacial HRT read layer 2 of zsoil, stc, smc (undefined in MPAS)
+  if (a.num_soil_layers < 2 || a.num_soil_layers > noah::kMaxSoilLevels)
     throw Error("module_sf_noahdrv.F lsm: num_soil_layers = " + std::to_string(a.num_soil_layers) +
-                " is outside 1.." + std::to_string(noah::kMaxSoilLevels));
+                " is outside 2.." + std::to_string(noah::kMaxSoilLevels));
   const int ni = a.ime - a.ims + 1, nsoil = a.num_soil_layers;
   LsmLocals L(ni, nsoil);
   auto c2 = [](const real* p) { return v2<const real>(p); };
@@ -193,9 +194,10 @@ void seaice_noah(const SeaiceArgs& a) {
                 "other than 0 are not ported");
   if (a.sf_urban_physics != 0) throw Error("module_sf_noah_seaice_drv.F: sf_urban_physics /= 0 is not ported");
   if (a.kts != a.kms) throw Error("module_sf_noah_seaice_drv.F: kts /= kms is not ported");
-  if (a.num_soil_layers < 1 || a.num_soil_layers > noah::kMaxSoilLevels)
+  // one layer: SHFLX / SMFLX / the ice and glacial HRT read layer 2 of zsoil, stc, smc (undefined in MPAS)
+  if (a.num_soil_layers < 2 || a.num_soil_layers > noah::kMaxSoilLevels)
     throw Error("module_sf_noah_seaice_drv.F: num_soil_layers = " + std::to_string(a.num_soil_layers) +
-                " is outside 1.." + std::to_string(noah::kMaxSoilLevels));
+                " is outside 2.." + std::to_string(noah::kMaxSoilLevels));
   const int ni = a.ime - a.ims + 1;
   auto c2 = [](const real* p) { return v2<const real>(p); };
   auto w2 = [](real* p) { return v2<real>(p); };

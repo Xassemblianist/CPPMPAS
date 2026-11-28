@@ -219,6 +219,10 @@ void check_physics_supported(const PhysicsConfig& c) {
   if (c.config_ngw_scheme) no("config_ngw_scheme = true");
   if (c.config_urban_physics) no("config_urban_physics = true");
   if (c.config_n_microp != 1) no("config_n_microp != 1");
+  // false (xice_threshold 0.5, MG:740-744; the surface layer without its open-water call, whose values the sea-ice
+  // driver blends, mpas_atmphys_driver_seaice.F:275-281, 387-405) is not ported; namelist_table.inc refuses it on
+  // the command line too
+  if (!c.config_frac_seaice) no("config_frac_seaice = false");
   if (c.config_sounding_interval != "none") no("config_sounding_interval = '" + c.config_sounding_interval + "'");
 }
 

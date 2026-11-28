@@ -35,6 +35,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstddef>
 
 #include "core/backend.hpp"
 #include "core/libm.hpp"
@@ -46,12 +47,18 @@ namespace cppmpas::phys::ysu {
 template <class T> struct View3 {
   T* p = nullptr;
   int sj = 0, sk = 0;
-  CPPMPAS_HD T& operator()(int i, int j, int k) const { return p[i + j * sj + k * sk]; }
+  // the offset in std::ptrdiff_t: i + j*sj + k*sk exceeds 2^31 - 1 on large meshes (e.g. 38'347'923 columns of
+  // 56 interface levels), where int arithmetic overflows (undefined behaviour on both builds)
+  CPPMPAS_HD std::ptrdiff_t offset(int i, int j, int k) const {
+    return std::ptrdiff_t(i) + std::ptrdiff_t(j) * sj + std::ptrdiff_t(k) * sk;
+  }
+  CPPMPAS_HD T& operator()(int i, int j, int k) const { return p[offset(i, j, k)]; }
 };
 template <class T> struct View2 {
   T* p = nullptr;
   int sj = 0;
-  CPPMPAS_HD T& operator()(int i, int j) const { return p[i + j * sj]; }
+  CPPMPAS_HD std::ptrdiff_t offset(int i, int j) const { return std::ptrdiff_t(i) + std::ptrdiff_t(j) * sj; }
+  CPPMPAS_HD T& operator()(int i, int j) const { return p[offset(i, j)]; }
 };
 template <class T>
 CPPMPAS_HD inline T c_min(T a, T b) { return (a < b) ? a : b; }
@@ -285,6 +292,9 @@ struct YSUKernel {
 
   template <int MaxLevels = kMaxLevels>
   CPPMPAS_HD void compute(int i, int j) const {
+    // the column scratch arrays hold MaxLevels levels (zq: MaxLevels + 1): a direct call with more is refused
+    // before any of them is written (the driver checks kMaxLevels too, mpas_atmphys_pbl.cpp)
+    if (nz < 1 || nz > MaxLevels) kernel_fail("ysu: nz outside 1..MaxLevels (the column scratch arrays)");
     using std::abs;
     using std::exp;
     using std::pow;

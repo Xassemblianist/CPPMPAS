@@ -64,6 +64,13 @@
 #if defined(CPPMPAS_USE_CUDA) && !defined(CPPMPAS_GPUCC)
 #error "CPPMPAS_USE_CUDA: this source must be compiled by nvcc"
 #endif
+// and with relocatable device code (-rdc=true; CMake: CUDA_SEPARABLE_COMPILATION ON), device-linked with
+// cppmpas_cuda: kernel_fail records its message in kernel_error_slot, which only backend_cuda.cu defines. A
+// whole-program compilation gets a slot of its own that is never set (nvcc 12.4: warning #20044-D), and a
+// kernel_fail there ends the thread without an Error: a launch that failed would look like one that ran.
+#if defined(__CUDACC__) && !defined(__HIP__) && !defined(__CUDACC_RDC__)
+#error "core/backend.hpp: compile CUDA sources with -rdc=true (CUDA_SEPARABLE_COMPILATION ON) and device-link them with cppmpas_cuda"
+#endif
 
 namespace cppmpas {
 
@@ -223,9 +230,10 @@ template <class K> void serial(const K& k) { k(); }
 // Work array of a kernel, in place of MPAS's automatic arrays (std::vector on the CPU before): a[0..n-1] zero-filled
 // as std::vector<T>(n) is.
 // - CUDA build: the thread's own, capacity N (local memory). The host checks n <= N first (fits_column, the RBF's
-//   maxEdges); a larger n is a kernel_fail, which ends the thread before the array is used.
-// - CPU build: no capacity limit (the GPU's limits never restrict a CPU run): up to N elements in place, a larger n
-//   on the heap.
+//   maxEdges, the scalar count); a larger n is a kernel_fail, which ends the thread before the array is used.
+// - CPU build: up to N elements in place, a larger n on the heap. The callers' checks (fits_column, the RBF's
+//   maxEdges and pointCount, the scalar count) refuse the same inputs on both builds, so the two builds take the same
+//   inputs and give the same bits or the same Error.
 #if defined(CPPMPAS_USE_CUDA)
 template <class T, int N> struct LocalArray {
   T v[N];
@@ -276,8 +284,8 @@ template <class T, int N> struct LocalArray {
 // the capacity of the GPU's vertical work arrays: nVertLevels + 2 elements (index 0 unused, 1..nVertLevels+1)
 inline constexpr int kMaxColumn = 258;
 template <class T> using Column = LocalArray<T, kMaxColumn>;
-// CUDA build: Error naming the routine unless a column of nVertLevels levels (nVertLevels + 2 elements) fits a Column.
-// CPU build: no limit.
+// Error naming the routine unless a column of nVertLevels levels (nVertLevels + 2 elements) fits a Column: on both
+// builds (no case above 256 levels is verified on either; the GPU's work arrays end there).
 void fits_column(int nVertLevels, const char* routine);
 
 }  // namespace cppmpas

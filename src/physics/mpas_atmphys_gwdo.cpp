@@ -21,6 +21,8 @@ void driver_gwdo(int itimestep, GwdoPools& mp, const PhysicsVars& vp, int its, i
   if (its != 1) throw Error("driver_gwdo: its /= 1");
   const int kts = 1, kte = mp.nVertLevels;
   if (kte > bl_gwdo::kMaxLevels) throw Error("driver_gwdo: more than 128 levels");
+  // bl_gwdo's kbl >= kpblmin = 2 reads prsl(2) (bl_gwdo.F90:298-307): one level is past MPAS's column
+  if (kte < 2) throw Error("driver_gwdo: fewer than 2 levels (bl_gwdo reads level kpblmin = 2)");
   if (vp.ime < ite || vp.kme != kte + 1) throw Error("driver_gwdo: MPAS_to_physics has not filled its..ite");
   const GwdoArrays m = mp;
   const PhysicsVarsView v = vp.view();

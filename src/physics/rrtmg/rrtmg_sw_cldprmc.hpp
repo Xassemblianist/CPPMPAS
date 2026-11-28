@@ -59,6 +59,9 @@ CPPMPAS_HD inline void cldprmc_sw_elem(int inflag, int iceflag, int liqflag, int
           if (gice >= rb(1.0)) gice = rb(1.0) - eps;
           forwice = gice * gice;
         } else if (iceflag == 2) {
+          // MPAS v8.4.2 module_ra_rrtmg_sw.F:2258-2260: the radius is limited to 5..131 um (a larger one reads past
+          // the band's 43 entries of extice2 / ssaice2 / asyice2)
+          if (radice < rb(5.0) || radice > rb(131.0)) ::cppmpas::kernel_fail("ICE RADIUS OUT OF BOUNDS");
           rb factor = (radice - rb(2.0)) / rb(3.0);
           int index = static_cast<int>(factor);
           if (index < 1) index = 1;  // WRF stops ('RADIUS OUT OF BOUNDS') below 5 um
@@ -70,6 +73,9 @@ CPPMPAS_HD inline void cldprmc_sw_elem(int inflag, int iceflag, int liqflag, int
           gice = tables.asyice2[ib_idx * 43 + i0] + fint * (tables.asyice2[ib_idx * 43 + i0 + 1] - tables.asyice2[ib_idx * 43 + i0]);
           forwice = gice * gice;
         } else if (iceflag >= 3) {
+          // module_ra_rrtmg_sw.F:2280-2288 (2283): the generalized effective size is limited to 5..140 um (FATAL_ERROR)
+          if (radice < rb(5.0) || radice > rb(140.0))
+            ::cppmpas::kernel_fail("ERROR: ICE GENERALIZED EFFECTIVE SIZE OUT OF BOUNDS");
           rb factor = (radice - rb(2.0)) / rb(3.0);
           int index = static_cast<int>(factor);
           if (index < 1) index = 1;  // WRF stops ('RADIUS OUT OF BOUNDS') below 5 um
@@ -85,6 +91,9 @@ CPPMPAS_HD inline void cldprmc_sw_elem(int inflag, int iceflag, int liqflag, int
         }
 
         if (cswp > rb(0.0) && iceflag == 5) {
+          // module_ra_rrtmg_sw.F:2332: the snow size is limited to 5..140 um (FATAL_ERROR)
+          if (radsno < rb(5.0) || radsno > rb(140.0))
+            ::cppmpas::kernel_fail("ERROR: SNOW GENERALIZED EFFECTIVE SIZE OUT OF BOUNDS");
           rb factor = (radsno - rb(2.0)) / rb(3.0);
           int index = static_cast<int>(factor);
           if (index < 1) index = 1;  // WRF stops ('RADIUS OUT OF BOUNDS') below 5 um
