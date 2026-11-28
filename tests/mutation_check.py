@@ -979,7 +979,7 @@ MUTATIONS += [
     (X, "    if (!cfg.config_do_restart) check_stream_time(", "    if (false) check_stream_time(", ["restart_refusals_MW"]),
     (X, '    if (cfg.config_do_restart)\n      throw Error("config_do_restart = true: init',
      '    if (false)\n      throw Error("config_do_restart = true: init', ["namelist_MW"]),
-    (X, "    if (cfg.config_do_restart) {\n      rst = read_mpas_restart", "    if (false) {\n      rst = read_mpas_restart",
+    (X, "    if (cfg.config_do_restart) {\n      // the physics suite (physics_namelist_check", "    if (false) {\n      // the physics suite (physics_namelist_check",
      ["dycore_restart0_run_MW"]),
     (A, "  s.xtime = stamp;                                    // :261-262",
      '  s.xtime = stamp + "x";                              // :261-262', ["dycore_restart0_MW_xtime", "dycore_MW_step0_xtime"]),
@@ -1898,6 +1898,49 @@ def parse_selection(sel, n):
     if len(set(idx)) != len(idx):
         raise SystemExit(f"mutation_check.py: mutant selection {sel!r} repeats an index")
     return idx
+
+
+# A restart run with the mesoscale_reference physics (tests/CMakeLists.txt dycore_*RGR*: mpas842-dbl-rgr-001's
+# restart/ run): the restart stream's pool fields, the output alarms of a restart run, physics_init's restart branches
+# (below), landuse_init_forMPAS's and lsminit's restart returns, and the convection driver's initflag on a restart.
+RGR_FILES = ["diag.2026-10-12_02.00.00", "diag.2026-10-12_02.50.00", "history.2026-10-12_02.00.00",
+             "history.2026-10-12_02.50.00", "restart.2026-10-12_02.10.00"]
+
+
+def RGR(files=None):
+    """the RGR restart tests of the given files (default all), and the all-files test"""
+    return [f"dycore_RGR_restart_{f}" for f in (RGR_FILES if files is None else files)] + ["dycore_RGR_restart_all"]
+
+
+# Shown once and removed, SURVIVED as equivalent mutants on RGR: physics_init's restart branches IN:216-251 and
+# IN:301-314 taken on a restart (RG's checkpoint holds the values they would set: the radiation accumulators are 0
+# with config_bucket_update = 'none', tlag and tyear_mean equal tmn with config_deepsoiltemp_update = false), and the
+# restart initflag of the surface layer and PBL drivers (only MYNN reads it, SL:1039-1070, PB:937; physics_driver
+# now passes config_do_restart to the PBL driver, PB:814).
+MUTATIONS += [
+    (R, "    return std::find(done.begin(), done.end(), n) != done.end() ||",
+     "    return n == \"tslb\" || std::find(done.begin(), done.end(), n) != done.end() ||", RGR()),
+    (RS, "      if (rv.var_struct != \"mesh\" && rv.var_struct != \"state\") continue;",
+     "      if (rv.var_struct == \"diag_physics\") continue;", ["dycore_run_RGR_restart"]),
+    ("src/io/mpas_streams.cpp", "    for (const char* n : {\"output\", \"diagnostics\"})", "    for (const char* n : {\"output\"})",
+     ["dycore_RGR_restart_all"]),
+    ("src/physics/mpas_atmphys_landuse.cpp", "  if (cfg.config_do_restart) {  // LU:226-230", "  if (false) {  // LU:226-230",
+     RGR()),
+    ("src/physics/mpas_atmphys_driver_lsm.cpp", "  if (!cfg.config_do_restart) {                                            // :124",
+     "  if (true) {                                            // :124", RGR()),
+    ("src/physics/mpas_atmphys_convection.cpp", "  if (m.config_do_restart || itimestep > 1) initflag = 0;",
+     "  if (itimestep > 1) initflag = 0;", RGR()),
+    # qv_init read with the restart stream (killed by the profile test only: RGR's checkpoint has qv_init = 0)
+    (R, '    if ((rv.var_struct == "mesh" && n != "qv_init") || rv.var_struct == "state") continue;',
+     '    if (rv.var_struct == "mesh" || rv.var_struct == "state") continue;', ["dycore_RGR_qvinit"]),
+    # the restart run's 'output' alarm not reset at the start: a history file at 01:10
+    ("src/io/mpas_streams.cpp", "    for (const char* n : {\"output\", \"diagnostics\"})", "    for (const char* n : {\"diagnostics\"})",
+     ["dycore_RGR_restart_all"]),
+    # restart_recipe_RGR: the restart namelist may differ from its forecast's in the start time, the duration and
+    # config_do_restart only
+    ("tests/check_restart_recipe.py", 'RESTART_ALLOWED = {"config_run_duration", "config_start_time", "config_do_restart"}',
+     'RESTART_ALLOWED = {"config_run_duration", "config_do_restart"}', ["restart_recipe_RGR"]),
+]
 
 
 def ctest(build, regex):

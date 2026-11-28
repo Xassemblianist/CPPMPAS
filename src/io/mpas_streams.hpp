@@ -65,7 +65,8 @@ struct StreamManager {
 
 // The output streams of a run: every stream of the file is checked (an input stream other than 'input' and 'restart'
 // that is active with an input interval, or an unsupported attribute, is an error); scalar_names: the var_array
-// scalars' constituents of the run. The restart stream's output alarm is reset at the start (mpas_atm_core.F:667).
+// scalars' constituents of the run. The restart stream's output alarm is reset at the start (mpas_atm_core.F:667),
+// and with do_restart the 'output' and 'diagnostics' alarms too (:669-673).
 StreamManager make_stream_manager(const std::vector<StreamSpec>& specs, const ActivePackages& packages,
                                   const std::vector<std::string>& scalar_names, bool do_restart);
 

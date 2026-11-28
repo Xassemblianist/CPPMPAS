@@ -50,7 +50,7 @@ void check_stream_time(const std::string& path, const std::string& xtime, const 
 }
 
 RestartInput read_mpas_restart(const std::string& path, const std::vector<std::string>& scalars,
-                               const std::string& start_stamp) {
+                               const std::string& start_stamp, bool physics_pools) {
   RestartInput r;
   // Time is in both streams (Registry.xml:615, 668): a restart file without it is refused as the restart stream
   if (!NcFile::open_read(path).has_var("Time")) throw Error(path + ": variable Time of the restart stream is missing");
@@ -83,6 +83,11 @@ RestartInput read_mpas_restart(const std::string& path, const std::vector<std::s
     if (std::find(vr.begin(), vr.end(), n) != vr.end()) continue;
     if (std::find(read_extra.begin(), read_extra.end(), n) != read_extra.end()) continue;
     if (restart_field_not_used(n)) continue;
+    // with the physics suite, the pool fields (every var_struct but mesh and state) are read_restart_pools's
+    if (physics_pools) {
+      const RegistryVar& rv = registry_var(n);
+      if (rv.var_struct != "mesh" && rv.var_struct != "state") continue;
+    }
     throw Error(path + ": MPAS reads variable " + n + " from the restart stream; CPPMPAS has no port for it");
   }
   return r;
