@@ -1748,6 +1748,12 @@ MUTATIONS += [
     (GP, "  return DeviceProbe::error;\n}", "  return DeviceProbe::no_device;\n}", ["unit_gpu_probe"]),
     (GP, "  if (err == kCudaErrorNoDevice) return DeviceProbe::no_device;",
      "  if (err != kCudaSuccess) return DeviceProbe::no_device;", ["unit_gpu_probe"]),
+    (X, "      step_opt.config_atts = config_atts;", "      step_opt.config_atts = {};", STEP_CMP),
+    (X, "      config_atts.push_back({na.name, {na.type, v}});",
+     '      if (na.name != "config_dt") config_atts.push_back({na.name, {na.type, v}});', STEP_CMP),
+    (X, "      if (auto it = resolved.find(na.name); it != resolved.end()) v = *it->second;",
+     "      (void)resolved;", ["dycore_MW_mpas_compare", "dycore_JW_mpas_compare"]),
+    (W, '        f.put_att_int("", name, i);', '        f.put_att_double("", name, i);', STEP_CMP),
 ]
 
 MUTATIONS = [(p, o, n, [t for t in ts if t not in EQUIVALENT_ON_SC.get((p, n), [])]) for p, o, n, ts in MUTATIONS]

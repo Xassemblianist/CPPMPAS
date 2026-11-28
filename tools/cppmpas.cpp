@@ -26,7 +26,8 @@
 // run integrates N time steps of the dycore (core_atmosphere/atm_dycore.hpp: atm_core_init, then per step
 // atm_timestep, the time-level shift and atm_compute_output_diagnostics, as atm_core_run does) and writes, at the
 // start and after every step, the fields of the references' "bisection" stream (xtime, Time, u, w, rho_zz, theta_m,
-// rho, theta, pressure_p, scalars) to <outdir>/step.$Y-$M-$D_$h.$m.$s.nc, as MPAS names them; --every K writes
+// rho, theta, pressure_p, scalars) to <outdir>/step.$Y-$M-$D_$h.$m.$s.nc, as MPAS names them, with the namelist
+// options as global attributes as MPAS writes them in every stream (mpas_subdriver.F:532-557); --every K writes
 // them at the start and after every K-th step only (0: never). --write-at writes, after each listed step, the
 // --write-fields to <outdir>/state.$Y-$M-$D_$h.$m.$s.nc (to compare with MPAS's history / restart streams).
 // --streams streams.atmosphere (with the physics suite) writes MPAS's output streams instead, as atm_core_run does
@@ -368,28 +369,33 @@ int run(int argc, char** argv) {
     // (mpas_atm_core.F:625-919), with the namelist options as global attributes (mpas_subdriver.F:532-557)
     const bool streams_mode = !a.streams.empty();
     StreamManager sm;
+    // every stream MPAS writes, the reference's step ("bisection") stream included, carries the namelist options as
+    // global attributes after mesh_spec (add_stream_attributes, mpas_subdriver.F:532-557)
+    std::vector<std::pair<std::string, std::pair<std::string, std::string>>> config_atts;
+    for (const auto& na : namelist_attributes(a.namelist)) {
+      std::string v = na.value;
+      // physics_namelist_check (atm_setup_packages) runs before add_stream_attributes: the resolved schemes ('off'
+      // for config_physics_suite = 'none', mpas_atmphys_control.F:180-190)
+      const std::map<std::string, const std::string*> resolved = {
+          {"config_microp_scheme", &pr.cfg.config_microp_scheme},
+          {"config_convection_scheme", &pr.cfg.config_convection_scheme},
+          {"config_lsm_scheme", &pr.cfg.config_lsm_scheme},
+          {"config_pbl_scheme", &pr.cfg.config_pbl_scheme},
+          {"config_gwdo_scheme", &pr.cfg.config_gwdo_scheme},
+          {"config_radt_cld_scheme", &pr.cfg.config_radt_cld_scheme},
+          {"config_radt_lw_scheme", &pr.cfg.config_radt_lw_scheme},
+          {"config_radt_sw_scheme", &pr.cfg.config_radt_sw_scheme},
+          {"config_sfclayer_scheme", &pr.cfg.config_sfclayer_scheme}};
+      if (auto it = resolved.find(na.name); it != resolved.end()) v = *it->second;
+      config_atts.push_back({na.name, {na.type, v}});
+    }
     HistoryOptions stream_opt;
     stream_opt.file_id = a.file_id;
+    stream_opt.config_atts = config_atts;
     if (streams_mode) {
       if (!physics) throw Error("run --streams: only the physics suite's runs have a verified port of the streams");
       sm = make_stream_manager(read_streams_file(a.streams), in.pools.packages, in.state.scalar_names,
                                cfg.config_do_restart);
-      for (const auto& na : namelist_attributes(a.namelist)) {
-        std::string v = na.value;
-        // physics_namelist_check (atm_setup_packages) runs before add_stream_attributes: the resolved schemes
-        const std::map<std::string, const std::string*> resolved = {
-            {"config_microp_scheme", &pr.cfg.config_microp_scheme},
-            {"config_convection_scheme", &pr.cfg.config_convection_scheme},
-            {"config_lsm_scheme", &pr.cfg.config_lsm_scheme},
-            {"config_pbl_scheme", &pr.cfg.config_pbl_scheme},
-            {"config_gwdo_scheme", &pr.cfg.config_gwdo_scheme},
-            {"config_radt_cld_scheme", &pr.cfg.config_radt_cld_scheme},
-            {"config_radt_lw_scheme", &pr.cfg.config_radt_lw_scheme},
-            {"config_radt_sw_scheme", &pr.cfg.config_radt_sw_scheme},
-            {"config_sfclayer_scheme", &pr.cfg.config_sfclayer_scheme}};
-        if (auto it = resolved.find(na.name); it != resolved.end()) v = *it->second;
-        stream_opt.config_atts.push_back({na.name, {na.type, v}});
-      }
       // MG:615-645: the physics diagnostics alarm from the 'output' and 'diagnostics' streams' output intervals
       const OutputStream* out = sm.find("output");
       const OutputStream* dia = sm.find("diagnostics");
@@ -457,7 +463,9 @@ int run(int argc, char** argv) {
         if (c == ':') c = '.';
       HistoryOptions opt;
       opt.file_id = a.file_id;
-      if (step_file) write_history(in, a.pos[1] + "/step." + ts + ".nc", fields, opt);
+      HistoryOptions step_opt = opt;  // the reference's step stream: with the namelist options
+      step_opt.config_atts = config_atts;
+      if (step_file) write_history(in, a.pos[1] + "/step." + ts + ".nc", fields, step_opt);
       if (state_file) write_history(in, a.pos[1] + "/state." + ts + ".nc", a.write_fields, opt);
       if (ringing) {
         // mpas_stream_mgr_write (mpas_atm_core.F:701, 862): every active output stream whose alarm rings
