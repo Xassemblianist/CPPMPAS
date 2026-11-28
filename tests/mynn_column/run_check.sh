@@ -25,6 +25,7 @@ head -1 "$work/build_ref.log"
 [ -n "${cases// /}" ] || { echo "FAIL: no case"; exit 1; }
 rc=0
 ncase=0
+"$cpp" guards || { echo "FAIL: the mynn hard errors"; rc=1; }
 for c in $cases; do
   IFS=: read -r nc nv ns seed rs da cu rad sa dh ld <<< "$c"
   in=$work/in_$c.bin

@@ -11,6 +11,7 @@
 
 #include "core/error.hpp"
 #include "core/field.hpp"
+#include "physics/bl_mynn.hpp"
 #include "physics/mpas_atmphys_interface.hpp"
 #include "physics/mpas_atmphys_pbl.hpp"
 #include "physics/mpas_atmphys_todynamics.hpp"
@@ -86,9 +87,91 @@ void dump_all(std::FILE* o) {
 
 }  // namespace
 
+// test_mynn_column guards: the hard errors of the bl_mynn path. Each must throw an Error naming the reason. The first
+// two have no MPAS counterpart: MPAS's DO WHILE loops of get_pblh (BS:4519) and mym_length (BS:1094) read past kte
+// on a column whose top is that low.
+int guards() {
+  int fails = 0;
+  auto expect_error = [&](const char* what, const char* needle, auto run) {
+    bool ok = false;
+    try {
+      run();
+    } catch (const cppmpas::Error& e) {
+      ok = std::strstr(e.what(), needle) != nullptr;
+      if (!ok) std::printf("%s: unexpected error: %s\n", what, e.what());
+    }
+    std::printf("%s %s\n", ok ? "ok  " : "FAIL", what);
+    fails += !ok;
+  };
+  namespace my = cppmpas::phys::mynn;
+  const int kte = 4;
+  static real zw[my::KM + 1], dz[my::KM + 1], th[my::KM + 1], qke[my::KM + 1], zero[my::KM + 1], el[my::KM + 1],
+      qkw[my::KM + 1];
+  auto column = [&](real dzk) {
+    for (int k = 0; k <= my::KM; ++k) {
+      dz[k] = dzk;
+      th[k] = 300. + 0.01 * k;
+      qke[k] = 0.1;
+      zero[k] = 0.;
+      el[k] = 0.;
+      qkw[k] = 0.;
+    }
+    zw[1] = 0.;
+    for (int k = 1; k <= kte; ++k) zw[k + 1] = zw[k] + dz[k];
+    for (int k = kte + 2; k <= my::KM; ++k) zw[k] = 1.e9;  // past the column: ends the loops without the guards
+  };
+  expect_error("get_pblh with the model top at 120 m", "get_pblh", [&] {
+    column(30.);
+    real zi = 0.;
+    int kzi = 0;
+    my::get_pblh(kte, zi, th, qke, zw, dz, 1., kzi);
+  });
+  expect_error("mym_length with the PBL top above a 320 m column", "mym_length", [&] {
+    column(80.);
+    const my::Const C = ph::mynn_init_pbl();
+    my::mym_length(C, kte, 1., dz, 240000., zw, 100., 0.01, 0.01, 1e-5, zero, zero, zero, zero, qke, zero, el, 1000.,
+                   th, qkw, 1., zero, zero, zero);
+  });
+  expect_error("physics_get_tend with an inactive ni (index -1)", "needs the scalars qs and ni", [] {
+    ph::GetTendPools g;
+    g.pbl_scheme = "bl_mynn";
+    g.convection_scheme = "off";
+    g.microp_scheme = "mp_thompson";
+    g.index_qs = 5;
+    g.index_ni = -1;
+    ph::physics_get_tend(g, 1, 1, {}, {}, {}, [](const char*) {});
+  });
+  expect_error("physics_get_tend without rqsblten / rniblten", "are not set", [] {
+    ph::GetTendPools g;
+    g.pbl_scheme = "bl_mynn";
+    g.convection_scheme = "off";
+    g.microp_scheme = "mp_thompson";
+    g.index_qs = 5;
+    g.index_ni = 7;
+    ph::physics_get_tend(g, 1, 1, {}, {}, {}, [](const char*) {});
+  });
+  expect_error("driver_pbl without init_pbl", "without init_pbl", [] {
+    ph::PblPools b;
+    b.pbl_scheme = "bl_mynn";
+    b.nVertLevels = 55;
+    ph::PhysicsVars v;
+    ph::driver_pbl(1, b, v, 1, 1);
+  });
+  expect_error("driver_pbl without its pool arrays", "pool arrays are not all set", [] {
+    ph::PblPools b;
+    b.pbl_scheme = "bl_mynn";
+    b.nVertLevels = 55;
+    b.mynn_const = ph::mynn_init_pbl();
+    ph::PhysicsVars v;
+    ph::driver_pbl(1, b, v, 1, 1);
+  });
+  return fails ? 1 : 0;
+}
+
 int main(int argc, char** argv) {
+  if (argc == 2 && std::strcmp(argv[1], "guards") == 0) return guards();
   if (argc != 3) {
-    std::fprintf(stderr, "usage: test_mynn_column <in.bin> <out.bin>\n");
+    std::fprintf(stderr, "usage: test_mynn_column <in.bin> <out.bin> | guards\n");
     return 2;
   }
   try {

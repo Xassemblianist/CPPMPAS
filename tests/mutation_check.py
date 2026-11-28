@@ -1766,7 +1766,7 @@ MUTATIONS += [
 # The convection_permitting suite in cppmpas run (physics/mpas_atmphys_driver.cpp), against mpas842-dbl-rgcp-001
 # (dycore_RGCP_*: the steps, the restart and history fields, the forecast's streams) and mpas842-dbl-rgcp24-001
 # (dycore_RGCP24_*, label long): Thompson's n_microp sub-steps and nt_c / mu_c, the sf_mynn inputs, MYNN's initflag
-# and grid length, the ni tendency of physics_get_tend, the Grell-Freitas closure and shortwave input, and the
+# and grid length, the ni tendency of physics_get_tend, the Grell-Freitas closures, and the
 # l_diags reflectivity maximum; the suite's scalars. Indices 800-810.
 DRV = "src/physics/mpas_atmphys_driver.cpp"
 MUTATIONS += [
@@ -1786,12 +1786,33 @@ MUTATIONS += [
      ["dycore_RGCP_history1h_hpbl", "dycore_RGCP_history2h_u"]),
     (DRV, '    q.refl10cm_max = p.v("refl10cm_max");', '    q.refl10cm_max = p.v("refl10cm_1km_max");',
      ["dycore_RGCP_streams_restart.2026-10-12_01.10.00", "dycore_RGCP_streams_all"]),
-    (DRV, '    q.gsw = cv(p.R("gsw"));', '    q.gsw = cv(p.R("glw"));',
-     ["dycore_RGCP24_history.2026-10-13_00.00.00", "dycore_RGCP24_all"]),
+    # (gsw read from glw survives RGCP24: Grell-Freitas does not use gsw on this path, see the report)
+    (DRV, "    q.config_gfconv_closure_shallow = r.cfg.config_gfconv_closure_shallow;",
+     "    q.config_gfconv_closure_shallow = 7;", ["dycore_RGCP24_history.2026-10-13_00.00.00", "dycore_RGCP24_all"]),
     # the scalars of the suite (core/namelist.cpp active_scalars) and the dycore's check of them
     (NL, '  if (mynn || thompson) v.push_back("ni");', '  if (thompson) v.push_back("ni");', ["unit_namelist"]),
     ("src/core_atmosphere/atm_dycore.cpp", '  const bool suite = c.config_physics_suite == "mesoscale_reference" || cp;',
      '  const bool suite = c.config_physics_suite == "mesoscale_reference";', ["unit_dycore"]),
+]
+
+# The MYNN review's findings (tests/mynn_column, tests/sfmynn_column): MPAS_to_physics' ni_p odd-tail lane of the
+# reference object code (PI:397), the kte bounds of get_pblh's and mym_length's DO WHILE loops, the index -1 of an
+# inactive constituent in physics_get_tend, init_pbl not called, unset bl_mynn pool arrays, sf_mynn with one level.
+# Indices 811-817.
+MUTATIONS += [
+    (PIF, "    const bool tail_src = n >= 18 && (n & 1);", "    const bool tail_src = false;", ["mynn_column"]),
+    (MYK, "    if (k > kte) {\n      kernel_fail(\"get_pblh:", "    if (false) {\n      kernel_fail(\"get_pblh:",
+     ["mynn_column"]),
+    (MYK, "    if (k > kte) {\n      kernel_fail(\"mym_length:", "    if (false) {\n      kernel_fail(\"mym_length:",
+     ["mynn_column"]),
+    (PTD, "  if (pbl == \"bl_mynn\" && (mp.index_qs <= 0 || mp.index_ni <= 0))",
+     "  if (pbl == \"bl_mynn\" && (!mp.index_qs || !mp.index_ni))", ["mynn_column"]),
+    (PBD, "  if (!(mp.mynn_const.cp > 0.) || !(mp.mynn_const.grav > 0.) || !(mp.mynn_const.r_d > 0.))",
+     "  if (false)", ["mynn_column"]),
+    (PBD, "      if (!q) throw Error(\"driver_pbl: the bl_mynn pool arrays are not all set\");",
+     "      (void)q;", ["mynn_column"]),
+    ("src/physics/mpas_atmphys_sfclayer.cpp", "  if (mynn && vp.kme < 3)", "  if (mynn && vp.kme < 2)",
+     ["sfmynn_column"]),
 ]
 
 MUTATIONS = [(p, o, n, [t for t in ts if t not in EQUIVALENT_ON_SC.get((p, n), [])]) for p, o, n, ts in MUTATIONS]

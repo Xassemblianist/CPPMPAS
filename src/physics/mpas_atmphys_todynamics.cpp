@@ -49,8 +49,10 @@ void physics_get_tend(GetTendPools& mp, int rk_step, int dynamics_substep, FView
     throw Error("physics_get_tend: config_pbl_scheme = '" + pbl + "' has no verified port");
   if (pbl == "bl_mynn" && mp.microp_scheme == "mp_thompson_aerosols")  // TD:414-422
     throw Error("physics_get_tend: bl_mynn with mp_thompson_aerosols (nc / nifa / nwfa tendencies) has no verified port");
-  if (pbl == "bl_mynn" && (!mp.index_qs || !mp.index_ni))
+  if (pbl == "bl_mynn" && (mp.index_qs <= 0 || mp.index_ni <= 0))  // -1: an inactive constituent
     throw Error("physics_get_tend: bl_mynn needs the scalars qs and ni (TD:409-410)");
+  if (pbl == "bl_mynn" && (!mp.rqsblten.p || !mp.rniblten.p))
+    throw Error("physics_get_tend: bl_mynn's rqsblten / rniblten (tend_physics, bl_mynn_in) are not set");
   const GetTendArrays m = mp;
   const int nV = m.nVertLevels, nCells = m.nCells, nEdges = m.nEdges;
   const int nCellsSolve = m.nCellsSolve, nEdgesSolve = m.nEdgesSolve;

@@ -369,7 +369,9 @@ CPPMPAS_HD inline void sf_mynn_column(const SfMynnColumnIn& in, SfMynnColumnInOu
       o.regime = real(2.);
     li_etal_2010(o.zol, o.br, za / zntstoch, zratio);  // itimestep <= 1
     o.zol = zolrib(o.br, za, zntstoch, z_t, o.gz1oz0, gz1ozt, o.zol, tb);
-    o.zol = c_max(o.zol, real(0.0));
+    // SM:591 max(zol, 0.0): in the reference object code (both copies of the loop) maxsd has +0.0 as the
+    // destination and zol as the source, so zol = -0.0 (and NaN) is kept: 0 > zol ? 0 : zol
+    o.zol = c_max(real(0.0), o.zol);
     o.zol = c_min(o.zol, real(20.));
     const real zolzt = o.zol * z_t / za;
     const real zolz0 = o.zol * zntstoch / za;

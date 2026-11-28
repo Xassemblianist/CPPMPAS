@@ -197,6 +197,9 @@ def make(path, nC, nV, nsteps, seed, restart, dacyc, cu, radt, scaleaware, dheat
             sc[i, 2, 0] = -1e-7
             sc[i, 4, :] = -0.0
             sc[i, 6, 6] = -1.0
+        if i in (0, nC - 1):  # ni = -0.0 in the first cell and the last (an odd last cell of 18 or more is the
+            sc[i, 3, 6] = -0.0  # reference's scalar maxsd with +0.0 as the destination, PI:397: it stays -0.0)
+            sc[i, nV - 2, 6] = -0.0
         th = T * (P0 / p) ** (RGAS / CP)
         qvp = np.maximum(qv, 0.0)
         thm = th * (1.0 + RV / RGAS * qvp)
