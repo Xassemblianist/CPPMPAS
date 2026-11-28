@@ -1754,6 +1754,12 @@ MUTATIONS += [
     (X, "      if (auto it = resolved.find(na.name); it != resolved.end()) v = *it->second;",
      "      (void)resolved;", ["dycore_MW_mpas_compare", "dycore_JW_mpas_compare"]),
     (W, '        f.put_att_int("", name, i);', '        f.put_att_double("", name, i);', STEP_CMP),
+    # the top-level CMakeLists.txt's refusal of flags that change results (tests/check_fp_flags.py configures with each)
+    ("CMakeLists.txt", "|-fno-signed-zeros|", "|", ["cmake_fp_flags"]),
+    ("CMakeLists.txt", 'set(_cppmpas_sep "[ \\t,;:=>\\"\']")', 'set(_cppmpas_sep "")', ["cmake_fp_flags"]),
+    ("CMakeLists.txt", 'cppmpas_check_fp_directory("${CMAKE_SOURCE_DIR}")', '# cppmpas_check_fp_directory', ["cmake_fp_flags"]),
+    ("CMakeLists.txt", '    if(_v MATCHES "^CMAKE_[A-Za-z]+_FLAGS(_[A-Za-z0-9_]+)?$" OR',
+     '    if(_v MATCHES "^CMAKE_[A-Za-z]+_FLAGS(_RELEASE)?$" OR', ["cmake_fp_flags"]),
 ]
 
 MUTATIONS = [(p, o, n, [t for t in ts if t not in EQUIVALENT_ON_SC.get((p, n), [])]) for p, o, n, ts in MUTATIONS]
