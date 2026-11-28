@@ -1810,6 +1810,46 @@ def parse_selection(sel, n):
     return idx
 
 
+# A restart run with the mesoscale_reference physics (tests/CMakeLists.txt dycore_*RGR*: mpas842-dbl-rgr-001's
+# restart/ run): the restart stream's pool fields, the output alarms of a restart run, physics_init's restart branches
+# (IN:216-251, IN:301-314), landuse_init_forMPAS's and lsminit's restart returns, and the initflag of the surface
+# layer, PBL and convection drivers on a restart.
+RGR_FILES = ["diag.2026-10-12_02.00.00", "diag.2026-10-12_02.50.00", "history.2026-10-12_02.00.00",
+             "history.2026-10-12_02.50.00", "restart.2026-10-12_02.10.00"]
+
+
+def RGR(files=None):
+    """the RGR restart tests of the given files (default all), and the all-files test"""
+    return [f"dycore_RGR_restart_{f}" for f in (RGR_FILES if files is None else files)] + ["dycore_RGR_restart_all"]
+
+
+DRV = "src/physics/mpas_atmphys_driver.cpp"
+MUTATIONS += [
+    (R, "    return std::find(done.begin(), done.end(), n) != done.end() ||",
+     "    return n == \"tslb\" || std::find(done.begin(), done.end(), n) != done.end() ||", RGR()),
+    (RS, "      if (rv.var_struct != \"mesh\" && rv.var_struct != \"state\") continue;",
+     "      if (rv.var_struct == \"diag_physics\") continue;", ["dycore_run_RGR_restart"]),
+    ("src/io/mpas_streams.cpp", "    for (const char* n : {\"output\", \"diagnostics\"})", "    for (const char* n : {\"output\"})",
+     ["dycore_RGR_restart_all"]),
+    (DRV, "  if (!c.config_do_restart) {  // IN:216-251", "  if (true) {  // IN:216-251", RGR()),
+    (DRV, "  if (!c.config_do_restart) {  // IN:301-314", "  if (true) {  // IN:301-314", RGR()),
+    ("src/physics/mpas_atmphys_landuse.cpp", "  if (cfg.config_do_restart) {  // LU:226-230", "  if (false) {  // LU:226-230",
+     RGR()),
+    ("src/physics/mpas_atmphys_driver_lsm.cpp", "  if (!cfg.config_do_restart) {                                            // :124",
+     "  if (true) {                                            // :124", RGR()),
+    ("src/physics/mpas_atmphys_sfclayer.cpp", "  if (m.config_do_restart || itimestep > 1) initflag = 0;",
+     "  if (itimestep > 1) initflag = 0;", RGR()),
+    ("src/physics/mpas_atmphys_pbl.cpp", "  if (m.config_do_restart || itimestep > 1) initflag = 0;",
+     "  if (itimestep > 1) initflag = 0;", RGR()),
+    ("src/physics/mpas_atmphys_convection.cpp", "  if (m.config_do_restart || itimestep > 1) initflag = 0;",
+     "  if (itimestep > 1) initflag = 0;", RGR()),
+    # ref_recipes: the restart namelist may differ from its forecast's in the start time, the duration and
+    # config_do_restart only (needs every reference of the test's list)
+    ("tests/check_ref_recipes.py", 'RESTART_ALLOWED = {"config_run_duration", "config_start_time", "config_do_restart"}',
+     'RESTART_ALLOWED = {"config_run_duration", "config_do_restart"}', ["ref_recipes"]),
+]
+
+
 def ctest(build, regex):
     """CTest on the tests the regex selects, one at a time (-j 1 overrides CTEST_PARALLEL_LEVEL)"""
     return subprocess.run(["ctest", "--test-dir", str(build), "-j", "1", "-R", regex, "-FA", "inputs"],

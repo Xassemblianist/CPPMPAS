@@ -267,7 +267,6 @@ OutputStream* StreamManager::find(const std::string& name) {
 
 StreamManager make_stream_manager(const std::vector<StreamSpec>& specs, const ActivePackages& packages,
                                   const std::vector<std::string>& scalar_names, bool do_restart) {
-  if (do_restart) throw Error("streams: a restart run's streams have no verified port");
   StreamManager sm;
   std::set<std::string> names;
   for (const auto& s : specs) {
@@ -320,6 +319,12 @@ StreamManager make_stream_manager(const std::vector<StreamSpec>& specs, const Ac
   }
   // mpas_atm_core.F:667: no restart file at the initial time
   if (OutputStream* r = sm.find("restart")) r->reset(0);
+  // mpas_atm_core.F:669-673: a restart run writes no history or diagnostics at its start either (the files of the
+  // run it continues). The alarms start at the clock's start, the restart time (reference_time 'initial_time',
+  // xml_stream_parser.c:1291-1296), so they first ring one interval after it.
+  if (do_restart)
+    for (const char* n : {"output", "diagnostics"})
+      if (OutputStream* o = sm.find(n)) o->reset(0);
   return sm;
 }
 

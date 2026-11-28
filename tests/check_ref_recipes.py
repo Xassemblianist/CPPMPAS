@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The references the tests mix are one recipe: tests run with a reference's steps/namelist.atmosphere and compare
 with the files of its forecast/ run, and the SC long tests take the 30-min output.nc of mpas842-dbl-sc-002 with the
-init file and namelists of mpas842-dbl-sc-001. This holds only if, in every reference, the two namelists differ in
+init file and namelists of mpas842-dbl-sc-001; the RGR restart test runs from the forecast checkpoint of
+mpas842-dbl-rgr-001, whose forecast must be RG's. This holds only if, in every reference, the two namelists differ in
 config_run_duration alone (the steps run is the forecast run cut short), and if sc-001 and sc-002 have the same
 namelists, byte for byte, and the same init file (tools/mpas_compare.py: every variable and attribute, the random
 file_id init_atmosphere writes excepted).
@@ -20,8 +21,14 @@ import mpas_compare  # noqa: E402
 RUNS = ["mpas842-dbl-mw-001/MW", "mpas842-dbl-sc-001/SC", "mpas842-dbl-jw-001/JW", "mpas842-dbl-rg-004/RG",
         "mpas842-dbl-rg24-001/RG24"]
 SAME = [("mpas842-dbl-sc-001/SC", "mpas842-dbl-sc-002/SC",
-         ["init/supercell_init.nc", "steps/namelist.atmosphere", "forecast/namelist.atmosphere"])]
+         ["init/supercell_init.nc", "steps/namelist.atmosphere", "forecast/namelist.atmosphere"]),
+        # RGR's forecast is RG's (its restart run starts from that forecast's 01:10 checkpoint)
+        ("mpas842-dbl-rg-004/RG", "mpas842-dbl-rgr-001/RGR",
+         ["init/x1.10242.init.nc", "forecast/namelist.atmosphere", "forecast/streams.atmosphere"])]
 ALLOWED = {"config_run_duration"}
+# a restart run's namelist against its forecast's: the start time, the duration and config_do_restart only
+RESTARTS = ["mpas842-dbl-rgr-001/RGR"]
+RESTART_ALLOWED = {"config_run_duration", "config_start_time", "config_do_restart"}
 
 
 def options(path):
@@ -53,6 +60,20 @@ def main():
             bad += 1
         else:
             print(f"ok   {r}: steps and forecast namelists differ only in {[k[1] for k in diff]}")
+    for r in RESTARTS:
+        a, b = refs / r / "forecast" / "namelist.atmosphere", refs / r / "restart" / "namelist.atmosphere"
+        if not a.is_file() or not b.is_file():
+            print(f"FAIL {r}: {a} or {b} is missing")
+            bad += 1
+            continue
+        oa, ob = options(a), options(b)
+        diff = sorted(k for k in oa.keys() | ob.keys() if oa.get(k) != ob.get(k))
+        other = [k for k in diff if k[1] not in RESTART_ALLOWED]
+        if other or not oa or ("restart", "config_do_restart") not in diff:
+            print(f"FAIL {r}: forecast and restart namelists differ in {other or diff}")
+            bad += 1
+        else:
+            print(f"ok   {r}: forecast and restart namelists differ only in {[k[1] for k in diff]}")
     for x, y, files in SAME:
         for f in files:
             p, q = refs / x / f, refs / y / f

@@ -22,7 +22,10 @@
 // compatibility checks, atm_mpas_init_block, xtime) on an init file and writes the
 // given fields as MPAS writes them to a history / restart file (global order, Registry layout).
 // With config_do_restart = true in the namelist, run's <init> is a restart file, read as MPAS reads its restart stream
-// at config_start_time (io/mpas_restart.hpp), and the run continues from it.
+// at config_start_time (io/mpas_restart.hpp), and the run continues from it. With the physics suite the restart
+// stream's physics fields are read too (io/mpas_reader.hpp read_restart_pools), physics_init takes its restart
+// branches, and every clock alarm (radiation, greenness, physics diagnostics, the output streams) starts at the
+// restart time; history and diagnostics are not written at the start (mpas_atm_core.F:669-673).
 // run integrates N time steps of the dycore (core_atmosphere/atm_dycore.hpp: atm_core_init, then per step
 // atm_timestep, the time-level shift and atm_compute_output_diagnostics, as atm_core_run does) and writes, at the
 // start and after every step, the fields of the references' "bisection" stream (xtime, Time, u, w, rho_zz, theta_m,
@@ -287,7 +290,11 @@ int run(int argc, char** argv) {
     // config_do_restart: <init> is the restart file, read as the restart stream (io/mpas_restart.hpp)
     RestartInput rst;
     if (cfg.config_do_restart) {
-      rst = read_mpas_restart(a.pos[0], a.scalars, atm_start_time_stamp(cfg));
+      // the physics suite (physics_namelist_check, atm_setup_packages) decides who reads the pool fields
+      std::vector<std::string> unused_log;  // the messages come from the call below (pr.cfg)
+      const bool with_physics =
+          phys::read_physics_config(a.namelist, cfg, unused_log).config_physics_suite != "none";
+      rst = read_mpas_restart(a.pos[0], a.scalars, atm_start_time_stamp(cfg), with_physics);
       for (const auto& w : rst.in.warnings) std::cerr << "MPAS warning: " << w << "\n";
     } else {
       rst.in = load(a, a.pos[0]);
@@ -300,7 +307,6 @@ int run(int argc, char** argv) {
     pr.cfg = phys::read_physics_config(a.namelist, cfg, log);
     const bool physics = pr.cfg.config_physics_suite != "none";
     if (physics) {
-      if (cfg.config_do_restart) throw Error("run: a restart with the physics suite has no verified port");
       if (a.tables.empty() || a.rrtmg.empty()) throw Error("run: the physics suite needs --tables and --rrtmg");
       phys::check_physics_supported(pr.cfg);
       const std::map<std::string, int> dims = {{"nLags", pr.cfg.input_soil_temperature_lag},
@@ -311,7 +317,13 @@ int run(int argc, char** argv) {
                                                {"nSoilLevels", pr.cfg.num_soil_layers},
                                                {"nIsoLevelsT", 5},    // Registry_isobaric.xml:6-10
                                                {"nIsoLevelsZ", 13}};
-      read_input_pools(a.pos[0], in, phys::physics_packages(pr.cfg), dims);
+      // a restart run reads the restart stream's pool fields instead (mpas_atm_core.F:129-149); ru_p, rw_p,
+      // rt_diabatic_tend and rthdynten are the dycore's own arrays (restart_dycore_fields)
+      if (cfg.config_do_restart)
+        read_restart_pools(a.pos[0], in, phys::physics_packages(pr.cfg), dims,
+                           {"ru_p", "rw_p", "rt_diabatic_tend", "rthdynten"});
+      else
+        read_input_pools(a.pos[0], in, phys::physics_packages(pr.cfg), dims);
       for (const auto& w : in.warnings) std::cerr << "MPAS warning: " << w << "\n";
       pr.table_dir = a.tables;
       pr.rrtmg_lw_tables = a.rrtmg + "/rrtmg_lw_tables.bin";

@@ -27,6 +27,11 @@ glibc's vector `log` uses `rcpps`, whose result differs between the two vendors.
   mutation checks.
 - **RG.** Both builds match `mpas842-dbl-rg-004` for the checked fields at steps 0 through 10 and all
   702 variables in the 5 forecast stream files.
+- **RGR (restart with physics).** A restart run with `mesoscale_reference` physics from the 01:10 checkpoint
+  matches `mpas842-dbl-rgr-001` in all 712 variables of its 5 stream files (history and diagnostics at 02:00 and
+  02:50, restart at 02:10) on the CPU. MPAS's own restarted run differs from its uninterrupted forecast at 02:00
+  (45 of 99 history variables). One known cause: its alarms start again at the restart time, so the radiation
+  runs at 01:10 and 01:40 instead of 01:30.
 - **Idealized cases.** MW (mountain wave), JW (Jablonowski–Williamson baroclinic wave) and SC (supercell with
   Kessler microphysics) match on the CPU and GPU for the 57 initdump fields per case, the tested initial
   restart-stream fields, and the checked fields at steps 0 through 10.
@@ -37,7 +42,7 @@ glibc's vector `log` uses `rcpps`, whose result differs between the two vendors.
 - **CPU suites.** With the Intel `libmvec` preload, `ctest -LE long` reports 2425/2425 and
   `ctest -L long` reports 306/306. The CPU build skips the GPU tests.
 
-Open work includes restart runs with physics, the `convection_permitting` suite, variable-resolution meshes,
+Open work includes the `convection_permitting` suite, variable-resolution meshes,
 MPI and multi-GPU runs, and performance work.
 
 ## Build and tests

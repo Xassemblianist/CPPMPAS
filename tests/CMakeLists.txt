@@ -159,7 +159,7 @@ add_test(NAME unit_libm COMMAND test_libm 2000000)
 # and of the namelist of the MW restart run (tests/namelists/MW_restart: the MW forecast namelist restarted from the
 # reference's restart file at 00:30:06, verified by the dycore_restart_MW_* tests)
 add_test(NAME namelist_table_current COMMAND ${CMAKE_COMMAND} -E env sh -c
-  "${Python3_EXECUTABLE} -I '${CMAKE_SOURCE_DIR}/tools/gen_namelist_table.py' '${CPPMPAS_MPAS_REGISTRY}' ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/forecast/namelist.atmosphere '${CMAKE_SOURCE_DIR}/tests/namelists/MW_restart/namelist.atmosphere' ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg-004/RG/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg-004/RG/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg24-001/RG24/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg24-001/RG24/forecast/namelist.atmosphere > '${W}/namelist_table.inc' && ${CMAKE_COMMAND} -E compare_files '${W}/namelist_table.inc' '${CMAKE_SOURCE_DIR}/src/core/namelist_table.inc'")
+  "${Python3_EXECUTABLE} -I '${CMAKE_SOURCE_DIR}/tools/gen_namelist_table.py' '${CPPMPAS_MPAS_REGISTRY}' ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/forecast/namelist.atmosphere '${CMAKE_SOURCE_DIR}/tests/namelists/MW_restart/namelist.atmosphere' ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg-004/RG/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg-004/RG/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg24-001/RG24/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg24-001/RG24/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rgr-001/RGR/restart/namelist.atmosphere > '${W}/namelist_table.inc' && ${CMAKE_COMMAND} -E compare_files '${W}/namelist_table.inc' '${CMAKE_SOURCE_DIR}/src/core/namelist_table.inc'")
 set_tests_properties(namelist_table_current PROPERTIES FIXTURES_REQUIRED work_dir)
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -620,6 +620,27 @@ endforeach()
 add_test(NAME dycore_RG_streams_all COMMAND ${PY} ${T}/streams_compare.py ${CPPMPAS_MPAS_COMPARE}
   ${REF_RG}/forecast ${W}/dycore_RG_streams ${W}/dycore_RG_streams.json 5 702)
 set_tests_properties(dycore_RG_streams_all PROPERTIES FIXTURES_REQUIRED dycore_RG_streams)
+
+# RGR: a restart run with the mesoscale_reference physics (config_do_restart = true), as mpas842-dbl-rgr-001's
+# restart/ run writes it: RG's forecast (the same as rg-004's) restarted from its 01:10 checkpoint, to 02:50, with
+# history and diagnostics every 50 min (their alarms, like the radiation and physics-diagnostics alarms, start at the
+# restart time: 02:00 and 02:50) and a checkpoint at 02:10. The run reads the restart stream's physics fields
+# (io/mpas_reader.hpp read_restart_pools) and takes physics_init's restart branches (physics/mpas_atmphys_driver.cpp).
+# Every file of the reference's restart/ directory, every variable and attribute, and restart_timestamp (about 150 s).
+set(REF_RGR ${CPPMPAS_REFS_DIR}/mpas842-dbl-rgr-001/RGR)
+set(RGR_STREAM_FILES diag.2026-10-12_02.00.00 diag.2026-10-12_02.50.00 history.2026-10-12_02.00.00
+  history.2026-10-12_02.50.00 restart.2026-10-12_02.10.00)
+add_test(NAME dycore_run_RGR_restart COMMAND ${CMAKE_COMMAND} -E env sh -c
+  "rm -rf '${W}/dycore_RGR' && mkdir -p '${W}/dycore_RGR' && '${EXE}' run '${REF_RGR}/forecast/restart.2026-10-12_01.10.00.nc' '${W}/dycore_RGR' --namelist '${REF_RGR}/restart/namelist.atmosphere' --streams '${REF_RGR}/restart/streams.atmosphere' --scalars qv,qc,qr,qi,qs,qg --every 0 --tables '${CPPMPAS_MPAS_TABLES}' --rrtmg '${CPPMPAS_CPPWRF_RRTMG}'")
+set_tests_properties(dycore_run_RGR_restart PROPERTIES FIXTURES_SETUP dycore_RGR TIMEOUT 1800)
+foreach(file IN LISTS RGR_STREAM_FILES)
+  add_test(NAME dycore_RGR_restart_${file} COMMAND ${PY} ${CPPMPAS_MPAS_COMPARE}
+    ${REF_RGR}/restart/${file}.nc ${W}/dycore_RGR/${file}.nc)
+  set_tests_properties(dycore_RGR_restart_${file} PROPERTIES FIXTURES_REQUIRED dycore_RGR)
+endforeach()
+add_test(NAME dycore_RGR_restart_all COMMAND ${PY} ${T}/streams_compare.py ${CPPMPAS_MPAS_COMPARE}
+  ${REF_RGR}/restart ${W}/dycore_RGR ${W}/dycore_RGR.json 5 712)
+set_tests_properties(dycore_RGR_restart_all PROPERTIES FIXTURES_REQUIRED dycore_RGR)
 
 # RG's radiation calls replayed (tests/radiation_replay): cppmpas run of RG's steps configuration for 4 steps with
 # CPPMPAS_RADIATION_DUMP set writes the radiation calls of steps 1 and 4 (00:00 and 00:30: the inputs and the outputs
