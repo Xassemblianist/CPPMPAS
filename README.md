@@ -59,8 +59,9 @@ tests run as `compare_unit` and `compare_mutants`. `unit_libm` needs glibc 2.41 
 
 The workflow [`cpu_suite`](.github/workflows/cpu_suite.yml) runs the CPU suite in the Debian 13 image of the
 references (glibc 2.41, gcc and gfortran 14.2). It builds the Release CPU build and the Intel `libmvec` preload, and
-fetches every input from cppmpas-data. Each input is checked against its SHA-256 in [ci/data.tsv](ci/data.tsv) and
-kept in the Actions cache. The tests are split into parallel jobs ([ci/plan.py](ci/plan.py)), and ctest runs under the
+fetches every input from cppmpas-data. Each input is checked against its SHA-256 in [ci/data.tsv](ci/data.tsv).
+Only the small, often used inputs are kept in the Actions cache; a test job downloads every input the cache does not
+give from its release, so an evicted cache entry never fails a run. The tests are split into parallel jobs ([ci/plan.py](ci/plan.py)), and ctest runs under the
 preload:
 
 ```bash
