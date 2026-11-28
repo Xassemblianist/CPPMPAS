@@ -6,7 +6,7 @@
 # commit out (ci/fetch_bundle.sh). The asset is deleted again whatever the outcome (also on an error or Ctrl-C).
 #
 #   tools/ci/ci_submit.sh [COMMIT] [--labels short|long|all] [--no-wait] [--hours H] [--out DIR]
-#       [--workflow-ref REF] [--max-parallel N] [--cache-salt S]
+#       [--workflow-ref REF] [--max-parallel N] [--cache-salt S] [--cases REGEX]
 #
 # COMMIT: default HEAD. --labels: the tests to run (default all; short: without the label long). The script waits
 # for the run (at most --hours, default 3), downloads its summary (the artifact "summary") to --out (default
@@ -20,18 +20,20 @@
 # project run: its share is 20 runners). --cache-salt: appended to every cache key of the run, so that nothing
 # restores (a run that must not need the cache); afterwards delete the entries it saved: `gh cache delete <key>
 # -R Xassemblianist/CPPMPAS` for every key of `gh cache list -R Xassemblianist/CPPMPAS --key cpu-suite-` with S in it.
+# --cases: a Python regular expression; only the tests of --labels whose name it matches (re.search), with the
+# fixture setups they need (a branch runs the cases it touches; the full suite runs on the merged main).
 # Needs gh, logged in with the rights to start CPPMPAS's workflows and upload to cppmpas-data's releases.
 set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 GH_REPO_SRC=${CPPMPAS_CI_REPO:-Xassemblianist/CPPMPAS}
 DATA=Xassemblianist/cppmpas-data
-COMMIT=HEAD LABELS=all WAIT=1 HOURS=3 OUT= WREF=main MAXP=10 SALT=
+CASES= COMMIT=HEAD LABELS=all WAIT=1 HOURS=3 OUT= WREF=main MAXP=10 SALT=
 while [ $# -gt 0 ]; do
   case $1 in
     --labels) LABELS=$2; shift 2 ;; --no-wait) WAIT=0; shift ;; --hours) HOURS=$2; shift 2 ;;
     --out) OUT=$2; shift 2 ;; --workflow-ref) WREF=$2; shift 2 ;; --max-parallel) MAXP=$2; shift 2 ;;
-    --cache-salt) SALT=$2; shift 2 ;;
-    -*) sed -n '3,24p' "$0"; exit 2 ;;
+    --cache-salt) SALT=$2; shift 2 ;; --cases) CASES=$2; shift 2 ;;
+    -*) sed -n '3,26p' "$0"; exit 2 ;;
     *) COMMIT=$1; shift ;;
   esac
 done
@@ -77,7 +79,7 @@ if ! git -C "$REPO" merge-base --is-ancestor "$SHA" "$BASE"; then
 fi
 gh workflow run cpu_suite.yml -R "$GH_REPO_SRC" --ref "$WREF" -f ref="$SHA" -f labels="$LABELS" \
   -f bundle="${BUNDLE:-}" -f bundle_sha256="$BSHA" -f tag="$TAG" -f max_parallel="$MAXP" \
-  ${SALT:+-f cache_salt="$SALT"} > /dev/null
+  ${SALT:+-f cache_salt="$SALT"} ${CASES:+-f cases="$CASES"} > /dev/null
 RUN=
 for _ in $(seq 30); do  # the run of this dispatch, by its name
   sleep 5

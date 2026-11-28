@@ -74,6 +74,8 @@ def main():
     ap.add_argument("--target", type=float, default=1200.0)
     ap.add_argument("--src-root", type=Path, default=None,
                     help="the checkout mounted at /w/src (its scripts are read for the releases they name)")
+    ap.add_argument("--cases", default="",
+                    help="a Python regular expression: only the tests whose name it matches (re.search); empty: all")
     args = ap.parse_args()
 
     data_rows = load_table(HERE / "data.tsv", 5)
@@ -97,13 +99,14 @@ def main():
 
     def selected(name):
         long_ = "long" in labels(name)
-        return args.labels == "all" or (args.labels == "long") == long_
+        return ((args.labels == "all" or (args.labels == "long") == long_)
+                and re.search(args.cases, name) is not None)
 
     chosen = [t["name"] for t in tests if selected(t["name"])]
     gpu = [n for n in chosen if "gpu" in labels(n)]
     cpu = [n for n in chosen if "gpu" not in labels(n)]
     if not cpu:
-        sys.exit(f"plan.py: labels={args.labels} selects no CPU test")
+        sys.exit(f"plan.py: labels={args.labels} cases={args.cases!r} selects no CPU test")
 
     # groups: union-find over the fixtures (setups of required fixtures are pulled in, as CTest does)
     parent = {}

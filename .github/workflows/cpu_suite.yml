@@ -40,6 +40,8 @@ on:
       tag: {description: "a name for the run (ci_submit.sh finds the run by it)", default: ""}
       max_parallel: {description: "test jobs at once (at most 10)", default: "10"}
       cache_salt: {description: "appended to every cache key (empty: the normal keys)", default: ""}
+      cases: {description: "a Python regular expression: only the tests (of the labels) whose name it matches (re.search), with the fixture setups they need; empty: all",
+              default: ""}
   push:
     branches: [main]
 permissions:
@@ -54,6 +56,7 @@ concurrency:
 env:
   REF: ${{ inputs.ref || github.sha }}
   LABELS: ${{ inputs.labels || 'all' }}
+  CASES: ${{ inputs.cases || '' }}
   # Xassemblianist/cppmpas-data at the commit whose ci/mvec_intel built the references' preload
   MVEC_REPO: Xassemblianist/cppmpas-data
   MVEC_COMMIT: 6065fe34c6cc846f2153a314dc28ffcb425192d8
@@ -138,7 +141,7 @@ jobs:
       - name: plan
         id: plan
         run: |
-          python3 src/ci/plan.py w/out/tests.json "$LABELS" plan --src-root src | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 src/ci/plan.py w/out/tests.json "$LABELS" plan --src-root src ${CASES:+--cases "$CASES"} | tee -a "$GITHUB_STEP_SUMMARY"
           echo "matrix=$(cat plan/matrix.json)" >> "$GITHUB_OUTPUT"
           echo "common_key=$(python3 -c 'import json; print(json.load(open("plan/data.json"))["include"][0]["key"])')" >> "$GITHUB_OUTPUT"
           cp w/out/tests.json w/out/versions.txt packages.tsv plan/
@@ -328,14 +331,15 @@ jobs:
           # (plan/tests.json) has results in the jobs' JUnit files, each CPU test (and each fixture setup CTest
           # added) passed in every job that ran it, each GPU test was skipped (exit 77) and is not counted as
           # passed; at least one CPU test; and every job of the run succeeded
-          python3 - "$LABELS" > guard.txt <<'EOF'
-          import glob, json, sys
+          python3 - "$LABELS" "$CASES" > guard.txt <<'EOF'
+          import glob, json, re, sys
           import xml.etree.ElementTree as ET
           def labels(t):
               return next((p["value"] for p in t.get("properties", []) if p["name"] == "LABELS"), [])
           tests = json.load(open("plan/tests.json"))["tests"]
           chosen = {t["name"]: "gpu" in labels(t) for t in tests
-                    if sys.argv[1] == "all" or (sys.argv[1] == "long") == ("long" in labels(t))}
+                    if (sys.argv[1] == "all" or (sys.argv[1] == "long") == ("long" in labels(t)))
+                    and re.search(sys.argv[2], t["name"])}
           got = {}
           for f in sorted(glob.glob("results/*/junit.xml")):
               for c in ET.parse(f).getroot().iter("testcase"):
