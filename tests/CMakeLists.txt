@@ -156,10 +156,11 @@ target_link_libraries(test_libm PRIVATE cppmpas mvec m)
 add_test(NAME unit_libm COMMAND test_libm 2000000)
 
 # src/core/namelist_table.inc is what tools/gen_namelist_table.py makes of the Registry and the reference namelists,
-# and of the namelist of the MW restart run (tests/namelists/MW_restart: the MW forecast namelist restarted from the
+# and of the namelists of the restart runs (tests/namelists/RGR_restart: a copy of mpas842-dbl-rgr-001/RGR/restart/
+# namelist.atmosphere, checked by restart_recipe_RGR; tests/namelists/MW_restart: the MW forecast namelist restarted from the
 # reference's restart file at 00:30:06, verified by the dycore_restart_MW_* tests)
 add_test(NAME namelist_table_current COMMAND ${CMAKE_COMMAND} -E env sh -c
-  "${Python3_EXECUTABLE} -I '${CMAKE_SOURCE_DIR}/tools/gen_namelist_table.py' '${CPPMPAS_MPAS_REGISTRY}' ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/forecast/namelist.atmosphere '${CMAKE_SOURCE_DIR}/tests/namelists/MW_restart/namelist.atmosphere' ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg-004/RG/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg-004/RG/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg24-001/RG24/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg24-001/RG24/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rgr-001/RGR/restart/namelist.atmosphere > '${W}/namelist_table.inc' && ${CMAKE_COMMAND} -E compare_files '${W}/namelist_table.inc' '${CMAKE_SOURCE_DIR}/src/core/namelist_table.inc'")
+  "${Python3_EXECUTABLE} -I '${CMAKE_SOURCE_DIR}/tools/gen_namelist_table.py' '${CPPMPAS_MPAS_REGISTRY}' ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-mw-001/MW/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-001/SC/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-jw-001/JW/forecast/namelist.atmosphere '${CMAKE_SOURCE_DIR}/tests/namelists/MW_restart/namelist.atmosphere' ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg-004/RG/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg-004/RG/forecast/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg24-001/RG24/steps/namelist.atmosphere ${CPPMPAS_REFS_DIR}/mpas842-dbl-rg24-001/RG24/forecast/namelist.atmosphere '${CMAKE_SOURCE_DIR}/tests/namelists/RGR_restart/namelist.atmosphere' > '${W}/namelist_table.inc' && ${CMAKE_COMMAND} -E compare_files '${W}/namelist_table.inc' '${CMAKE_SOURCE_DIR}/src/core/namelist_table.inc'")
 set_tests_properties(namelist_table_current PROPERTIES FIXTURES_REQUIRED work_dir)
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -418,6 +419,9 @@ set(OUT_SC ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-002/SC/forecast/output.nc)
 # the recipes the tests mix are one: sc-001 = sc-002 (init, namelists), and in every reference the steps namelist the
 # runs use differs from the forecast namelist of the compared files in config_run_duration only
 add_test(NAME ref_recipes COMMAND ${PY} ${T}/check_ref_recipes.py ${CPPMPAS_REFS_DIR})
+# RGR's forecast is RG's, its restart namelist is the forecast's restarted, and tests/namelists/RGR_restart is a copy
+# of it (tests/check_restart_recipe.py)
+add_test(NAME restart_recipe_RGR COMMAND ${PY} ${T}/check_restart_recipe.py ${CPPMPAS_REFS_DIR} ${CMAKE_SOURCE_DIR})
 set(DYCORE_SC_RESTART_FIELDS xtime Time u w rho_zz theta_m pressure_p rho theta exner ru rw rtheta_p rho_p qv qc qr
   surface_pressure)
 set(DYCORE_SC_OUTPUT_FIELDS xtime u w rho theta divergence vorticity ke uReconstructZonal uReconstructMeridional

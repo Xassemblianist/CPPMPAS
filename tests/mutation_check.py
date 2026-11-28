@@ -1839,10 +1839,10 @@ MUTATIONS += [
      "  if (true) {                                            // :124", RGR()),
     ("src/physics/mpas_atmphys_convection.cpp", "  if (m.config_do_restart || itimestep > 1) initflag = 0;",
      "  if (itimestep > 1) initflag = 0;", RGR()),
-    # ref_recipes: the restart namelist may differ from its forecast's in the start time, the duration and
-    # config_do_restart only (needs every reference of the test's list)
-    ("tests/check_ref_recipes.py", 'RESTART_ALLOWED = {"config_run_duration", "config_start_time", "config_do_restart"}',
-     'RESTART_ALLOWED = {"config_run_duration", "config_do_restart"}', ["ref_recipes"]),
+    # restart_recipe_RGR: the restart namelist may differ from its forecast's in the start time, the duration and
+    # config_do_restart only
+    ("tests/check_restart_recipe.py", 'RESTART_ALLOWED = {"config_run_duration", "config_start_time", "config_do_restart"}',
+     'RESTART_ALLOWED = {"config_run_duration", "config_do_restart"}', ["restart_recipe_RGR"]),
 ]
 
 
