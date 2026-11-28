@@ -9,14 +9,20 @@
 # - summary: every selected test must pass; the GPU tests must be skipped (this is a CPU build) and are counted
 #   as skipped, never as passed (ci/summary.py).
 # Start: gh workflow run cpu_suite.yml --ref <branch holding this file> -f ref=<branch or commit> -f labels=all
+# A commit that is not on GitHub: tools/ci/ci_submit.sh (inputs bundle, bundle_sha256, tag; ci/fetch_bundle.sh). The
+# bundle is needed only by the build job, which hands the source tree to the test jobs as the artifact "src".
 name: cpu_suite
-run-name: cpu_suite ${{ inputs.labels || 'all' }} ${{ inputs.ref || github.sha }}
+run-name: ${{ inputs.tag || format('cpu_suite {0} {1}', inputs.labels || 'all', inputs.ref || github.sha) }}
 on:
   workflow_dispatch:
     inputs:
       ref: {description: "CPPMPAS branch or commit to test", required: true, default: main}
       labels: {description: "short (tests without the label long), long, or all", type: choice,
                options: [all, short, long], default: all}
+      bundle: {description: "asset of Xassemblianist/cppmpas-data's jobs release holding ref (a git bundle; ref is then its full sha); empty: ref is on GitHub",
+               default: ""}
+      bundle_sha256: {description: "SHA-256 of the bundle", default: ""}
+      tag: {description: "a name for the run (ci_submit.sh finds the run by it)", default: ""}
   push:
     branches: [main]
 permissions:
@@ -48,7 +54,16 @@ jobs:
       - uses: actions/checkout@v4
         with: {path: tools}
       - uses: actions/checkout@v4
+        if: inputs.bundle == ''
         with: {ref: "${{ env.REF }}", path: src}
+      # a commit that is not on GitHub: main's whole history (the bundle's prerequisites), then the bundle
+      - uses: actions/checkout@v4
+        if: inputs.bundle != ''
+        with: {ref: main, path: src, fetch-depth: 0}
+      - name: source from the bundle
+        if: inputs.bundle != ''
+        env: {BUNDLE: "${{ inputs.bundle }}", BUNDLE_SHA256: "${{ inputs.bundle_sha256 }}"}
+        run: bash tools/ci/fetch_bundle.sh src "$BUNDLE" "$BUNDLE_SHA256" "$REF"
       - uses: actions/checkout@v4
         with: {repository: "${{ env.MVEC_REPO }}", ref: "${{ env.MVEC_COMMIT }}", path: mvec-repo,
                sparse-checkout: ci/mvec_intel, sparse-checkout-cone-mode: false}
@@ -86,10 +101,13 @@ jobs:
           echo "data=$(cat plan/data.json)" >> "$GITHUB_OUTPUT"
           echo "common_key=$(python3 -c 'import json; print(json.load(open("plan/data.json"))["include"][0]["key"])')" >> "$GITHUB_OUTPUT"
           cp w/out/tests.json w/out/versions.txt packages.tsv plan/
-      - name: pack the build tree
+      - name: pack the build tree and the source tree
         run: |
           tar -C w --exclude='*.o' --exclude='*.a' -cf - build | zstd -T0 -q -o build.tar.zst
-          ls -l build.tar.zst
+          tar -C src --exclude=.git -cf - . | zstd -T0 -q -o src.tar.zst
+          ls -l build.tar.zst src.tar.zst
+      - uses: actions/upload-artifact@v4
+        with: {name: src, path: src.tar.zst, retention-days: 3, compression-level: 0}
       - uses: actions/upload-artifact@v4
         with: {name: build, path: build.tar.zst, retention-days: 3, compression-level: 0}
       - uses: actions/upload-artifact@v4
@@ -149,8 +167,9 @@ jobs:
           fi
       - uses: actions/checkout@v4
         with: {path: tools}
-      - uses: actions/checkout@v4
-        with: {ref: "${{ needs.build.outputs.commit }}", path: src}
+      # the source tree the build job built (also a commit that is not on GitHub)
+      - uses: actions/download-artifact@v4
+        with: {name: src, path: .}
       - uses: actions/download-artifact@v4
         with: {name: plan, path: plan}
       - uses: actions/download-artifact@v4
@@ -183,6 +202,7 @@ jobs:
               GPU: "${{ matrix.gpu }}"}
         run: |
           zstd -dc dl/image/image.tar.zst | docker load && rm -rf dl/image
+          mkdir -p src && zstd -dc src.tar.zst | tar -xf - -C src && rm src.tar.zst
           mkdir -p "$BASE" && zstd -dc build.tar.zst | tar -xf - -C "$BASE" && rm build.tar.zst
           if [ "$GPU" != true ]; then bash tools/ci/data.sh extract common dl/common "$BASE/data"; fi
           for r in $REFS; do bash tools/ci/data.sh extract "$r" "dl/$r" "$BASE/data"; done
