@@ -94,6 +94,8 @@ def main():
     chosen = [t["name"] for t in tests if selected(t["name"])]
     gpu = [n for n in chosen if "gpu" in labels(n)]
     cpu = [n for n in chosen if "gpu" not in labels(n)]
+    if not cpu:
+        sys.exit(f"plan.py: labels={args.labels} selects no CPU test")
 
     # groups: union-find over the fixtures (setups of required fixtures are pulled in, as CTest does)
     parent = {}
@@ -131,12 +133,13 @@ def main():
     def tags_of_scripts(test):  # the releases named in the scripts of the source tree the command runs
         tags = set()
         for arg in test.get("command", []):
-            for word in arg.split():  # also the paths inside a "sh -c" string
+            for word in arg.split():  # also the paths inside a "sh -c" string, quoted there
+                word = word.strip("'\";")
                 if not word.startswith(SRC_IN_CONTAINER):
                     continue
                 if args.src_root is None:
                     sys.exit("plan.py: --src-root is needed (a test runs a script of the source tree)")
-                path = args.src_root / word[len(SRC_IN_CONTAINER):].strip("'\";")
+                path = args.src_root / word[len(SRC_IN_CONTAINER):]
                 if path not in script_tags:
                     script_tags[path] = (set(TAG_RE.findall(path.read_text(errors="replace")))
                                          if path.is_file() else set())
