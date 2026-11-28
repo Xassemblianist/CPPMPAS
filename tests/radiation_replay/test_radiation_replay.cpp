@@ -3,6 +3,10 @@
 // write_radiation_dump: the step's inputs and the outputs the model computed), runs the step again on the dump's
 // inputs (o3climatology_from_MPAS, driver_cloudiness, driver_radiation_sw if the step ran it, driver_radiation_lw)
 // and compares every output pool array with the dump's, bit for bit (tolerance 0, -0.0 /= +0.0, NaN payloads).
+// This compares CPPMPAS with CPPMPAS (the CPU run's own outputs): it proves the replay reproduces the run, and the
+// CUDA build of it that the device reproduces the CPU. It is not a comparison with MPAS: the MPAS proof of the
+// radiation is the RG tests (dycore_RG_*, dycore_RG_streams_*, against mpas842-dbl-rg-004) and the radiation_column
+// check (MPAS's own radiation code built as a column program).
 // The output arrays start as a NaN of their own payload, so an element the step leaves unwritten shows.
 // Built twice from this source: test_radiation_replay (the CPU library: the replay reproduces the CPU model run) and,
 // with CPPMPAS_ENABLE_CUDA, test_gpu_radiation_replay (the CUDA library: every loop of the radiation drivers and
@@ -43,7 +47,9 @@ std::map<std::string, Rec> read_dump(const char* path) {
   std::map<std::string, Rec> recs;
   for (;;) {
     char nm[32];
-    if (std::fread(nm, 1, 32, f) != 32) break;
+    const std::size_t got = std::fread(nm, 1, 32, f);
+    if (got == 0 && std::feof(f)) break;
+    if (got != 32) throw cppmpas::Error("short record name (a truncated dump)");
     nm[31] = '\0';
     std::int32_t kind = 0;
     std::int64_t n = 0;
@@ -104,6 +110,7 @@ int main(int argc, char** argv) {
     const auto& iv = rec("ints").iv;
     const auto& rv = rec("reals").r;
     const int ite = iv[0], nV = iv[1], noz = iv[2], nMonths = iv[3];
+    if (ite < 1 || nV < 1) throw cppmpas::Error("the dump holds no cell or no level: nothing to compare");
     const bool sw_ran = iv[10] != 0, o3c = iv[11] != 0;
     const int ime = iv[13], kme = iv[14], nm = iv[15], np = iv[16];
     const real xtime_s = rv[0];

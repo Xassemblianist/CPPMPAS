@@ -56,12 +56,13 @@ add_test(NAME unit_backend COMMAND test_backend)
 # local edge / vertex order and in-memory arrays against an independent re-implementation
 foreach(case MW SC JW)
   add_test(NAME order_${case} COMMAND ${CMAKE_COMMAND} -E env sh -c
-    "'${EXE}' dump '${${case}}' '${W}/dump_${case}.nc' && ${Python3_EXECUTABLE} -I '${T}/check_order.py' '${${case}}' '${W}/dump_${case}.nc' ${case}")
+    "rm -f '${W}/dump_${case}.nc' && '${EXE}' dump '${${case}}' '${W}/dump_${case}.nc' && ${Python3_EXECUTABLE} -I '${T}/check_order.py' '${${case}}' '${W}/dump_${case}.nc' ${case}")
+  set_tests_properties(order_${case} PROPERTIES FIXTURES_REQUIRED work_dir)
 endforeach()
 add_test(NAME order_init_MW COMMAND ${CMAKE_COMMAND} -E env sh -c
-  "'${EXE}' dump '${W}/mw_init.nc' '${W}/dump_mw_init.nc' --init && ${Python3_EXECUTABLE} -I '${T}/check_order.py' '${W}/mw_init.nc' '${W}/dump_mw_init.nc' MW --init qv")
+  "rm -f '${W}/dump_mw_init.nc' && '${EXE}' dump '${W}/mw_init.nc' '${W}/dump_mw_init.nc' --init && ${Python3_EXECUTABLE} -I '${T}/check_order.py' '${W}/mw_init.nc' '${W}/dump_mw_init.nc' MW --init qv")
 add_test(NAME order_init_SC COMMAND ${CMAKE_COMMAND} -E env sh -c
-  "'${EXE}' dump '${W}/sc_init.nc' '${W}/dump_sc_init.nc' --init --scalars qv,qc,qr && ${Python3_EXECUTABLE} -I '${T}/check_order.py' '${W}/sc_init.nc' '${W}/dump_sc_init.nc' SC --init qv,qc,qr")
+  "rm -f '${W}/dump_sc_init.nc' && '${EXE}' dump '${W}/sc_init.nc' '${W}/dump_sc_init.nc' --init --scalars qv,qc,qr && ${Python3_EXECUTABLE} -I '${T}/check_order.py' '${W}/sc_init.nc' '${W}/dump_sc_init.nc' SC --init qv,qc,qr")
 set_tests_properties(order_init_MW order_init_SC PROPERTIES FIXTURES_REQUIRED inputs)
 # an init file read as a grid: its vertical fields (nVertLevels and nVertLevelsP1) are left out
 add_test(NAME grid_read_of_init COMMAND ${EXE} info ${W}/mw_init.nc)
@@ -178,10 +179,10 @@ foreach(case MW SC JW)
   add_test(NAME roundtrip_refinit_${case} COMMAND ${PY} ${T}/roundtrip.py ${EXE} ${CPPMPAS_MPAS_COMPARE} ${INIT_${case}}
     ${W}/ref_${case} init ${SCAL_${case}})
   add_test(NAME order_refinit_${case} COMMAND ${CMAKE_COMMAND} -E env sh -c
-    "mkdir -p '${W}' && '${EXE}' dump '${INIT_${case}}' '${W}/dump_refinit_${case}.nc' --init --scalars ${SCAL_${case}} && ${Python3_EXECUTABLE} -I '${T}/check_order.py' '${INIT_${case}}' '${W}/dump_refinit_${case}.nc' ${case} --init ${SCAL_${case}}")
+    "mkdir -p '${W}' && rm -f '${W}/dump_refinit_${case}.nc' && '${EXE}' dump '${INIT_${case}}' '${W}/dump_refinit_${case}.nc' --init --scalars ${SCAL_${case}} && ${Python3_EXECUTABLE} -I '${T}/check_order.py' '${INIT_${case}}' '${W}/dump_refinit_${case}.nc' ${case} --init ${SCAL_${case}}")
   # the reader on the reference restart file: its input-stream subset, values and in-memory order
   add_test(NAME readrestart_${case} COMMAND ${CMAKE_COMMAND} -E env sh -c
-    "mkdir -p '${W}' && '${EXE}' dump '${RST_${case}}' '${W}/dump_rst_${case}.nc' --init --scalars ${SCAL_${case}} && ${Python3_EXECUTABLE} -I '${T}/check_order.py' '${RST_${case}}' '${W}/dump_rst_${case}.nc' ${case} --init ${SCAL_${case}}")
+    "mkdir -p '${W}' && rm -f '${W}/dump_rst_${case}.nc' && '${EXE}' dump '${RST_${case}}' '${W}/dump_rst_${case}.nc' --init --scalars ${SCAL_${case}} && ${Python3_EXECUTABLE} -I '${T}/check_order.py' '${RST_${case}}' '${W}/dump_rst_${case}.nc' ${case} --init ${SCAL_${case}}")
   # atm_mpas_init_block on the reference init file with the reference namelist
   add_test(NAME init_run_${case} COMMAND ${CMAKE_COMMAND} -E env sh -c
     "mkdir -p '${W}' && rm -f '${W}/init_${case}.nc' && '${EXE}' init '${INIT_${case}}' '${W}/init_${case}.nc' --namelist '${REF_${case}}/steps/namelist.atmosphere' --scalars ${SCAL_${case}} --fields ${INIT_RESTART_FIELDS},${INIT_STEP0_FIELDS}")
@@ -404,6 +405,9 @@ endforeach()
 # output.nc from mpas842-dbl-sc-002 (the same run of the same recipe; its fields are identical to sc-001's at
 # tolerance 0, and the workstation copy of sc-001 holds no output.nc)
 set(OUT_SC ${CPPMPAS_REFS_DIR}/mpas842-dbl-sc-002/SC/forecast/output.nc)
+# the recipes the tests mix are one: sc-001 = sc-002 (init, namelists), and in every reference the steps namelist the
+# runs use differs from the forecast namelist of the compared files in config_run_duration only
+add_test(NAME ref_recipes COMMAND ${PY} ${T}/check_ref_recipes.py ${CPPMPAS_REFS_DIR})
 set(DYCORE_SC_RESTART_FIELDS xtime Time u w rho_zz theta_m pressure_p rho theta exner ru rw rtheta_p rho_p qv qc qr
   surface_pressure)
 set(DYCORE_SC_OUTPUT_FIELDS xtime u w rho theta divergence vorticity ke uReconstructZonal uReconstructMeridional
@@ -495,8 +499,8 @@ set_tests_properties(pbl_column PROPERTIES FIXTURES_REQUIRED work_dir)
 # The cloudiness, RRTMG LW / SW radiation drivers, the RRTMG table initialisation and the ozone climatology against
 # MPAS's own code built with the reference compiler and flags (tests/radiation_column/run_check.sh). Needs gfortran
 # 14.2, the MPAS v8.4.2 source tree and the reference build's tables directory (RRTMG_*_DATA.DBL, OZONE_*.TBL of the
-# cppmpas-data mpas-build asset); CPPMPAS_CPPWRF_RRTMG (CPPWRF's data/rrtmg) adds the byte comparison of the tables
-# with CPPWRF's. Without the tables the test fails.
+# cppmpas-data mpas-build asset) and CPPMPAS_CPPWRF_RRTMG (CPPWRF's data/rrtmg: the tables MPAS's initialisation
+# computes must be those, byte for byte). Without either the test fails.
 set(CPPMPAS_MPAS_TABLES "" CACHE PATH "the MPAS reference build's tables directory (RRTMG_*_DATA.DBL, OZONE_*.TBL)")
 set(CPPMPAS_CPPWRF_RRTMG "" CACHE PATH "CPPWRF's data/rrtmg (rrtmg_lw_tables.bin, rrtmg_sw_tables.bin)")
 add_executable(test_radiation_column radiation_column/test_radiation_column.cpp)
@@ -572,7 +576,7 @@ endforeach()
 # the reference's 11 step files only (the run also writes steps 11, 12 and the state files)
 string(REPLACE ";" " " DYCORE_RG_STAMP_WORDS "${DYCORE_RG_STAMPS}")
 add_test(NAME dycore_RG_mpas_compare COMMAND ${CMAKE_COMMAND} -E env sh -c
-  "rm -rf '${W}/dycore_RG_steps' && mkdir -p '${W}/dycore_RG_steps' && for s in ${DYCORE_RG_STAMP_WORDS}; do ln -s '${W}/dycore_RG/step.2026-10-12_'$s.nc '${W}/dycore_RG_steps/'; done && ${Python3_EXECUTABLE} -I '${T}/dycore_compare.py' '${CPPMPAS_MPAS_COMPARE}' '${REF_RG}/steps' '${W}/dycore_RG_steps' '${W}/dycore_RG_compare.json' 165")
+  "set -e; rm -rf '${W}/dycore_RG_steps' && mkdir -p '${W}/dycore_RG_steps' && for s in ${DYCORE_RG_STAMP_WORDS}; do ln -s '${W}/dycore_RG/step.2026-10-12_'$s.nc '${W}/dycore_RG_steps/'; done && ${Python3_EXECUTABLE} -I '${T}/dycore_compare.py' '${CPPMPAS_MPAS_COMPARE}' '${REF_RG}/steps' '${W}/dycore_RG_steps' '${W}/dycore_RG_compare.json' 165")
 set_tests_properties(dycore_RG_mpas_compare PROPERTIES FIXTURES_REQUIRED dycore_RG)
 foreach(f IN LISTS DYCORE_RG_RESTART_FIELDS)
   add_test(NAME dycore_RG_restart_${f} COMMAND ${PY} ${T}/compare_arrays.py
@@ -611,8 +615,9 @@ set_tests_properties(dycore_RG_streams_all PROPERTIES FIXTURES_REQUIRED dycore_R
 # CPPMPAS_RADIATION_DUMP set writes the radiation calls of steps 1 and 4 (00:00 and 00:30: the inputs and the outputs
 # the run computed); test_radiation_replay runs each call again from its inputs and compares every radiation output
 # (o3clim, cldfrac, o3vmr, rre_*, the LW and SW fluxes, coszr, rthratenlw / rthratensw) with the run's at tolerance 0.
-# The run itself is RG, bit-identical to rg-004 (dycore_RG_*). The GPU replay of the same dumps is
-# gpu_radiation_RG_* below.
+# This compares CPPMPAS with CPPMPAS, not with MPAS: the replay proves the step is reproducible from its dumped inputs
+# (and gpu_radiation_RG_* that the device reproduces the CPU). The MPAS proof of the radiation comes from the RG tests
+# (dycore_RG_*, dycore_RG_streams_*: the run is bit-identical to rg-004) and from radiation_column.
 add_executable(test_radiation_replay radiation_replay/test_radiation_replay.cpp)
 target_link_libraries(test_radiation_replay PRIVATE cppmpas)
 target_compile_options(test_radiation_replay PRIVATE -Wall -Wextra)
@@ -651,19 +656,33 @@ add_test(NAME dycore_RG24_all COMMAND ${PY} ${T}/streams_compare.py ${CPPMPAS_MP
 set_tests_properties(dycore_RG24_all PROPERTIES FIXTURES_REQUIRED dycore_long_RG24 LABELS long)
 
 # ---------------------------------------------------------------------------------------------------------------
-# GPU proof: the CUDA build of the same sources (cppmpas_gpu, CMake option CPPMPAS_ENABLE_CUDA; every kernel on the
-# GPU, core/backend.hpp) against the same references at tolerance 0, and against the CPU build's own output
-# (cppmpas, the tests above). Each test runs through tests/gpu_test.py: without a CUDA build or without a usable
-# device it exits 77 and CTest reports it as "Skipped" (label gpu), never as passed.
+# GPU proof: the CUDA build of the same sources (cppmpas_gpu, CMake option CPPMPAS_ENABLE_CUDA; every parallel_for a
+# kernel on the GPU, core/backend.hpp) against the same references at tolerance 0, and against the CPU build's own
+# output (cppmpas, the tests above). Not all of cppmpas_gpu runs on the device: physics_core_init (init_dirs_forphys,
+# landuse_init_forMPAS, init_lsm's soil-water loop, the accumulators), physics_update_surface /
+# monthly_interp_to_date, radconst, the isobaric level arrays and the refl10cm_1km_max reset are host code in the CUDA
+# build too, so a gpu test proves those parts on the CPU only (tests/gpu_test.py lists them). Each test runs through
+# tests/gpu_test.py: without a CUDA build or without a CUDA device it exits 77 and CTest reports it as "Skipped"
+# (label gpu), never as passed; any other CUDA error fails.
 if(CPPMPAS_ENABLE_CUDA)
   set(GEXE $<TARGET_FILE:cppmpas_gpu>)
 else()
   set(GEXE NONE)  # tests/gpu_test.py: no CUDA build, every GPU test is skipped
 endif()
 set(GPU ${PY} ${T}/gpu_test.py ${GEXE})
+# ON: a GPU test that cannot run (no CUDA build, no device) fails instead of being skipped (for a machine that must
+# prove the GPU)
+option(CPPMPAS_GPU_REQUIRED "GPU tests fail instead of skipping when they cannot run" OFF)
 function(cppmpas_gpu_props)  # cppmpas_gpu_props(test... [FIXTURES_REQUIRED f] [FIXTURES_SETUP f] [LABELS l])
   cmake_parse_arguments(G "" "" "FIXTURES_REQUIRED;FIXTURES_SETUP;LABELS" ${ARGN})
-  set_tests_properties(${G_UNPARSED_ARGUMENTS} PROPERTIES SKIP_RETURN_CODE 77 LABELS "gpu;${G_LABELS}")
+  set_tests_properties(${G_UNPARSED_ARGUMENTS} PROPERTIES LABELS "gpu;${G_LABELS}")
+  if(CPPMPAS_GPU_REQUIRED)
+    set_tests_properties(${G_UNPARSED_ARGUMENTS} PROPERTIES ENVIRONMENT "CPPMPAS_GPU_REQUIRED=1")
+  else()
+    # a skipped run test (FIXTURES_SETUP) still lets CTest run the tests that need it: gpu_test.py --clean has removed
+    # its outputs before the device probe, so those tests skip or fail, never compare an earlier run's files
+    set_tests_properties(${G_UNPARSED_ARGUMENTS} PROPERTIES SKIP_RETURN_CODE 77)
+  endif()
   if(G_FIXTURES_REQUIRED)
     set_tests_properties(${G_UNPARSED_ARGUMENTS} PROPERTIES FIXTURES_REQUIRED "${G_FIXTURES_REQUIRED}")
   endif()
@@ -710,8 +729,9 @@ if(CPPMPAS_ENABLE_CUDA)
     math(EXPR _i "${_i} + 1")
   endforeach()
   # and the strict flags follow the user's: a CUDA source compiles with them last on nvcc's command line
+  # (and no flag that changes results comes after them; flags.make of the Makefile generators)
   add_test(NAME cmake_cuda_strict_flags_last COMMAND ${CMAKE_COMMAND} -E env sh -c
-    "grep -h -- '--fmad=false' '${CMAKE_BINARY_DIR}/CMakeFiles/cppmpas_cuda.dir/flags.make' | grep -q -- '-O3 -DNDEBUG.*--fmad=false --ftz=false --prec-div=true --prec-sqrt=true -Xcompiler=-ffp-contract=off'")
+    "f='${CMAKE_BINARY_DIR}/CMakeFiles/cppmpas_cuda.dir/flags.make'; test -s \"$f\" && grep -h -- '--fmad=false' \"$f\" | grep -q -- '-O3 -DNDEBUG.*--fmad=false --ftz=false --prec-div=true --prec-sqrt=true -Xcompiler=-ffp-contract=off' && ! grep -E -- '-ffp-contract=off.*(fmad[= ]true|use_fast_math|ffast-math|ftz[= ]true|prec-div[= ]false|prec-sqrt[= ]false|ffp-contract=fast|funsafe-math|Ofast)' \"$f\"")
   set_tests_properties(cmake_cuda_strict_flags_last PROPERTIES LABELS gpu)
 else()
   add_test(NAME gpu_backend COMMAND ${GPU} device)
@@ -739,7 +759,7 @@ else()
 endif()
 # atm_mpas_init_block on the GPU: every initdump field of MW, SC and JW against MPAS, and against the CPU build
 foreach(case MW SC JW)
-  add_test(NAME gpu_initdump_run_${case} COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+  add_test(NAME gpu_initdump_run_${case} COMMAND ${GPU} --clean ${W}/gpu_initdump_${case}.nc -- ${CMAKE_COMMAND} -E env sh -c
     "mkdir -p '${W}' && rm -f '${W}/gpu_initdump_${case}.nc' && '${GEXE}' init '${DUMPINIT_${case}}' '${W}/gpu_initdump_${case}.nc' --namelist '${DUMPREF_${case}}/steps/namelist.atmosphere' --scalars ${SCAL_${case}} --fields ${INITDUMP_LIST}")
   cppmpas_gpu_props(gpu_initdump_run_${case} FIXTURES_SETUP gpu_initdump_${case})
   foreach(f IN LISTS INITDUMP_FIELDS)
@@ -752,7 +772,7 @@ foreach(case MW SC JW)
   cppmpas_gpu_props(gpu_initdump_vs_cpu_${case} FIXTURES_REQUIRED "gpu_initdump_${case};initdump_${case}")
   # the init-block fields of the restart stream the initdump set leaves out (mpas_initialize_vectors, the RBF
   # coefficients, dss, nominalMinDc, the base state) and the t = 0 state, as init_restart / init_step0 on the CPU
-  add_test(NAME gpu_init_run_${case} COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+  add_test(NAME gpu_init_run_${case} COMMAND ${GPU} --clean ${W}/gpu_init_${case}.nc -- ${CMAKE_COMMAND} -E env sh -c
     "mkdir -p '${W}' && rm -f '${W}/gpu_init_${case}.nc' && '${GEXE}' init '${INIT_${case}}' '${W}/gpu_init_${case}.nc' --namelist '${REF_${case}}/steps/namelist.atmosphere' --scalars ${SCAL_${case}} --fields ${INIT_RESTART_FIELDS},${INIT_STEP0_FIELDS}")
   cppmpas_gpu_props(gpu_init_run_${case} FIXTURES_SETUP gpu_init_${case})
   add_test(NAME gpu_init_restart_${case} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py ${RST_${case}}
@@ -763,7 +783,7 @@ foreach(case MW SC JW)
 endforeach()
 # the dycore on the GPU: ten MW steps, every step file against MPAS (per field, and the whole directory through
 # tools/mpas_compare.py) and the whole directory against the CPU build's
-add_test(NAME gpu_dycore_run_MW COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+add_test(NAME gpu_dycore_run_MW COMMAND ${GPU} --clean ${W}/gpu_dycore_MW -- ${CMAKE_COMMAND} -E env sh -c
   "rm -rf '${W}/gpu_dycore_MW' && mkdir -p '${W}/gpu_dycore_MW' && '${GEXE}' run '${INIT_MW}' '${W}/gpu_dycore_MW' --namelist '${REF_MW}/steps/namelist.atmosphere' --steps 10")
 cppmpas_gpu_props(gpu_dycore_run_MW FIXTURES_SETUP gpu_dycore_MW)
 set(step 0)
@@ -782,7 +802,7 @@ add_test(NAME gpu_dycore_MW_vs_cpu COMMAND ${GPU} -- ${PY} ${T}/dycore_compare.p
 cppmpas_gpu_props(gpu_dycore_MW_mpas_compare FIXTURES_REQUIRED gpu_dycore_MW)
 cppmpas_gpu_props(gpu_dycore_MW_vs_cpu FIXTURES_REQUIRED "gpu_dycore_MW;dycore_MW")
 # 301 steps (labels gpu, long): the 30-min output record and the 30:06 restart of the forecast run, as on the CPU
-add_test(NAME gpu_dycore_run_long_MW COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+add_test(NAME gpu_dycore_run_long_MW COMMAND ${GPU} --clean ${W}/gpu_dycore_long_MW -- ${CMAKE_COMMAND} -E env sh -c
   "rm -rf '${W}/gpu_dycore_long_MW' && mkdir -p '${W}/gpu_dycore_long_MW' && '${GEXE}' run '${INIT_MW}' '${W}/gpu_dycore_long_MW' --namelist '${REF_MW}/steps/namelist.atmosphere' --steps 301 --every 0 --write-at 300,301 --write-fields ${DYCORE_LONG_LIST}")
 cppmpas_gpu_props(gpu_dycore_run_long_MW FIXTURES_SETUP gpu_dycore_long_MW LABELS long)
 set_tests_properties(gpu_dycore_run_long_MW PROPERTIES TIMEOUT 1800)
@@ -797,7 +817,7 @@ foreach(f IN LISTS DYCORE_OUTPUT_FIELDS)
   cppmpas_gpu_props(gpu_dycore_MW_output30_${f} FIXTURES_REQUIRED gpu_dycore_long_MW LABELS long)
 endforeach()
 # 600 steps (labels gpu, long): the 60-min output record (record 2 of the forecast run's output.nc)
-add_test(NAME gpu_dycore_run_60min_MW COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+add_test(NAME gpu_dycore_run_60min_MW COMMAND ${GPU} --clean ${W}/gpu_dycore_60min_MW -- ${CMAKE_COMMAND} -E env sh -c
   "rm -rf '${W}/gpu_dycore_60min_MW' && mkdir -p '${W}/gpu_dycore_60min_MW' && '${GEXE}' run '${INIT_MW}' '${W}/gpu_dycore_60min_MW' --namelist '${REF_MW}/steps/namelist.atmosphere' --steps 600 --every 0 --write-at 600 --write-fields ${DYCORE_LONG_LIST}")
 cppmpas_gpu_props(gpu_dycore_run_60min_MW FIXTURES_SETUP gpu_dycore_60min_MW LABELS long)
 set_tests_properties(gpu_dycore_run_60min_MW PROPERTIES TIMEOUT 3600)
@@ -808,7 +828,7 @@ foreach(f IN LISTS DYCORE_OUTPUT_FIELDS)
 endforeach()
 # the JW baroclinic wave on the GPU: ten steps against MPAS and the CPU build, and (label long) the 24 h output and
 # the 24:07:30 restart
-add_test(NAME gpu_dycore_run_JW COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+add_test(NAME gpu_dycore_run_JW COMMAND ${GPU} --clean ${W}/gpu_dycore_JW -- ${CMAKE_COMMAND} -E env sh -c
   "rm -rf '${W}/gpu_dycore_JW' && mkdir -p '${W}/gpu_dycore_JW' && '${GEXE}' run '${INIT_JW}' '${W}/gpu_dycore_JW' --namelist '${REF_JW}/steps/namelist.atmosphere' --steps 10")
 cppmpas_gpu_props(gpu_dycore_run_JW FIXTURES_SETUP gpu_dycore_JW)
 set_tests_properties(gpu_dycore_run_JW PROPERTIES TIMEOUT 900)
@@ -827,7 +847,7 @@ add_test(NAME gpu_dycore_JW_vs_cpu COMMAND ${GPU} -- ${PY} ${T}/dycore_compare.p
   ${W}/dycore_JW ${W}/gpu_dycore_JW ${W}/gpu_dycore_JW_vs_cpu.json 110)
 cppmpas_gpu_props(gpu_dycore_JW_mpas_compare FIXTURES_REQUIRED gpu_dycore_JW)
 cppmpas_gpu_props(gpu_dycore_JW_vs_cpu FIXTURES_REQUIRED "gpu_dycore_JW;dycore_JW")
-add_test(NAME gpu_dycore_run_long_JW COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+add_test(NAME gpu_dycore_run_long_JW COMMAND ${GPU} --clean ${W}/gpu_dycore_long_JW -- ${CMAKE_COMMAND} -E env sh -c
   "rm -rf '${W}/gpu_dycore_long_JW' && mkdir -p '${W}/gpu_dycore_long_JW' && '${GEXE}' run '${INIT_JW}' '${W}/gpu_dycore_long_JW' --namelist '${REF_JW}/steps/namelist.atmosphere' --steps 193 --every 0 --write-at 192,193 --write-fields ${DYCORE_LONG_LIST}")
 cppmpas_gpu_props(gpu_dycore_run_long_JW FIXTURES_SETUP gpu_dycore_long_JW LABELS long)
 set_tests_properties(gpu_dycore_run_long_JW PROPERTIES TIMEOUT 3600)
@@ -843,7 +863,7 @@ foreach(f IN LISTS DYCORE_OUTPUT_FIELDS)
 endforeach()
 # the MW restart run on the GPU: from the reference's 00:30:06 restart file, step 0 against the restart stream and
 # (label long) 01:00:00 against output.nc record 2
-add_test(NAME gpu_dycore_restart0_run_MW COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+add_test(NAME gpu_dycore_restart0_run_MW COMMAND ${GPU} --clean ${W}/gpu_dycore_restart0_MW -- ${CMAKE_COMMAND} -E env sh -c
   "rm -rf '${W}/gpu_dycore_restart0_MW' && mkdir -p '${W}/gpu_dycore_restart0_MW' && '${GEXE}' run '${RST_MW}' '${W}/gpu_dycore_restart0_MW' --namelist '${NML_RST_MW}' --steps 0 --every 0 --write-at 0 --write-fields ${DYCORE_RESTART0_LIST}")
 cppmpas_gpu_props(gpu_dycore_restart0_run_MW FIXTURES_SETUP gpu_dycore_restart0_MW)
 foreach(f IN LISTS DYCORE_RESTART0_FIELDS)
@@ -851,7 +871,7 @@ foreach(f IN LISTS DYCORE_RESTART0_FIELDS)
     ${W}/gpu_dycore_restart0_MW/state.0000-01-01_00.30.06.nc ${f})
   cppmpas_gpu_props(gpu_dycore_restart0_MW_${f} FIXTURES_REQUIRED gpu_dycore_restart0_MW)
 endforeach()
-add_test(NAME gpu_dycore_restart_run_long_MW COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+add_test(NAME gpu_dycore_restart_run_long_MW COMMAND ${GPU} --clean ${W}/gpu_dycore_restart_long_MW -- ${CMAKE_COMMAND} -E env sh -c
   "rm -rf '${W}/gpu_dycore_restart_long_MW' && mkdir -p '${W}/gpu_dycore_restart_long_MW' && '${GEXE}' run '${RST_MW}' '${W}/gpu_dycore_restart_long_MW' --namelist '${NML_RST_MW}' --steps 299 --every 0 --write-at 299 --write-fields ${DYCORE_OUTPUT_LIST}")
 cppmpas_gpu_props(gpu_dycore_restart_run_long_MW FIXTURES_SETUP gpu_dycore_restart_long_MW LABELS long)
 set_tests_properties(gpu_dycore_restart_run_long_MW PROPERTIES TIMEOUT 1800)
@@ -862,7 +882,7 @@ foreach(f IN LISTS DYCORE_OUTPUT_FIELDS)
 endforeach()
 # the supercell on the GPU (scalar transport, perturbation mixing, Kessler as kernels): ten steps against MPAS and the
 # CPU build, and (label long) the 30-min output and the 30:03 restart
-add_test(NAME gpu_dycore_run_SC COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+add_test(NAME gpu_dycore_run_SC COMMAND ${GPU} --clean ${W}/gpu_dycore_SC -- ${CMAKE_COMMAND} -E env sh -c
   "rm -rf '${W}/gpu_dycore_SC' && mkdir -p '${W}/gpu_dycore_SC' && '${GEXE}' run '${INIT_SC}' '${W}/gpu_dycore_SC' --namelist '${REF_SC}/steps/namelist.atmosphere' --scalars qv,qc,qr --steps 10")
 cppmpas_gpu_props(gpu_dycore_run_SC FIXTURES_SETUP gpu_dycore_SC)
 set_tests_properties(gpu_dycore_run_SC PROPERTIES TIMEOUT 900)
@@ -881,7 +901,7 @@ add_test(NAME gpu_dycore_SC_vs_cpu COMMAND ${GPU} -- ${PY} ${T}/dycore_compare.p
   ${W}/dycore_SC ${W}/gpu_dycore_SC ${W}/gpu_dycore_SC_vs_cpu.json 132)
 cppmpas_gpu_props(gpu_dycore_SC_mpas_compare FIXTURES_REQUIRED gpu_dycore_SC)
 cppmpas_gpu_props(gpu_dycore_SC_vs_cpu FIXTURES_REQUIRED "gpu_dycore_SC;dycore_SC")
-add_test(NAME gpu_dycore_run_long_SC COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+add_test(NAME gpu_dycore_run_long_SC COMMAND ${GPU} --clean ${W}/gpu_dycore_long_SC -- ${CMAKE_COMMAND} -E env sh -c
   "rm -rf '${W}/gpu_dycore_long_SC' && mkdir -p '${W}/gpu_dycore_long_SC' && '${GEXE}' run '${INIT_SC}' '${W}/gpu_dycore_long_SC' --namelist '${REF_SC}/steps/namelist.atmosphere' --scalars qv,qc,qr --steps 601 --every 0 --write-at 600,601 --write-fields ${DYCORE_SC_LONG_LIST}")
 cppmpas_gpu_props(gpu_dycore_run_long_SC FIXTURES_SETUP gpu_dycore_long_SC LABELS long)
 set_tests_properties(gpu_dycore_run_long_SC PROPERTIES TIMEOUT 3600)
@@ -896,12 +916,12 @@ foreach(f IN LISTS DYCORE_SC_OUTPUT_FIELDS)
   cppmpas_gpu_props(gpu_dycore_SC_output30_${f} FIXTURES_REQUIRED gpu_dycore_long_SC LABELS long)
 endforeach()
 
-# RG with the mesoscale_reference physics on the GPU (the physics drivers and schemes as kernels; radiation as host
-# code on the managed arrays until the device radiation is merged): the 12 steps of dycore_run_RG against MPAS (step
+# RG with the mesoscale_reference physics on the GPU (the physics drivers and schemes and the radiation as kernels; the
+# host parts listed above): the 12 steps of dycore_run_RG against MPAS (step
 # files per field and through tools/mpas_compare.py, the 01:10 restart and the 1 h / 2 h histories per field) and the
 # step files against the CPU build's; the forecast run's streams of rg-004 (diag 00:00 with l_diags, histories,
 # restart); and (label long) RG24's 19 stream files against rg24-001
-add_test(NAME gpu_dycore_run_RG COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+add_test(NAME gpu_dycore_run_RG COMMAND ${GPU} --clean ${W}/gpu_dycore_RG -- ${CMAKE_COMMAND} -E env sh -c
   "rm -rf '${W}/gpu_dycore_RG' && mkdir -p '${W}/gpu_dycore_RG' && '${GEXE}' run '${REF_RG}/init/x1.10242.init.nc' '${W}/gpu_dycore_RG' --namelist '${REF_RG}/steps/namelist.atmosphere' --scalars qv,qc,qr,qi,qs,qg --steps 12 --write-at 6,7,12 --write-fields ${DYCORE_RG_LONG_LIST} --tables '${CPPMPAS_MPAS_TABLES}' --rrtmg '${CPPMPAS_CPPWRF_RRTMG}'")
 cppmpas_gpu_props(gpu_dycore_run_RG FIXTURES_SETUP gpu_dycore_RG)
 set_tests_properties(gpu_dycore_run_RG PROPERTIES TIMEOUT 1800)
@@ -914,12 +934,12 @@ foreach(stamp IN LISTS DYCORE_RG_STAMPS)
   endforeach()
   math(EXPR step "${step} + 1")
 endforeach()
-add_test(NAME gpu_dycore_RG_mpas_compare COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
-  "rm -rf '${W}/gpu_dycore_RG_steps' && mkdir -p '${W}/gpu_dycore_RG_steps' && for s in ${DYCORE_RG_STAMP_WORDS}; do ln -s '${W}/gpu_dycore_RG/step.2026-10-12_'$s.nc '${W}/gpu_dycore_RG_steps/'; done && ${Python3_EXECUTABLE} -I '${T}/dycore_compare.py' '${CPPMPAS_MPAS_COMPARE}' '${REF_RG}/steps' '${W}/gpu_dycore_RG_steps' '${W}/gpu_dycore_RG_compare.json' 165")
+add_test(NAME gpu_dycore_RG_mpas_compare COMMAND ${GPU} --clean ${W}/gpu_dycore_RG_steps -- ${CMAKE_COMMAND} -E env sh -c
+  "set -e; rm -rf '${W}/gpu_dycore_RG_steps' && mkdir -p '${W}/gpu_dycore_RG_steps' && for s in ${DYCORE_RG_STAMP_WORDS}; do ln -s '${W}/gpu_dycore_RG/step.2026-10-12_'$s.nc '${W}/gpu_dycore_RG_steps/'; done && ${Python3_EXECUTABLE} -I '${T}/dycore_compare.py' '${CPPMPAS_MPAS_COMPARE}' '${REF_RG}/steps' '${W}/gpu_dycore_RG_steps' '${W}/gpu_dycore_RG_compare.json' 165")
 cppmpas_gpu_props(gpu_dycore_RG_mpas_compare FIXTURES_REQUIRED gpu_dycore_RG)
 # the step files of steps 0-10 only (both directories also hold the steps 11-12 and the --write-at state files)
-add_test(NAME gpu_dycore_RG_vs_cpu COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
-  "rm -rf '${W}/gpu_dycore_RG_vs_cpu_steps' '${W}/gpu_dycore_RG_vs_cpu_ref' && mkdir -p '${W}/gpu_dycore_RG_vs_cpu_steps' '${W}/gpu_dycore_RG_vs_cpu_ref' && for s in ${DYCORE_RG_STAMP_WORDS}; do ln -s '${W}/gpu_dycore_RG/step.2026-10-12_'$s.nc '${W}/gpu_dycore_RG_vs_cpu_steps/' && ln -s '${W}/dycore_RG/step.2026-10-12_'$s.nc '${W}/gpu_dycore_RG_vs_cpu_ref/'; done && ${Python3_EXECUTABLE} -I '${T}/dycore_compare.py' '${CPPMPAS_MPAS_COMPARE}' '${W}/gpu_dycore_RG_vs_cpu_ref' '${W}/gpu_dycore_RG_vs_cpu_steps' '${W}/gpu_dycore_RG_vs_cpu.json' 165")
+add_test(NAME gpu_dycore_RG_vs_cpu COMMAND ${GPU} --clean ${W}/gpu_dycore_RG_vs_cpu_steps -- ${CMAKE_COMMAND} -E env sh -c
+  "set -e; rm -rf '${W}/gpu_dycore_RG_vs_cpu_steps' '${W}/gpu_dycore_RG_vs_cpu_ref' && mkdir -p '${W}/gpu_dycore_RG_vs_cpu_steps' '${W}/gpu_dycore_RG_vs_cpu_ref' && for s in ${DYCORE_RG_STAMP_WORDS}; do ln -s '${W}/gpu_dycore_RG/step.2026-10-12_'$s.nc '${W}/gpu_dycore_RG_vs_cpu_steps/' && ln -s '${W}/dycore_RG/step.2026-10-12_'$s.nc '${W}/gpu_dycore_RG_vs_cpu_ref/'; done && ${Python3_EXECUTABLE} -I '${T}/dycore_compare.py' '${CPPMPAS_MPAS_COMPARE}' '${W}/gpu_dycore_RG_vs_cpu_ref' '${W}/gpu_dycore_RG_vs_cpu_steps' '${W}/gpu_dycore_RG_vs_cpu.json' 165")
 cppmpas_gpu_props(gpu_dycore_RG_vs_cpu FIXTURES_REQUIRED "gpu_dycore_RG;dycore_RG")
 foreach(f IN LISTS DYCORE_RG_RESTART_FIELDS)
   add_test(NAME gpu_dycore_RG_restart_${f} COMMAND ${GPU} -- ${PY} ${T}/compare_arrays.py
@@ -933,7 +953,7 @@ foreach(f IN LISTS DYCORE_RG_HISTORY_FIELDS)
     ${REF_RG}/forecast/history.2026-10-12_02.00.00.nc ${W}/gpu_dycore_RG/state.2026-10-12_02.00.00.nc ${f})
   cppmpas_gpu_props(gpu_dycore_RG_history1h_${f} gpu_dycore_RG_history2h_${f} FIXTURES_REQUIRED gpu_dycore_RG)
 endforeach()
-add_test(NAME gpu_dycore_run_RG_streams COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+add_test(NAME gpu_dycore_run_RG_streams COMMAND ${GPU} --clean ${W}/gpu_dycore_RG_streams -- ${CMAKE_COMMAND} -E env sh -c
   "rm -rf '${W}/gpu_dycore_RG_streams' && mkdir -p '${W}/gpu_dycore_RG_streams' && '${GEXE}' run '${REF_RG}/init/x1.10242.init.nc' '${W}/gpu_dycore_RG_streams' --namelist '${REF_RG}/forecast/namelist.atmosphere' --streams '${REF_RG}/forecast/streams.atmosphere' --scalars qv,qc,qr,qi,qs,qg --every 0 --tables '${CPPMPAS_MPAS_TABLES}' --rrtmg '${CPPMPAS_CPPWRF_RRTMG}'")
 cppmpas_gpu_props(gpu_dycore_run_RG_streams FIXTURES_SETUP gpu_dycore_RG_streams)
 set_tests_properties(gpu_dycore_run_RG_streams PROPERTIES TIMEOUT 1800)
@@ -945,7 +965,7 @@ endforeach()
 add_test(NAME gpu_dycore_RG_streams_all COMMAND ${GPU} -- ${PY} ${T}/streams_compare.py ${CPPMPAS_MPAS_COMPARE}
   ${REF_RG}/forecast ${W}/gpu_dycore_RG_streams ${W}/gpu_dycore_RG_streams.json 5 702)
 cppmpas_gpu_props(gpu_dycore_RG_streams_all FIXTURES_REQUIRED gpu_dycore_RG_streams)
-add_test(NAME gpu_dycore_run_long_RG24 COMMAND ${GPU} -- ${CMAKE_COMMAND} -E env sh -c
+add_test(NAME gpu_dycore_run_long_RG24 COMMAND ${GPU} --clean ${W}/gpu_dycore_long_RG24 -- ${CMAKE_COMMAND} -E env sh -c
   "rm -rf '${W}/gpu_dycore_long_RG24' && mkdir -p '${W}/gpu_dycore_long_RG24' && '${GEXE}' run '${REF_RG24}/init/x1.10242.init.nc' '${W}/gpu_dycore_long_RG24' --namelist '${REF_RG24}/forecast/namelist.atmosphere' --streams '${REF_RG24}/forecast/streams.atmosphere' --scalars qv,qc,qr,qi,qs,qg --every 0 --tables '${CPPMPAS_MPAS_TABLES}' --rrtmg '${CPPMPAS_CPPWRF_RRTMG}'")
 cppmpas_gpu_props(gpu_dycore_run_long_RG24 FIXTURES_SETUP gpu_dycore_long_RG24 LABELS long)
 set_tests_properties(gpu_dycore_run_long_RG24 PROPERTIES TIMEOUT 7200)

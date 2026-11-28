@@ -131,6 +131,9 @@ def compare(inp, ref, cpp, diags=None):
     b = np.fromfile(cpp, dtype="<u8")
     size = {"s": 6 * nV * nC, "v": nV * nC, "c": nC}
     per = sum(size[t] for _, t in out)
+    if per * nsteps <= 0:
+        print(f"FAIL: the input {inp} asks for {nsteps} steps of {nC} cells x {nV} levels: nothing to compare")
+        return 1
     if a.size != per * nsteps or b.size != per * nsteps:
         print(f"FAIL: sizes ref {a.size} cpp {b.size}, expected {per * nsteps}")
         return 1

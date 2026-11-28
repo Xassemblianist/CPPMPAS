@@ -6,7 +6,9 @@ compared. The global attributes are then checked file by file here: every attrib
 reference's value (file_id, a random identifier, excepted), and the reference's attributes the candidate lacks are
 only the namelist options (config_*) and the physics attributes MPAS writes (NOT_WRITTEN), which CPPMPAS's writer
 does not write yet. Only the reference's step.*.nc files are compared (a reference steps/ directory may also hold
-other files, such as initdump.nc).
+other files, such as initdump.nc). Attribute values are compared as the raw header bytes with their NetCDF type (so
+-0.0 differs from +0.0, NC_FLOAT from NC_DOUBLE, and NUL bytes count), and the attributes the candidate writes must
+be in the reference's order. A report file left by an earlier run is deleted first.
 
 usage: dycore_compare.py <mpas_compare.py> <reference dir> <candidate dir> <report.json> <N>
 """
@@ -16,8 +18,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-import netCDF4
-import numpy as np
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import mpas_compare  # noqa: E402  (its raw header reader)
 
 NOT_WRITTEN = {"input_soil_data", "input_soil_temperature_lag", "num_soil_layers", "months", "noznlev", "naerlev",
                "camdim1"}
@@ -29,24 +31,38 @@ def global_attribute_problems(ref_dir, cand_dir):
     if not names:
         return ["no reference files"]
     for n in names:
-        with netCDF4.Dataset(Path(ref_dir) / n) as r, netCDF4.Dataset(Path(cand_dir) / n) as c:
-            ra = {k: r.getncattr(k) for k in r.ncattrs()}
-            ca = {k: c.getncattr(k) for k in c.ncattrs()}
+        if not (Path(cand_dir) / n).is_file():
+            out.append(f"{n}: not in the candidate directory")
+            continue
+        hr = mpas_compare.classic_header(Path(ref_dir) / n)
+        hc = mpas_compare.classic_header(Path(cand_dir) / n)
+        if hr is None or hc is None:
+            out.append(f"{n}: not a classic-format NetCDF file")
+            continue
+        ra = {k: (t, raw) for k, t, raw in hr["gatts"]}
+        ca = {k: (t, raw) for k, t, raw in hc["gatts"]}
+        if "file_id" not in ca:
+            out.append(f"{n}: no file_id")
         for k, v in ca.items():
             if k == "file_id":
                 continue
             if k not in ra:
                 out.append(f"{n}: attribute {k} not in the reference")
-            elif type(v) is not type(ra[k]) or not np.array_equal(np.asarray(v), np.asarray(ra[k])):
+            elif v != ra[k]:
                 out.append(f"{n}: attribute {k} = {v!r}, reference {ra[k]!r}")
         for k in ra:
             if k not in ca and not k.startswith("config_") and k not in NOT_WRITTEN:
                 out.append(f"{n}: attribute {k} missing")
+        order_c = [k for k, _, _ in hc["gatts"] if k in ra]
+        order_r = [k for k, _, _ in hr["gatts"] if k in ca]
+        if order_c != order_r:
+            out.append(f"{n}: attribute order {order_c}, reference {order_r}")
     return out
 
 
 def main():
     tool, ref, cand, report, n = sys.argv[1:6]
+    Path(report).unlink(missing_ok=True)
     with tempfile.TemporaryDirectory(dir=Path(report).parent) as steps:  # the reference's step files only
         for f in sorted(Path(ref).glob("step.*.nc")):
             (Path(steps) / f.name).symlink_to(f.resolve())

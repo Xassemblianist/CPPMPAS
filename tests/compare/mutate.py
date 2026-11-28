@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Mutation check for tools/mpas_compare.py: each one-line bug below must make the unit tests fail.
 
-Run: python3 tests/compare/mutate.py   (exit 0 only if every mutant is killed and the original passes)
+Run: python3 tests/compare/mutate.py   (exit 0 only if every mutant is killed and the original passes; a mutant that
+does not import counts as a survivor, not as killed)
 """
 import os
 import shutil
@@ -18,13 +19,22 @@ MUTANTS = [
     ("value bytes ignored", "if ra.tobytes() != rb.tobytes():", "if False:"),
     ("records stop early", "for t in range(var.shape[0]):", "for t in range(min(1, var.shape[0])):"),
     ("dimensions ignored", "if da != db:", "if False:"),
-    ("global attributes ignored", "if attrs(a, WALL_CLOCK_ATTRS) != attrs(b, WALL_CLOCK_ATTRS):", "if False:"),
-    ("all global attributes ignored", "if attrs(a, WALL_CLOCK_ATTRS) != attrs(b, WALL_CLOCK_ATTRS):",
-     "if attrs(a, set(a.ncattrs())) != attrs(b, set(b.ncattrs())):"),
-    ("variable attributes ignored", "if attrs(x) != attrs(y):", "if False:"),
+    ("global attributes ignored", "if global_a != global_b:", "if False:"),
+    ("attribute values ignored", "return [(name, typ, None if name in excluded else raw) for name, typ, raw in atts]",
+     "return [(name, typ, None) for name, typ, raw in atts]"),
+    ("attribute order ignored", "return [(name, typ, None if name in excluded else raw) for name, typ, raw in atts]",
+     "return sorted((name, typ, None if name in excluded else raw) for name, typ, raw in atts)"),
+    ("NUL bytes of text attributes dropped", "out.append((name, typ, self.take((size + 3) // 4 * 4)[:size]))",
+     "out.append((name, typ, self.take((size + 3) // 4 * 4)[:size].rstrip(b'\\0')))"),
+    ("variable attributes ignored", "if vatts_x != vatts_y:", "if False:"),
     ("missing variables ignored", "for name in sorted(names_a - names_b):", "for name in []:"),
     ("compared count lost", "compared += 1", "pass"),
     ("nothing-compared accepted", "if compared == 0:", "if False:"),
+    ("zero time records accepted", 'if x.dimensions and x.dimensions[0] == "Time" and x.shape[0] == 0:', "if False:"),
+    ("truncated file accepted", "if size < end:", "if False:"),
+    ("same file accepted", "if ref.resolve() == cand.resolve():", "if False:"),
+    ("empty names dropped", 'select = args.vars.split(",") if args.vars is not None else None',
+     'select = [v for v in args.vars.split(",") if v] if args.vars else None'),
     ("missing files ignored", 'problems = [{"file": n, "variable": None, "what": "file missing in candidate"}',
      'problems = [] and [{"file": n, "variable": None, "what": "file missing in candidate"}'),
     ("ulp off by sign fold", "return np.where(signed < 0, bias - signed - 1, signed)",
@@ -33,7 +43,7 @@ MUTANTS = [
      "first = np.unravel_index(int(where[-1]), a.shape) if a.ndim else ()"),
     ("exit status lost", "    if report:\n        return 1", "    if report:\n        return 0"),
     ("selection error dropped", "if missing:", "if False:"),
-    ("random file_id compared", '"file_id", "parent_id"})', '"parent_id"})'),
+    ("random file_id compared", 'RANDOM_ATTRS = frozenset({"file_id"})', "RANDOM_ATTRS = frozenset()"),
 ]
 
 
@@ -60,6 +70,13 @@ def main():
             mdir = tmp / "mutant"
             mdir.mkdir(exist_ok=True)
             (mdir / "mpas_compare.py").write_text(text.replace(old, new))
+            # a mutant that does not import kills the tests without testing anything: it counts as a survivor
+            imp = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); import mpas_compare",
+                                  str(mdir)], capture_output=True, text=True)
+            if imp.returncode != 0:
+                print(f"INVALID {name}: the mutant does not import: {imp.stderr.strip().splitlines()[-1:]}")
+                survivors += 1
+                continue
             killed = not run_tests(mdir, tmp)
             print(f"{'KILLED ' if killed else 'SURVIVED'} {name}")
             survivors += not killed

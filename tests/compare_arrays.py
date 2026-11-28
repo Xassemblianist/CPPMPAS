@@ -3,7 +3,10 @@
 """Exact comparison of named variables of two MPAS NetCDF files (e.g. a reference restart or history file and a file
 written by `cppmpas init`): type, dimension names, shape and variable attributes must agree, and the raw bytes of the
 values must be identical (tolerance 0). Only the first time record of a variable with a Time dimension is compared
-unless --record selects another one in the reference. A run that compares nothing is a failure.
+unless --record selects another one in the reference. A run that compares nothing is a failure, and so is a
+variable with no value, a reference record that does not exist, a file shorter than its header says (truncated) and
+a file compared with itself. The attributes of a classic-format file are read raw from its header (tools/
+mpas_compare.py): type, every byte (NUL bytes included, which netCDF4-python drops) and order.
 
 usage: compare_arrays.py REFERENCE CANDIDATE VAR[,VAR...] [--record N]
 Exit status: 0 identical, 1 differences, 2 usage or input error.
@@ -14,6 +17,9 @@ from pathlib import Path
 
 import netCDF4 as nc
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import mpas_compare  # noqa: E402  (its raw header reader)
 
 
 def ulp_max(a, b):
@@ -51,6 +57,18 @@ def main(argv=None):
         return 2
     bad = 0
     compared = 0
+    if a.reference.resolve() == a.candidate.resolve():
+        print(f"ERROR {a.reference}: the reference and the candidate are the same file")
+        return 2
+    try:
+        hr, hc = mpas_compare.classic_header(a.reference), mpas_compare.classic_header(a.candidate)
+    except mpas_compare.InputError as exc:
+        print(f"ERROR {exc}")
+        return 2
+    for path, h in ((a.reference, hr), (a.candidate, hc)):
+        for problem in mpas_compare.header_problems(path, h) if h else []:
+            print(f"DIFF {path.name}: {problem}")
+            bad += 1
     with nc.Dataset(a.reference) as r, nc.Dataset(a.candidate) as c:
         for ds in (r, c):
             ds.set_auto_maskandscale(False)
@@ -67,7 +85,11 @@ def main(argv=None):
                 print(f"DIFF {n}: type/dims {x.dtype}{x.dimensions} vs {y.dtype}{y.dimensions}")
                 bad += 1
                 continue
-            if attributes(x) != attributes(y):
+            if hr and hc:
+                atts_x, atts_y = mpas_compare.raw_attrs(hr["vars"][n][1]), mpas_compare.raw_attrs(hc["vars"][n][1])
+            else:
+                atts_x, atts_y = attributes(x), attributes(y)
+            if atts_x != atts_y:
                 print(f"DIFF {n}: variable attributes")
                 bad += 1
             if x.dimensions and x.dimensions[0] == "Time":
@@ -75,11 +97,18 @@ def main(argv=None):
                     print(f"DIFF {n}: candidate has {y.shape[0]} records")
                     bad += 1
                     continue
+                if not 0 <= a.record < x.shape[0]:
+                    print(f"ERROR {n}: the reference has {x.shape[0]} records, record {a.record} asked")
+                    return 2
                 ra, rb = np.ascontiguousarray(x[a.record]), np.ascontiguousarray(y[0])
             else:
                 ra, rb = np.ascontiguousarray(x[...]), np.ascontiguousarray(y[...])
             if ra.shape != rb.shape:
                 print(f"DIFF {n}: shape {ra.shape} vs {rb.shape}")
+                bad += 1
+                continue
+            if ra.size == 0:
+                print(f"DIFF {n}: no values")
                 bad += 1
                 continue
             compared += 1

@@ -139,7 +139,7 @@ contains
         return
       end if
     end do
-    stop 'pool stub full'
+    error stop 'pool stub full'
   end function
   integer function find(names, name)
     character(len=64), intent(in) :: names(nmax)

@@ -8,7 +8,7 @@
 # 1, 2, 3, 12, 13, 24, 25, 65, 72 and 145 points (1-trip loops, pairs, odd tails, every regime, the 6 sea-ice fractions), RG's
 # dt = 600 s and dt = 90 s, MODIS and USGS land use, and the options config_sfc_albedo = false,
 # config_sfc_snowalbedo = false, config_frac_seaice = false and config_do_restart.
-set -u
+set -euo pipefail
 mpas=$1; tables=$(realpath "$2"); work=$3; cpp=$4; shift 4
 here=$(dirname "$(realpath "$0")")
 cases=${*:-"1:2:600:1:MODIS:- 2:2:600:2:MODIS:- 3:3:600:3:MODIS:- 12:3:600:4:MODIS:- 13:4:600:5:MODIS:- 72:3:600:6:MODIS:- 145:4:600:12:MODIS:- 65:3:90:7:MODIS:- 25:3:600:8:USGS:- 24:3:600:9:MODIS:as 72:3:600:10:MODIS:f 24:2:600:11:MODIS:r"}
@@ -23,6 +23,7 @@ rc=0
 for c in $cases; do
   IFS=: read -r nc ns dt seed lu fl <<< "$c"
   in=$work/in_$c.bin
+  rm -f "$in" "$work/ref_$c.bin" "$work/cpp_$c.bin"  # no file of an earlier run can stand in for this one's
   python3 -I "$here/columns.py" make "$in" "$nc" "$ns" "$dt" "$seed" "$lu" "$fl" || { echo "FAIL: columns $c"; rc=1; continue; }
   (cd "$work" && ./ref/noah_column_ref "$in" "$work/ref_$c.bin") || { echo "FAIL: reference run $c"; rc=1; continue; }
   "$cpp" "$in" "$work/cpp_$c.bin" "$tables" || { echo "FAIL: CPPMPAS run $c"; rc=1; continue; }

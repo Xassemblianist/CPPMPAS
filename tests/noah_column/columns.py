@@ -193,6 +193,9 @@ def compare(inp, ref, cpp):
     b = np.fromfile(cpp, dtype='u1')
     nst = nC * len(R1) + nsoil * nC * len(S2)
     want = 4 * TI + 8 * TR + 8 * nst * (nsteps + 1)
+    if nsteps < 1 or nst < 1:
+        print(f"FAIL: the input {inp} asks for {nsteps} steps of {nC} points: nothing to compare")
+        return 1
     if a.size != want or b.size != want:
         print(f"FAIL: sizes ref {a.size} cpp {b.size}, expected {want}")
         return 1

@@ -1,0 +1,24 @@
+# The inputs of the CPU suite (.github/workflows/cpu_suite.yml), each checked against its SHA-256 before use.
+# item: a cache entry (the reference tags as tests/CMakeLists.txt names them; "common" is what every job needs).
+# source: release:<tag> (an asset of Xassemblianist/cppmpas-data), parts:<tag> (the joined <file>.part* assets of
+# that release; the SHA-256 is that of the joined archive, docs/REFERENCES.md), url:<address>.
+# The rrtmg tables are CPPWRF data/rrtmg at the commit in the address (CPPMPAS_CPPWRF_RRTMG).
+# item	file	sha256	bytes	source
+common	mountain_wave.tar.gz	5fa30c2976668d4207110b5873221cff614e1ea301a8cec10f219c17874f9f6b	203865	release:inputs
+common	supercell.tar.gz	4d17c93d1305b577954fca27ce78e39168d5619d91d52ba25cd07592c7fdad97	3507814	release:inputs
+common	jw_baroclinic_wave.tar.gz	50a80b7958f6a8604376d99f4034e069f06f1d71d566c2b81992f690fe56f9d4	26441522	release:inputs
+common	mpas-v8.4.2-f34984b.tar.gz	a540703f5c1b22b791927eb4407fd6200646d7865ad40446a968d85621e12354	10388929	release:inputs
+common	mmm-physics-a4baf7f.tar.gz	a7bbe605594000952f0b865853e97acde6cdb6813cb8a3b243003c715eff343d	170498	release:inputs
+common	mpas-8.4.2-double-7be24aab56bb8e3b7ffa87bf9fa03e1b7a1ba9e8b751e9e9ad77300e3866b43e.tar.zst	40313ccf86994cfa8c6e97f1982378e80232850e0c9332c4c6acb775600d66c4	22735624	release:mpas-build
+common	rrtmg_lw_tables.bin	64b16150bf5f138d2e7091e7e5df164403ce7931a2e3eedaedce46fa563aea84	1435576	url:https://raw.githubusercontent.com/Xassemblianist/CPPWRF/9fc925b632e22fb8229c23c3bef1a0ef296ce577/data/rrtmg/rrtmg_lw_tables.bin
+common	rrtmg_sw_tables.bin	21b48f5f0ee1583e0ac4ccccd38615c43821b4cdaf9fa3baeb693ff754e7a0f9	841044	url:https://raw.githubusercontent.com/Xassemblianist/CPPWRF/9fc925b632e22fb8229c23c3bef1a0ef296ce577/data/rrtmg/rrtmg_sw_tables.bin
+mpas842-dbl-mw-001	mpas842-dbl-mw-001.tar.zst	264e7da4a84df30762b8802f8db5c0218183e025a722d17ca0f9948855507235	26920295	parts:mpas842-dbl-mw-001
+mpas842-dbl-mw-003	mpas842-dbl-mw-003.tar.zst	40decbd87b26ac699236f369c0d4952457f55530ceb65d6d96a8ef799f0ca43d	27488159	parts:mpas842-dbl-mw-003
+mpas842-dbl-sc-001	mpas842-dbl-sc-001.tar.zst	ea47e824a970973f05e907e0ef1cc912ffe816b60df2e59df3360bceca674f39	403858595	parts:mpas842-dbl-sc-001
+mpas842-dbl-sc-002	mpas842-dbl-sc-002.tar.zst	a44918ffb917237ac8db8c4c1dc0275efedd050da7546824c1fd3e0831493c50	406492518	parts:mpas842-dbl-sc-002
+mpas842-dbl-jw-001	mpas842-dbl-jw-001.tar.zst	f7c81b6c57d3bfaa767015b690c46c4bd81b664889934415810e8a324d430a75	1330376772	parts:mpas842-dbl-jw-001
+mpas842-dbl-jw-002	mpas842-dbl-jw-002.tar.zst	11d679fa0e9c4ac62d9145e6d04f2a42f018828b9e5d87d32c6560808e61e74f	1651734882	parts:mpas842-dbl-jw-002
+mpas842-dbl-rg-004	mpas842-dbl-rg-004.tar.zst	59aeab7f5bbfda2cb4aa0b48a6f3d9a2c3686d90f54e76d3945272b1e60b2fba	1622029020	parts:mpas842-dbl-rg-004
+mpas842-dbl-rg24-001	mpas842-dbl-rg24-001.tar.zst	59e1eaf8d2d42a4b9e17d62567a0283de349260c2fc61abcca3119264331a372	2210029328	parts:mpas842-dbl-rg24-001
+mpas842-dbl-rgcp-001	mpas842-dbl-rgcp-001.tar.zst	3abb3d828df91f7e631a68279a3b0052d0254c1413afb0a4e4faa9e73275afbb	1873269384	parts:mpas842-dbl-rgcp-001
+mpas842-dbl-rgcp24-001	mpas842-dbl-rgcp24-001.tar.zst	e82ed02ee318c231f99a75d2d5e2dad26f6680d7a895893ffba4c3c1a9633e99	2482191079	parts:mpas842-dbl-rgcp24-001

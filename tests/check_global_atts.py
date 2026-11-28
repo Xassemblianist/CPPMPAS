@@ -64,6 +64,7 @@ def main():
             fails.append(f"{grid} has file_id / parent_id / mesh_spec: not a test of the warnings")
 
     out = Path(work) / "long_parent.history.nc"
+    out.unlink(missing_ok=True)
     subprocess.run([exe, "history", init, str(out), "--fields", "latCell", "--file-id", "0123456789"], check=True)
     with nc.Dataset(init) as s, nc.Dataset(out) as h:
         joined = s.getncattr("file_id").rstrip(" ") + "\n" + s.getncattr("parent_id").rstrip(" ")
@@ -77,6 +78,7 @@ def main():
     # than 512 is cut, and blanks the cut leaves at the end are trimmed
     for fid, want in (("a" * 600, "a" * 512), ("a" * 500 + " " * 20 + "x", "a" * 500), ("ab   ", "ab")):
         out = Path(work) / "long_id.history.nc"
+        out.unlink(missing_ok=True)
         subprocess.run([exe, "history", init, str(out), "--fields", "latCell", "--file-id", fid], check=True)
         got = get_text_att(out, "file_id")
         if got != want:
@@ -89,6 +91,7 @@ def main():
                            ("   ", "p", "p")):
         src = Path(work) / "nul_id.nc"
         out = Path(work) / "nul_id.history.nc"
+        out.unlink(missing_ok=True)
         shutil.copyfile(init, src)
         put_text_att(src, "file_id", fid)
         put_text_att(src, "parent_id", pid)

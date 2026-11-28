@@ -58,11 +58,11 @@ int main(int argc, char** argv) {
              mw.config_time_integration_order == 2 && !mw.config_split_dynamics_transport &&
              mw.config_horiz_mixing == "2d_fixed" && mw.config_h_theta_eddy_visc2 == 10.0 &&
              mw.config_v_mom_eddy_visc2 == 10.0 && mw.config_v_theta_eddy_visc2 == 10.0 &&
-             mw.config_h_mom_eddy_visc4 == 0.0 && mw.config_mix_full && !mw.config_scalar_advection &&
+             mw.config_h_mom_eddy_visc4 == 0.0 && !std::signbit(mw.config_h_mom_eddy_visc4) && mw.config_mix_full && !mw.config_scalar_advection &&
              mw.config_smdiv == 0.1 && mw.config_len_disp == 577.35 && mw.config_coef_3rd_order == 0.25 &&
              mw.config_apvm_upwinding == 0.5 && mw.config_IAU_option == "off" && mw.config_physics_suite == "none" &&
              mw.config_les_model == "none" && !mw.config_apply_lbcs && !mw.config_rayleigh_damp_u &&
-             mw.config_mpas_cam_coef == 0.0 && !mw.config_mix_scalars && mw.config_smagorinsky_coef == 0.125 &&
+             mw.config_mpas_cam_coef == 0.0 && !std::signbit(mw.config_mpas_cam_coef) && !mw.config_mix_scalars && mw.config_smagorinsky_coef == 0.125 &&
              mw.config_visc4_2dsmag == 0.05 && mw.config_del4u_div_factor == 10.0,
          "read_dycore_config: MW values");
   {  // config_len_disp comes from the InitConfig atm_core_init updated, not from the file
@@ -225,8 +225,8 @@ int main(int argc, char** argv) {
     q(3, 2, 3) = -7.0;  // the last element of the array
     q(1, 1, 2) = std::nan("");
     clamp_negative_scalars(q);
-    expect(q(1, 1, 1) == 0.0 && !std::signbit(q(1, 1, 1)) && q(2, 2, 2) == 0.0 && q(3, 1, 3) == 0.0 &&
-               !std::signbit(q(3, 1, 3)) && q(3, 2, 3) == 0.0,
+    expect(q(1, 1, 1) == 0.0 && !std::signbit(q(1, 1, 1)) && q(2, 2, 2) == 0.0 && !std::signbit(q(2, 2, 2)) &&
+               q(3, 1, 3) == 0.0 && !std::signbit(q(3, 1, 3)) && q(3, 2, 3) == 0.0 && !std::signbit(q(3, 2, 3)),
            "clamp: negative values (garbage column included) become +0.0");
     expect(q(1, 2, 1) == 0.0 && std::signbit(q(1, 2, 1)), "clamp: -0.0 is not < 0 and stays -0.0");
     expect(q(2, 1, 1) == 3.5 && std::isnan(q(1, 1, 2)), "clamp: positive values and NaN unchanged");
@@ -396,7 +396,7 @@ int main(int argc, char** argv) {
     DycoreFields f0;
     expect(throws_with([&] { allocate_dycore_fields(in.mesh, s0, f0); }, "the state Time was not read"),
            "allocate_dycore_fields refuses a state without Time");
-    expect(in.state.Time.rank() == 1 && in.state.Time(1) == 0.0, "Time is read from the MW init file (0)");
+    expect(in.state.Time.rank() == 1 && in.state.Time(1) == 0.0 && !std::signbit(in.state.Time(1)), "Time is read from the MW init file (0)");
   }
 
   // add_seconds

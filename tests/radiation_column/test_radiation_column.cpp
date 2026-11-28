@@ -180,7 +180,12 @@ int main(int argc, char** argv) {
       marker(o, "#S", step);
       dump_all(o);
     }
-    std::fclose(o);
+    // a short write (a full disk) is a failed run, never an output that looks complete
+    const bool write_error = std::ferror(o) != 0;
+    if (std::fclose(o) != 0 || write_error) {
+      std::fprintf(stderr, "cannot write %s\n", argv[2]);
+      return 1;
+    }
   } catch (const std::exception& e) {
     std::fprintf(stderr, "test_radiation_column: %s\n", e.what());
     return 1;

@@ -51,9 +51,16 @@ CPPMPAS_HD int fails_deep(int i) {
 
 int main() {
   int ndev = 0;
-  if (cudaGetDeviceCount(&ndev) != cudaSuccess || ndev < 1) {
+  // only a machine without a device skips (77); any other CUDA error (a driver older than the runtime, an
+  // initialisation error) is a failure
+  const cudaError_t dev_err = cudaGetDeviceCount(&ndev);
+  if (dev_err == cudaErrorNoDevice || (dev_err == cudaSuccess && ndev < 1)) {
     std::printf("SKIP: no usable CUDA device\n");
     return 77;
+  }
+  if (dev_err != cudaSuccess) {
+    std::printf("FAIL cudaGetDeviceCount: %s\n", cudaGetErrorString(dev_err));
+    return 1;
   }
   std::size_t stack0 = 0;
   if (cudaDeviceGetLimit(&stack0, cudaLimitStackSize) != cudaSuccess) {

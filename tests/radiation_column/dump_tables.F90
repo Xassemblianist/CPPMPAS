@@ -27,7 +27,7 @@ CONTAINS
     CHARACTER(len=*), INTENT(IN) :: path
     INTEGER :: uout, ios
     OPEN(NEWUNIT=uout, FILE=path, ACCESS='STREAM', FORM='UNFORMATTED', CONVERT='LITTLE_ENDIAN', STATUS='REPLACE', IOSTAT=ios)
-    IF (ios /= 0) STOP 'cannot open the LW tables file'
+    IF (ios /= 0) ERROR STOP 'cannot open the LW tables file'
   ! Lookup tables from rrlw_tbl: tau_tbl(0:10000), exp_tbl(0:10000), tfn_tbl(0:10000)
   WRITE(uout) tau_tbl
   WRITE(uout) exp_tbl
@@ -90,7 +90,7 @@ CONTAINS
     CHARACTER(len=*), INTENT(IN) :: path
     INTEGER :: uout, ios
     OPEN(NEWUNIT=uout, FILE=path, ACCESS='STREAM', FORM='UNFORMATTED', CONVERT='LITTLE_ENDIAN', STATUS='REPLACE', IOSTAT=ios)
-    IF (ios /= 0) STOP 'cannot open the SW tables file'
+    IF (ios /= 0) ERROR STOP 'cannot open the SW tables file'
   ! 1. Lookup tables from rrsw_tbl: exp_tbl(0:10000)
   WRITE(uout) exp_tbl
 

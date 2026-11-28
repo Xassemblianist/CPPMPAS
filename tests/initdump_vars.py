@@ -14,7 +14,10 @@ def main(argv):
     if len(argv) != 3:
         print(__doc__)
         return 2
-    want = [v for v in argv[2].split(",") if v]
+    want = argv[2].split(",")
+    if "" in want or len(set(want)) != len(want):
+        print(f"ERROR the list {argv[2]!r} has an empty or a repeated name")
+        return 2
     with nc.Dataset(argv[1]) as d:
         have = list(d.variables)
         records = len(d.dimensions["Time"]) if "Time" in d.dimensions else -1

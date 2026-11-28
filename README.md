@@ -50,6 +50,33 @@ For tests, set `CPPMPAS_CASES_DIR` to the extracted NCAR test cases, `CPPMPAS_MP
 [reference releases](docs/REFERENCES.md). The tests compare with the in-tree `tools/mpas_compare.py`, whose own
 tests run as `compare_unit` and `compare_mutants`. `unit_libm` needs glibc 2.41 on an x86-64 CPU with FMA and AVX2.
 
+### CPU suite on GitHub runners
+
+The workflow [`cpu_suite`](.github/workflows/cpu_suite.yml) runs the CPU suite in the Debian 13 image of the
+references (glibc 2.41, gcc and gfortran 14.2). It builds the Release CPU build and the Intel `libmvec` preload, and
+fetches every input from cppmpas-data. Each input is checked against its SHA-256 in [ci/data.tsv](ci/data.tsv) and
+kept in the Actions cache. The tests are split into parallel jobs ([ci/plan.py](ci/plan.py)), and ctest runs under the
+preload:
+
+```bash
+gh workflow run cpu_suite.yml -f ref=<branch or commit> -f labels=all   # or short (no label long), or long
+gh run list --workflow cpu_suite.yml -L 1                              # then: gh run watch <id>
+```
+
+The run fails if any test fails or does not run. The `summary` artifact lists the counts per label and every
+failing test. This is a CPU build, so the GPU tests exit 77; they are counted as skipped, never as passed. Pushes to
+`main` run `all`.
+
+A local commit that is not pushed goes through [tools/ci/ci_submit.sh](tools/ci/ci_submit.sh):
+
+```bash
+tools/ci/ci_submit.sh [COMMIT] [--labels short|long|all] [--no-wait]
+```
+
+It uploads a git bundle of the commits `origin/main` lacks to the `jobs` release of cppmpas-data under a unique
+name, starts `cpu_suite` with it (the build job checks its SHA-256 and checks the commit out,
+[ci/fetch_bundle.sh](ci/fetch_bundle.sh)), waits, prints the summary and deletes the bundle whatever the outcome.
+
 ## Goal
 
 - The same answers as MPAS-Atmosphere, bit for bit: a pinned MPAS release built with GNU Fortran is the reference, and

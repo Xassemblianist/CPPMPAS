@@ -7,6 +7,8 @@ reported.
 usage: test_compare_arrays.py <scratch dir>
 """
 import contextlib
+import ctypes
+import ctypes.util
 import io
 import sys
 from pathlib import Path
@@ -43,6 +45,7 @@ def main():
         ("identical", dict(att=("scale", np.int32(1))), 0),
         ("char attribute for int", dict(att=("scale", "1")), 1),
         ("int64 attribute for int", dict(att=("scale", np.int64(1))), 1),
+        ("uint attribute for int (the same bytes, another type)", dict(att=("scale", np.uint32(1))), 1),
         ("attribute value", dict(att=("scale", np.int32(2))), 1),
         ("signed zero", dict(att=("scale", np.int32(1)), values=(1.0, 2.0, 0.0)), 1),
         ("variable type", dict(vtype="f4", att=("scale", np.int32(1))), 1),
@@ -70,10 +73,45 @@ def main():
     print(f"{'ok  ' if rc == 1 else 'FAIL'} attribute order: rc {rc} {out}")
     bad += rc != 1
     # an empty name in the list is an input error, not a name left out
-    rc, out = run(ref, ref, "x,")
+    make(cand, att=("scale", np.int32(1)))
+    rc, out = run(ref, cand, "x,")
     print(f"{'ok  ' if rc == 2 else 'FAIL'} empty name in the list: rc {rc} {out}")
     bad += rc != 2
-    for p in (ref, ref2, ref3, cand):
+    # a file compared with itself is an input error
+    rc, out = run(ref, ref)
+    print(f"{'ok  ' if rc == 2 else 'FAIL'} same file: rc {rc} {out}")
+    bad += rc != 2
+    # a truncated candidate (the NetCDF library reads the missing bytes as zeros)
+    make(cand, att=("scale", np.int32(1)), values=(1.0, 2.0, 0.0))
+    rr = w / "ca_ref4.nc"
+    make(rr, att=("scale", np.int32(1)), values=(1.0, 2.0, 0.0))
+    cand.write_bytes(cand.read_bytes()[:-8])
+    rc, out = run(rr, cand)
+    print(f"{'ok  ' if rc == 1 else 'FAIL'} truncated candidate: rc {rc} {out}")
+    bad += rc != 1
+    # a text attribute "m\0" (written through the C library; netCDF4-python reads it as "m")
+    make(cand, att=("units", "m"))
+    make(rr, att=("units", "m"))
+    lib = ctypes.CDLL(ctypes.util.find_library("netcdf"))
+    ncid, varid = ctypes.c_int(), ctypes.c_int()
+    rcs = [lib.nc_open(str(cand).encode(), 1, ctypes.byref(ncid)), lib.nc_redef(ncid),
+           lib.nc_inq_varid(ncid, b"x", ctypes.byref(varid)),
+           lib.nc_put_att_text(ncid, varid, b"units", ctypes.c_size_t(2), b"m\0"), lib.nc_close(ncid)]
+    rc, out = run(rr, cand)
+    print(f"{'ok  ' if rc == 1 and not any(rcs) else 'FAIL'} NUL in a text attribute: rc {rc} {out}")
+    bad += rc != 1 or any(rcs)
+    # a time variable without records in the reference
+    for path in (rr, cand):
+        with nc.Dataset(path, "w", format="NETCDF3_64BIT_DATA") as d:
+            d.createDimension("Time", None)
+            d.createDimension("n", 3)
+            d.createVariable("x", "f8", ("Time", "n"))
+    with nc.Dataset(cand, "a") as d:
+        d["x"][0] = np.zeros(3)
+    rc, out = run(rr, cand)
+    print(f"{'ok  ' if rc == 2 else 'FAIL'} reference without the record: rc {rc} {out}")
+    bad += rc != 2
+    for p in (ref, ref2, ref3, rr, cand):
         p.unlink()
     return 1 if bad else 0
 
