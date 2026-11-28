@@ -1,6 +1,81 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.24)
+
+# Flags that change floating-point results, refused wherever they appear. Each is matched as a whole flag: the
+# character before it and the one after it must separate flags (blank, tab, ',', ';', a generator expression's ':' or
+# '>', a quote; '=' before it for -Xcompiler=...), so -fno-fast-math, -fsigned-zeros, -mno-fma or --fmad=false never
+# match. The host compiler's (also when nvcc passes them on through -Xcompiler / --compiler-options, '=' or a blank,
+# comma lists): -Ofast, fast-math and the flags it implies that change results, -fno-signed-zeros, complex arithmetic
+# without the range checks, FMA contraction (any -ffp-contract but off), FMA instructions (-mfma, any -march), x87
+# arithmetic (-mfpmath with 387, -m32, -mx32, -mno-sse, -mno-sse2, -fexcess-precision=fast). nvcc's (and ptxas's
+# through -Xptxas): --use_fast_math, --fmad=true, --ftz=true, --prec-div=false, --prec-sqrt=false, with '=' or a
+# blank, one dash or two.
+set(_cppmpas_sep "[ \t,;:=>\"']")
+set(_cppmpas_end "[ \t,;>\"']")
+set(_cppmpas_val "[^ \t,;>\"']")
+set(_cppmpas_fp_bad "${_cppmpas_sep}(-Ofast|-ffast-math|-funsafe-math-optimizations|-fassociative-math|-freciprocal-math|-ffinite-math-only|-fno-signed-zeros|-fcx-limited-range|-ffp-contract=(fast|on)${_cppmpas_val}*|-mfma4?|-march=${_cppmpas_val}+|-mfpmath=${_cppmpas_val}*387${_cppmpas_val}*|-m32|-mx32|-mno-sse2?|-fexcess-precision=fast|-?-use_fast_math|-?-fmad[= ]+(true|1)|-?-ftz[= ]+(true|1)|-?-prec-div[= ]+(false|0)|-?-prec-sqrt[= ]+(false|0))${_cppmpas_end}")
+# cppmpas_check_fp_flags(<where> <flags>): FATAL_ERROR when <flags> (a command-line string or a CMake list, generator
+# expressions included) hold a refused flag
+function(cppmpas_check_fp_flags where flags)
+  if(" ${flags} " MATCHES "${_cppmpas_fp_bad}")
+    message(FATAL_ERROR "${where}: '${CMAKE_MATCH_1}' changes the floating-point results (CPPMPAS needs strict IEEE)")
+  endif()
+endfunction()
+# every CMAKE_<LANG>_FLAGS, CMAKE_<LANG>_FLAGS_<CONFIG> (any configuration, also one not in
+# CMAKE_CONFIGURATION_TYPES) and CMAKE_<KIND>_LINKER_FLAGS[_<CONFIG>] (-ffast-math at the link adds crtfastmath.o,
+# which sets flush-to-zero), whether CUDA is enabled or not, the environment flags CMake starts them from (CXXFLAGS,
+# CFLAGS, CUDAFLAGS, FFLAGS, LDFLAGS) and nvcc's own (NVCC_PREPEND_FLAGS, NVCC_APPEND_FLAGS)
+function(cppmpas_check_fp_variables)
+  get_cmake_property(_vars VARIABLES)
+  foreach(_v IN LISTS _vars)
+    if(_v MATCHES "^CMAKE_[A-Za-z]+_FLAGS(_[A-Za-z0-9_]+)?$" OR _v MATCHES "^CMAKE_[A-Z]+_LINKER_FLAGS(_[A-Za-z0-9_]+)?$")
+      cppmpas_check_fp_flags("${_v}" "${${_v}}")
+    endif()
+  endforeach()
+  foreach(_e IN ITEMS CXXFLAGS CFLAGS CUDAFLAGS FFLAGS LDFLAGS NVCC_PREPEND_FLAGS NVCC_APPEND_FLAGS)
+    cppmpas_check_fp_flags("environment ${_e}" "$ENV{${_e}}")
+  endforeach()
+endfunction()
+# the compile and link options of every directory, every target (and the imported ones the top-level directory sees)
+# and every source file of a target, from the top-level directory down
+function(cppmpas_check_fp_directory dir)
+  foreach(_p IN ITEMS COMPILE_OPTIONS LINK_OPTIONS)
+    get_property(_x DIRECTORY "${dir}" PROPERTY ${_p})
+    cppmpas_check_fp_flags("directory ${dir} ${_p}" "${_x}")
+  endforeach()
+  get_property(_targets DIRECTORY "${dir}" PROPERTY BUILDSYSTEM_TARGETS)
+  get_property(_imported DIRECTORY "${dir}" PROPERTY IMPORTED_TARGETS)
+  foreach(_t IN LISTS _targets _imported)
+    if(NOT TARGET ${_t})  # an imported target that is not global is seen only in and below its own directory
+      continue()
+    endif()
+    foreach(_p IN ITEMS COMPILE_OPTIONS INTERFACE_COMPILE_OPTIONS COMPILE_FLAGS LINK_OPTIONS INTERFACE_LINK_OPTIONS
+                        LINK_FLAGS STATIC_LIBRARY_OPTIONS)
+      get_property(_x TARGET ${_t} PROPERTY ${_p})
+      cppmpas_check_fp_flags("target ${_t} ${_p}" "${_x}")
+    endforeach()
+    get_property(_is_imported TARGET ${_t} PROPERTY IMPORTED)
+    if(_is_imported)
+      continue()
+    endif()
+    get_property(_srcs TARGET ${_t} PROPERTY SOURCES)
+    foreach(_s IN LISTS _srcs)
+      foreach(_p IN ITEMS COMPILE_OPTIONS COMPILE_FLAGS)
+        get_property(_x SOURCE "${_s}" TARGET_DIRECTORY ${_t} PROPERTY ${_p})
+        cppmpas_check_fp_flags("source ${_s} of target ${_t} ${_p}" "${_x}")
+      endforeach()
+    endforeach()
+  endforeach()
+  get_property(_subdirs DIRECTORY "${dir}" PROPERTY SUBDIRECTORIES)
+  foreach(_d IN LISTS _subdirs)
+    cppmpas_check_fp_directory("${_d}")
+  endforeach()
+endfunction()
+# before project(): a refused flag fails here, not in the compiler checks project() runs with it (-m32 without a
+# 32-bit library); again after the languages are enabled and at the end of this file with every target
+cppmpas_check_fp_variables()
 project(CPPMPAS VERSION 0.0.1 LANGUAGES CXX)
+cppmpas_check_fp_variables()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -26,20 +101,8 @@ option(CPPMPAS_OPENMP "CPU kernels run with OpenMP (src/core/backend.hpp paralle
 
 # Strict IEEE, as CPPWRF (CMakeLists.txt of CPPWRF 7fac5bf): no FMA contraction (the gfortran reference on x86-64
 # without -march emits none), no fast-math. Release keeps CMake's -O3 -DNDEBUG, without -march: the reference is
-# built without -march. Flags the user gives (CMAKE_CXX_FLAGS, CMAKE_CXX_FLAGS_<CONFIG>) are kept, and checked here.
+# built without -march. Flags the user gives are kept, and checked (cppmpas_check_fp_flags above).
 add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-ffp-contract=off>)
-set(_cppmpas_configs ${CMAKE_CONFIGURATION_TYPES})
-if(NOT _cppmpas_configs)
-  set(_cppmpas_configs "${CMAKE_BUILD_TYPE}")
-endif()
-set(_cppmpas_x87 "-mfpmath=[^ ]*387|-m32|-mno-sse2?( |$)|-mx32|-fexcess-precision=fast")
-foreach(_cfg IN LISTS _cppmpas_configs)
-  string(TOUPPER "${_cfg}" _bt)
-  if("${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${_bt}}" MATCHES
-     "(-Ofast|-f(fast-math|unsafe-math-optimizations|associative-math|reciprocal-math|finite-math-only)|-ffp-contract=(fast|on)|${_cppmpas_x87})")
-    message(FATAL_ERROR "CMAKE_CXX_FLAGS: '${CMAKE_MATCH_1}' changes the floating-point results (CPPMPAS needs strict IEEE)")
-  endif()
-endforeach()
 
 if(CPPMPAS_ENABLE_CUDA)
   if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
@@ -63,17 +126,9 @@ if(CPPMPAS_ENABLE_CUDA)
   # CMAKE_CUDA_FLAGS_<CONFIG>, which are checked below.
   add_compile_options("$<$<COMPILE_LANGUAGE:CUDA>:--fmad=false;--ftz=false;--prec-div=true;--prec-sqrt=true;-Xcompiler=-ffp-contract=off>")
   add_compile_options("$<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda;--expt-relaxed-constexpr>")
-  # flags that change results, in any form nvcc takes them (--use_fast_math / -use_fast_math, --fmad / -fmad,
-  # --ftz, --prec-div, --prec-sqrt, with '=' or a blank) and every host-compiler flag the CXX check refuses, however
-  # it reaches the host compiler (-Xcompiler, --compiler-options, with '=', a blank or a comma list): nvcc has no
-  # option of its own with these names, so any occurrence is refused
-  foreach(_cfg IN LISTS _cppmpas_configs)
-    string(TOUPPER "${_cfg}" _bt)
-    if("${CMAKE_CUDA_FLAGS} ${CMAKE_CUDA_FLAGS_${_bt}}" MATCHES
-       "(use_fast_math|fmad[= ]*(true|1)|ftz[= ]*(true|1)|prec-div[= ]*(false|0)|prec-sqrt[= ]*(false|0)|-Ofast|-f(fast-math|unsafe-math-optimizations|associative-math|reciprocal-math|finite-math-only)|-ffp-contract=(fast|on)|${_cppmpas_x87})")
-      message(FATAL_ERROR "CMAKE_CUDA_FLAGS: '${CMAKE_MATCH_1}' changes the floating-point results (CPPMPAS needs strict IEEE)")
-    endif()
-  endforeach()
+  # the user's CMAKE_CUDA_FLAGS[_<CONFIG>] and nvcc's defaults are checked with every other flag
+  # (cppmpas_check_fp_variables above and at the end of this file)
+  cppmpas_check_fp_variables()
 endif()
 
 # NetCDF-C from the system (nc-config / pkg-config); no MPI.
@@ -175,3 +230,8 @@ endif()
 
 enable_testing()
 add_subdirectory(tests)
+
+# every flag of the finished configuration: the variables (also those enable_language set) and every directory,
+# target and source file
+cppmpas_check_fp_variables()
+cppmpas_check_fp_directory("${CMAKE_SOURCE_DIR}")

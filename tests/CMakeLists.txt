@@ -47,11 +47,21 @@ foreach(flag Ofast ffast-math)
     "rm -rf '${W}/cmake_${flag}'; out=$(${CMAKE_COMMAND} -S '${CMAKE_SOURCE_DIR}' -B '${W}/cmake_${flag}' -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS_RELEASE='-O2 -${flag}' 2>&1); rc=$?; rm -rf '${W}/cmake_${flag}'; echo \"$out\" | tail -5; [ $rc -ne 0 ] && echo \"$out\" | grep -q 'changes the floating-point results'")
   set_tests_properties(cmake_rejects_${flag} PROPERTIES FIXTURES_REQUIRED work_dir)
 endforeach()
+# every flag that changes results, in every place a flag comes from (CMAKE_<LANG>_FLAGS of every configuration, the
+# CUDA flags without a CUDA build, the linker flags, the environment, a directory, a target, a source file), each
+# refused with its name, and look-alike flags (-fno-fast-math, --fmad=false, ...) accepted (tests/check_fp_flags.py)
+add_test(NAME cmake_fp_flags COMMAND ${PY} ${T}/check_fp_flags.py ${CMAKE_COMMAND} ${CMAKE_SOURCE_DIR}
+  ${W}/cmake_fp_flags "${CMAKE_GENERATOR}" ${CMAKE_CXX_COMPILER})
+set_tests_properties(cmake_fp_flags PROPERTIES FIXTURES_REQUIRED work_dir)
 
 # the CPU build has none of the GPU's capacity limits (work arrays, columns, RBF points)
 add_executable(test_backend test_backend.cpp)
 target_link_libraries(test_backend PRIVATE cppmpas)
 add_test(NAME unit_backend COMMAND test_backend)
+# the CUDA device probe's classification (core/gpu_probe.hpp, used by gpu::init): only a missing device is a skip
+add_executable(test_gpu_probe test_gpu_probe.cpp)
+target_link_libraries(test_gpu_probe PRIVATE cppmpas)
+add_test(NAME unit_gpu_probe COMMAND test_gpu_probe)
 
 # local edge / vertex order and in-memory arrays against an independent re-implementation
 foreach(case MW SC JW)

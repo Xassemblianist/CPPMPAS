@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Run tools/mpas_compare.py on a reference and a candidate directory of step files and require that every variable
 is identical: the report may hold no difference other than "global attributes", and exactly N variables must have been
-compared. The global attributes are then checked file by file here: every attribute the candidate writes has the
-reference's value (file_id, a random identifier, excepted), and the reference's attributes the candidate lacks are
-only the namelist options (config_*) and the physics attributes MPAS writes (NOT_WRITTEN), which CPPMPAS's writer
-does not write yet. Only the reference's step.*.nc files are compared (a reference steps/ directory may also hold
-other files, such as initdump.nc). Attribute values are compared as the raw header bytes with their NetCDF type (so
--0.0 differs from +0.0, NC_FLOAT from NC_DOUBLE, and NUL bytes count), and the attributes the candidate writes must
-be in the reference's order. A report file left by an earlier run is deleted first.
+compared. The global attributes are then checked file by file here: the candidate has exactly the reference's
+attributes, in the reference's order, each with the reference's value, the namelist options (config_*) and the
+physics options MPAS writes (input_soil_data, ..., camdim1) included; only file_id's value (a random identifier) is
+not compared. Only the reference's step.*.nc files are compared (a reference steps/ directory may also hold other
+files, such as initdump.nc). Attribute values are compared as the raw header bytes with their NetCDF type (so -0.0
+differs from +0.0, NC_FLOAT from NC_DOUBLE, and NUL bytes count). A report file left by an earlier run is deleted
+first.
 
 usage: dycore_compare.py <mpas_compare.py> <reference dir> <candidate dir> <report.json> <N>
 """
@@ -20,9 +20,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import mpas_compare  # noqa: E402  (its raw header reader)
-
-NOT_WRITTEN = {"input_soil_data", "input_soil_temperature_lag", "num_soil_layers", "months", "noznlev", "naerlev",
-               "camdim1"}
 
 
 def global_attribute_problems(ref_dir, cand_dir):
@@ -51,10 +48,12 @@ def global_attribute_problems(ref_dir, cand_dir):
             elif v != ra[k]:
                 out.append(f"{n}: attribute {k} = {v!r}, reference {ra[k]!r}")
         for k in ra:
-            if k not in ca and not k.startswith("config_") and k not in NOT_WRITTEN:
+            if k not in ca:
                 out.append(f"{n}: attribute {k} missing")
-        order_c = [k for k, _, _ in hc["gatts"] if k in ra]
-        order_r = [k for k, _, _ in hr["gatts"] if k in ca]
+        order_c = [k for k, _, _ in hc["gatts"]]
+        order_r = [k for k, _, _ in hr["gatts"]]
+        if len(set(order_c)) != len(order_c):
+            out.append(f"{n}: an attribute name is written twice")
         if order_c != order_r:
             out.append(f"{n}: attribute order {order_c}, reference {order_r}")
     return out

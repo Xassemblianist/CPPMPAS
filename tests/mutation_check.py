@@ -1739,11 +1739,35 @@ MUTATIONS += [
      '          tend_scalars(m.index_ni, k, i) = tend_scalars(m.index_ni, k, i);', ["mynn_column"]),
 ]
 
+# the CUDA device probe (core/gpu_probe.hpp, gpu::init): only a missing device is a skip, any other CUDA error fails;
+# and the namelist options as global attributes of the step files (mpas_subdriver.F:532-557), which
+# tests/dycore_compare.py compares attribute by attribute (only file_id's value excepted)
+GP = "src/core/gpu_probe.hpp"
+STEP_CMP = ["dycore_MW_mpas_compare", "dycore_JW_mpas_compare", "dycore_SC_mpas_compare"]
+MUTATIONS += [
+    (GP, "  return DeviceProbe::error;\n}", "  return DeviceProbe::no_device;\n}", ["unit_gpu_probe"]),
+    (GP, "  if (err == kCudaErrorNoDevice) return DeviceProbe::no_device;",
+     "  if (err != kCudaSuccess) return DeviceProbe::no_device;", ["unit_gpu_probe"]),
+    (X, "      step_opt.config_atts = config_atts;", "      step_opt.config_atts = {};", STEP_CMP),
+    (X, "      config_atts.push_back({na.name, {na.type, v}});",
+     '      if (na.name != "config_dt") config_atts.push_back({na.name, {na.type, v}});', STEP_CMP),
+    (X, "      if (auto it = resolved.find(na.name); it != resolved.end()) v = *it->second;",
+     "      (void)resolved;", ["dycore_MW_mpas_compare", "dycore_JW_mpas_compare"]),
+    (W, '        f.put_att_int("", name, i);', '        f.put_att_double("", name, i);', STEP_CMP),
+    # the top-level CMakeLists.txt's refusal of flags that change results (tests/check_fp_flags.py configures with each)
+    ("CMakeLists.txt", "|-fno-signed-zeros|", "|", ["cmake_fp_flags"]),
+    ("CMakeLists.txt", 'set(_cppmpas_sep "[ \\t,;:=>\\"\']")', 'set(_cppmpas_sep "")', ["cmake_fp_flags"]),
+    ("CMakeLists.txt", 'set(_cppmpas_end "[ \\t,;>\\"\']")', 'set(_cppmpas_end "")', ["cmake_fp_flags"]),
+    ("CMakeLists.txt", 'cppmpas_check_fp_directory("${CMAKE_SOURCE_DIR}")', '# cppmpas_check_fp_directory', ["cmake_fp_flags"]),
+    ("CMakeLists.txt", '    if(_v MATCHES "^CMAKE_[A-Za-z]+_FLAGS(_[A-Za-z0-9_]+)?$" OR',
+     '    if(_v MATCHES "^CMAKE_[A-Za-z]+_FLAGS(_RELEASE)?$" OR', ["cmake_fp_flags"]),
+]
+
 # The convection_permitting suite in cppmpas run (physics/mpas_atmphys_driver.cpp), against mpas842-dbl-rgcp-001
 # (dycore_RGCP_*: the steps, the restart and history fields, the forecast's streams) and mpas842-dbl-rgcp24-001
 # (dycore_RGCP24_*, label long): Thompson's n_microp sub-steps and nt_c / mu_c, the sf_mynn inputs, MYNN's initflag
 # and grid length, the ni tendency of physics_get_tend, the Grell-Freitas closure and shortwave input, and the
-# l_diags reflectivity maximum; the suite's scalars. Indices 789-799.
+# l_diags reflectivity maximum; the suite's scalars. Indices 800-810.
 DRV = "src/physics/mpas_atmphys_driver.cpp"
 MUTATIONS += [
     (DRV, "    q.n_microp = r.n_microp;", "    q.n_microp = 1;", ["dycore_RGCP_step1_qr"]),

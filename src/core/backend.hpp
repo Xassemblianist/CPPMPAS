@@ -129,9 +129,11 @@ CPPMPAS_HD inline void kernel_fail(const char* head, long value, const char* tai
 // ---- device runtime (CUDA build; the CPU build has none) ----
 #if defined(CPPMPAS_USE_CUDA)
 namespace gpu {
-// Exit status of a GPU executable when there is no usable CUDA device: CTest's SKIP_RETURN_CODE.
+// Exit status of a GPU executable when the machine has no CUDA device: CTest's SKIP_RETURN_CODE.
 inline constexpr int kNoDeviceExit = 77;
-// Selects device 0 and sets the kernel error slot. false, with the reason, when there is no usable device.
+// Selects device 0 and sets the kernel error slot. false, with the reason, only when the machine has no CUDA device
+// (cudaErrorNoDevice or a count of 0, core/gpu_probe.hpp); any other CUDA error (a driver older than the runtime, an
+// initialisation error, no memory) throws Error with the runtime's message.
 bool init(std::string& why_not);
 // init() before a launch: every launch has the kernel error slot (Error when there is no usable device)
 void ensure_ready();

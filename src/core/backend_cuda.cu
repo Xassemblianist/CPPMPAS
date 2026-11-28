@@ -12,6 +12,7 @@
 #include <string>
 
 #include "core/backend.hpp"
+#include "core/gpu_probe.hpp"
 
 namespace cppmpas {
 
@@ -20,6 +21,8 @@ __device__ KernelError* kernel_error_slot = nullptr;
 }  // namespace detail
 
 namespace gpu {
+static_assert(static_cast<int>(cudaSuccess) == kCudaSuccess && static_cast<int>(cudaErrorNoDevice) == kCudaErrorNoDevice,
+              "core/gpu_probe.hpp: the CUDA error codes differ from cuda_runtime.h");
 namespace {
 KernelError* g_err = nullptr;  // managed: written by the device, read by the host after the launch
 bool g_ready = false;
@@ -36,10 +39,17 @@ bool init(std::string& why_not) {
   if (g_ready) return true;
   int n = 0;
   const cudaError_t e = cudaGetDeviceCount(&n);
-  if (e != cudaSuccess || n < 1) {
-    why_not = e != cudaSuccess ? std::string(cudaGetErrorString(e)) : std::string("no CUDA device");
-    (void)cudaGetLastError();
-    return false;
+  // core/gpu_probe.hpp: false (a skip) only when the machine has no device; any other CUDA error is an Error
+  switch (classify_device_count(static_cast<int>(e), n)) {
+    case DeviceProbe::ready:
+      break;
+    case DeviceProbe::no_device:
+      why_not = e != cudaSuccess ? std::string(cudaGetErrorString(e)) : std::string("no CUDA device");
+      (void)cudaGetLastError();
+      return false;
+    case DeviceProbe::error:
+      (void)cudaGetLastError();
+      fail("cudaGetDeviceCount", e);
   }
   ck(cudaSetDevice(0), "cudaSetDevice");
   void* p = nullptr;
