@@ -138,8 +138,15 @@ A first map of the work, counted from the two source trees:
 
 ## License
 
-GPL-3.0-or-later (LICENSE). Files derived from MPAS keep MPAS's own copyright and license notices (MPAS is distributed
-under a BSD-style license), and files derived from WRF keep WRF's notices, as in CPPWRF.
+The project-owned CPPMPAS code is licensed under the GNU General Public License, version 3 or any later version (GPL-3.0-or-later). See [LICENSE](LICENSE).
+
+Commercial licenses for the project-owned code are available on request (contact via GitHub: [Xassemblianist](https://github.com/Xassemblianist)).
+
+[THIRD_PARTY.md](THIRD_PARTY.md) lists the upstream components and their license terms. Those terms apply to the relevant code, tables and fixtures in any distribution. Some components in the current tree require separate clearance or replacement before redistribution as a combined GPL or paid release.
+
+Files derived from MPAS keep MPAS's own copyright and license notices, and files derived from WRF keep WRF's notices, as in CPPWRF.
+
+Outside contributions need a signed Contributor License Agreement; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Author
 
