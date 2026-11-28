@@ -614,6 +614,7 @@ void physics_driver(PhysicsRun& r, const Mesh& m, State& s, Diag& d, RegistryPoo
     PblPools q;
     q.nVertLevels = nV;
     q.pbl_scheme = c.config_pbl_scheme;
+    q.config_do_restart = c.config_do_restart;  // PB:814, 821, 935 (initflag and do_restart: MYNN's only)
     q.config_ysu_pblmix = c.config_ysu_pblmix;
     q.xland = cv(p.R("xland"));
 #define CPPMPAS_C(x) q.x = cv(p.R(#x));
@@ -634,7 +635,6 @@ void physics_driver(PhysicsRun& r, const Mesh& m, State& s, Diag& d, RegistryPoo
     q.f_qc = r.f_qc;
     q.f_qi = r.f_qi;
     if (c.config_pbl_scheme == "bl_mynn") {  // PB:316-338, 423-506, 551-562, 627-706
-      q.config_do_restart = c.config_do_restart;
       q.config_len_disp = c.config_len_disp;
       q.mynn = mynn_options(c);
       q.mynn_const = r.mynn_const;

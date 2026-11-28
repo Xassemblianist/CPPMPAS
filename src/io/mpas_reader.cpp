@@ -613,8 +613,12 @@ bool find_mesh_dim(const std::string& d) {
 }
 }  // namespace
 
-void read_input_pools(const std::string& path, MpasInput& in, const ActivePackages& packages,
-                      const std::map<std::string, int>& dims) {
+namespace {
+// read_input_pools / read_restart_pools: the pool fields of one stream (stream_vars) with the skip test
+template <class Skip>
+void read_stream_pools(const std::string& path, MpasInput& in, const ActivePackages& packages,
+                       const std::map<std::string, int>& dims, const std::vector<std::string>& stream_vars,
+                       const Skip& skip) {
   const NcFile f = NcFile::open_read(path);
   const Mesh& m = in.mesh;
   RegistryPools& p = in.pools;
@@ -625,12 +629,14 @@ void read_input_pools(const std::string& path, MpasInput& in, const ActivePackag
     if (f.has_dim(d)) p.dims[d] = static_cast<int>(f.dim_len(d));
   for (const auto& [d, n] : p.dims)
     if (!find_mesh_dim(d)) in.mesh.extra_dims[d] = n;
-  const std::vector<std::string> handled = handled_init_fields();
-  for (const auto& n : input_stream_vars()) {
+  for (const auto& n : stream_vars) {
     if (n == "scalars") continue;
-    if (std::find(handled.begin(), handled.end(), n) != handled.end()) continue;
+    if (skip(n)) continue;
     const RegistryVar& rv = registry_var(n);
-    if (rv.var_struct == "mesh" || rv.var_struct == "state") continue;  // the reader's own (handled above)
+    // the reader's own (handled above), except qv_init: a mesh field of the restart stream the mesh reader does not
+    // hold: no routine of the atmosphere core sets it, so MPAS writes back what the restart stream read
+    // (Registry.xml:661, 1591; it is not in the input stream, so a cold start keeps the Registry default)
+    if ((rv.var_struct == "mesh" && n != "qv_init") || rv.var_struct == "state") continue;
     if (!packages.active(rv)) continue;  // "deactivated due to packages"
     if (!f.has_var(n)) {  // as for a scalar above
       in.warnings.push_back(std::string("Variable ") + n + " not in input file.");
@@ -678,6 +684,24 @@ void read_input_pools(const std::string& path, MpasInput& in, const ActivePackag
     in.source.vars_read.push_back(n);
     in.source.var_atts[n] = f.atts(n);
   }
+}
+}  // namespace
+
+void read_input_pools(const std::string& path, MpasInput& in, const ActivePackages& packages,
+                      const std::map<std::string, int>& dims) {
+  const std::vector<std::string> handled = handled_init_fields();
+  read_stream_pools(path, in, packages, dims, input_stream_vars(), [&](const std::string& n) {
+    return std::find(handled.begin(), handled.end(), n) != handled.end();
+  });
+}
+
+void read_restart_pools(const std::string& path, MpasInput& in, const ActivePackages& packages,
+                        const std::map<std::string, int>& dims, const std::vector<std::string>& held) {
+  const std::vector<std::string> done = in.source.vars_read;  // what read_mpas_restart read (mesh, state, diag)
+  read_stream_pools(path, in, packages, dims, restart_stream_vars(), [&](const std::string& n) {
+    return std::find(done.begin(), done.end(), n) != done.end() ||
+           std::find(held.begin(), held.end(), n) != held.end();
+  });
 }
 
 }  // namespace cppmpas

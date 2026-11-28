@@ -981,7 +981,7 @@ MUTATIONS += [
     (X, "    if (!cfg.config_do_restart) check_stream_time(", "    if (false) check_stream_time(", ["restart_refusals_MW"]),
     (X, '    if (cfg.config_do_restart)\n      throw Error("config_do_restart = true: init',
      '    if (false)\n      throw Error("config_do_restart = true: init', ["namelist_MW"]),
-    (X, "    if (cfg.config_do_restart) {\n      rst = read_mpas_restart", "    if (false) {\n      rst = read_mpas_restart",
+    (X, "    if (cfg.config_do_restart) {\n      // the physics suite (physics_namelist_check", "    if (false) {\n      // the physics suite (physics_namelist_check",
      ["dycore_restart0_run_MW"]),
     (A, "  s.xtime = stamp;                                    // :261-262",
      '  s.xtime = stamp + "x";                              // :261-262', ["dycore_restart0_MW_xtime", "dycore_MW_step0_xtime"]),
@@ -1765,58 +1765,6 @@ MUTATIONS += [
      '    if(_v MATCHES "^CMAKE_[A-Za-z]+_FLAGS(_RELEASE)?$" OR', ["cmake_fp_flags"]),
 ]
 
-# The convection_permitting suite in cppmpas run (physics/mpas_atmphys_driver.cpp), against mpas842-dbl-rgcp-001
-# (dycore_RGCP_*: the steps, the restart and history fields, the forecast's streams) and mpas842-dbl-rgcp24-001
-# (dycore_RGCP24_*, label long): Thompson's n_microp sub-steps and nt_c / mu_c, the sf_mynn inputs, MYNN's initflag
-# and grid length, the ni tendency of physics_get_tend, the Grell-Freitas closures, and the
-# l_diags reflectivity maximum; the suite's scalars. Indices 800-810.
-DRV = "src/physics/mpas_atmphys_driver.cpp"
-MUTATIONS += [
-    (DRV, "    q.n_microp = r.n_microp;", "    q.n_microp = 1;", ["dycore_RGCP_step1_qr"]),
-    (DRV, '    init_thompson_clouddroplets_forMPAS(nCellsSolve, cv(p.I("landmask")), p.v("nt_c"), p.v("mu_c"));',
-     '    init_thompson_clouddroplets_forMPAS(nCellsSolve, cv(p.I("landmask")), p.v("mu_c"), p.v("nt_c"));',
-     ["dycore_RGCP_restart_nt_c", "dycore_RGCP_restart_mu_c"]),
-    (DRV, '      q.snowh = cv(p.R("snowh"));', '      q.snowh = cv(p.R("snow"));', ["dycore_RGCP_step1_qv"]),
-    (DRV, "      q.config_do_restart = c.config_do_restart;\n      q.config_len_disp",
-     "      q.config_do_restart = true;\n      q.config_len_disp", ["dycore_RGCP_step1_u", "dycore_RGCP_restart_qke"]),
-    (DRV, "      CPPMPAS_C(rqsblten) CPPMPAS_C(rniblten)", '      CPPMPAS_C(rqsblten) q.rniblten = cv(p.R("rqsblten"));',
-     ["dycore_RGCP_step5_ni", "dycore_RGCP_step10_ni"]),
-    (DRV, "    q.config_gfconv_closure_deep = r.cfg.config_gfconv_closure_deep;", "    q.config_gfconv_closure_deep = 1;",
-     ["dycore_RGCP_step1_qv", "dycore_RGCP_restart_xmb_total"]),
-    (DRV, "      q.config_len_disp = c.config_len_disp;\n      q.mynn = mynn_options(c);",
-     "      q.config_len_disp = 2. * c.config_len_disp;\n      q.mynn = mynn_options(c);",
-     ["dycore_RGCP_history1h_hpbl", "dycore_RGCP_history2h_u"]),
-    (DRV, '    q.refl10cm_max = p.v("refl10cm_max");', '    q.refl10cm_max = p.v("refl10cm_1km_max");',
-     ["dycore_RGCP_streams_restart.2026-10-12_01.10.00", "dycore_RGCP_streams_all"]),
-    # (gsw read from glw and config_gfconv_closure_shallow = 7 both survive RGCP24: see the report)
-    (DRV, '    q.nt_c = cv(p.R("nt_c"));', '    q.nt_c = cv(p.R("mu_c"));',
-     ["dycore_RGCP24_history.2026-10-13_00.00.00", "dycore_RGCP24_all"]),
-    # the scalars of the suite (core/namelist.cpp active_scalars) and the dycore's check of them
-    (NL, '  if (mynn || thompson) v.push_back("ni");', '  if (thompson) v.push_back("ni");', ["unit_namelist"]),
-    ("src/core_atmosphere/atm_dycore.cpp", '  const bool suite = c.config_physics_suite == "mesoscale_reference" || cp;',
-     '  const bool suite = c.config_physics_suite == "mesoscale_reference";', ["unit_dycore"]),
-]
-
-# The MYNN review's findings (tests/mynn_column, tests/sfmynn_column): MPAS_to_physics' ni_p odd-tail lane of the
-# reference object code (PI:397), the kte bounds of get_pblh's and mym_length's DO WHILE loops, the index -1 of an
-# inactive constituent in physics_get_tend, init_pbl not called, unset bl_mynn pool arrays, sf_mynn with one level.
-# Indices 811-817.
-MUTATIONS += [
-    (PIF, "    const bool tail_src = n >= 18 && (n & 1);", "    const bool tail_src = false;", ["mynn_column"]),
-    (MYK, "    if (k > kte) {\n      kernel_fail(\"get_pblh:", "    if (false) {\n      kernel_fail(\"get_pblh:",
-     ["mynn_column"]),
-    (MYK, "    if (k > kte) {\n      kernel_fail(\"mym_length:", "    if (false) {\n      kernel_fail(\"mym_length:",
-     ["mynn_column"]),
-    (PTD, "  if (pbl == \"bl_mynn\" && (mp.index_qs <= 0 || mp.index_ni <= 0))",
-     "  if (pbl == \"bl_mynn\" && (!mp.index_qs || !mp.index_ni))", ["mynn_column"]),
-    (PBD, "  if (!(mp.mynn_const.cp > 0.) || !(mp.mynn_const.grav > 0.) || !(mp.mynn_const.r_d > 0.))",
-     "  if (false)", ["mynn_column"]),
-    (PBD, "      if (!q) throw Error(\"driver_pbl: the bl_mynn pool arrays are not all set\");",
-     "      (void)q;", ["mynn_column"]),
-    ("src/physics/mpas_atmphys_sfclayer.cpp", "  if (mynn && vp.kme < 3)", "  if (mynn && vp.kme < 2)",
-     ["sfmynn_column"]),
-]
-
 MUTATIONS = [(p, o, n, [t for t in ts if t not in EQUIVALENT_ON_SC.get((p, n), [])]) for p, o, n, ts in MUTATIONS]
 
 
@@ -1862,6 +1810,103 @@ def parse_selection(sel, n):
     if len(set(idx)) != len(idx):
         raise SystemExit(f"mutation_check.py: mutant selection {sel!r} repeats an index")
     return idx
+
+
+# A restart run with the mesoscale_reference physics (tests/CMakeLists.txt dycore_*RGR*: mpas842-dbl-rgr-001's
+# restart/ run): the restart stream's pool fields, the output alarms of a restart run, physics_init's restart branches
+# (below), landuse_init_forMPAS's and lsminit's restart returns, and the convection driver's initflag on a restart.
+RGR_FILES = ["diag.2026-10-12_02.00.00", "diag.2026-10-12_02.50.00", "history.2026-10-12_02.00.00",
+             "history.2026-10-12_02.50.00", "restart.2026-10-12_02.10.00"]
+
+
+def RGR(files=None):
+    """the RGR restart tests of the given files (default all), and the all-files test"""
+    return [f"dycore_RGR_restart_{f}" for f in (RGR_FILES if files is None else files)] + ["dycore_RGR_restart_all"]
+
+
+# Shown once and removed, SURVIVED as equivalent mutants on RGR: physics_init's restart branches IN:216-251 and
+# IN:301-314 taken on a restart (RG's checkpoint holds the values they would set: the radiation accumulators are 0
+# with config_bucket_update = 'none', tlag and tyear_mean equal tmn with config_deepsoiltemp_update = false), and the
+# restart initflag of the surface layer and PBL drivers (only MYNN reads it, SL:1039-1070, PB:937; physics_driver
+# now passes config_do_restart to the PBL driver, PB:814).
+MUTATIONS += [
+    (R, "    return std::find(done.begin(), done.end(), n) != done.end() ||",
+     "    return n == \"tslb\" || std::find(done.begin(), done.end(), n) != done.end() ||", RGR()),
+    (RS, "      if (rv.var_struct != \"mesh\" && rv.var_struct != \"state\") continue;",
+     "      if (rv.var_struct == \"diag_physics\") continue;", ["dycore_run_RGR_restart"]),
+    ("src/io/mpas_streams.cpp", "    for (const char* n : {\"output\", \"diagnostics\"})", "    for (const char* n : {\"output\"})",
+     ["dycore_RGR_restart_all"]),
+    ("src/physics/mpas_atmphys_landuse.cpp", "  if (cfg.config_do_restart) {  // LU:226-230", "  if (false) {  // LU:226-230",
+     RGR()),
+    ("src/physics/mpas_atmphys_driver_lsm.cpp", "  if (!cfg.config_do_restart) {                                            // :124",
+     "  if (true) {                                            // :124", RGR()),
+    ("src/physics/mpas_atmphys_convection.cpp", "  if (m.config_do_restart || itimestep > 1) initflag = 0;",
+     "  if (itimestep > 1) initflag = 0;", RGR()),
+    # qv_init read with the restart stream (killed by the profile test only: RGR's checkpoint has qv_init = 0)
+    (R, '    if ((rv.var_struct == "mesh" && n != "qv_init") || rv.var_struct == "state") continue;',
+     '    if (rv.var_struct == "mesh" || rv.var_struct == "state") continue;', ["dycore_RGR_qvinit"]),
+    # the restart run's 'output' alarm not reset at the start: a history file at 01:10
+    ("src/io/mpas_streams.cpp", "    for (const char* n : {\"output\", \"diagnostics\"})", "    for (const char* n : {\"diagnostics\"})",
+     ["dycore_RGR_restart_all"]),
+    # restart_recipe_RGR: the restart namelist may differ from its forecast's in the start time, the duration and
+    # config_do_restart only
+    ("tests/check_restart_recipe.py", 'RESTART_ALLOWED = {"config_run_duration", "config_start_time", "config_do_restart"}',
+     'RESTART_ALLOWED = {"config_run_duration", "config_do_restart"}', ["restart_recipe_RGR"]),
+]
+
+# The convection_permitting suite in cppmpas run (physics/mpas_atmphys_driver.cpp), against mpas842-dbl-rgcp-001
+# (dycore_RGCP_*: the steps, the restart and history fields, the forecast's streams) and mpas842-dbl-rgcp24-001
+# (dycore_RGCP24_*, label long): Thompson's n_microp sub-steps and nt_c / mu_c, the sf_mynn inputs, MYNN's initflag
+# and grid length, the ni tendency of physics_get_tend, the Grell-Freitas closures, and the
+# l_diags reflectivity maximum; the suite's scalars, the refused convection_permitting restart. Indices 809-820.
+DRV = "src/physics/mpas_atmphys_driver.cpp"
+MUTATIONS += [
+    (DRV, "    q.n_microp = r.n_microp;", "    q.n_microp = 1;", ["dycore_RGCP_step1_qr"]),
+    (DRV, '    init_thompson_clouddroplets_forMPAS(nCellsSolve, cv(p.I("landmask")), p.v("nt_c"), p.v("mu_c"));',
+     '    init_thompson_clouddroplets_forMPAS(nCellsSolve, cv(p.I("landmask")), p.v("mu_c"), p.v("nt_c"));',
+     ["dycore_RGCP_restart_nt_c", "dycore_RGCP_restart_mu_c"]),
+    (DRV, '      q.snowh = cv(p.R("snowh"));', '      q.snowh = cv(p.R("snow"));', ["dycore_RGCP_step1_qv"]),
+    (DRV, "    q.config_do_restart = c.config_do_restart;  // PB:814, 821, 935",
+     "    q.config_do_restart = true;  // PB:814, 821, 935", ["dycore_RGCP_step1_u", "dycore_RGCP_restart_qke"]),
+    (DRV, "      CPPMPAS_C(rqsblten) CPPMPAS_C(rniblten)", '      CPPMPAS_C(rqsblten) q.rniblten = cv(p.R("rqsblten"));',
+     ["dycore_RGCP_step5_ni", "dycore_RGCP_step10_ni"]),
+    (DRV, "    q.config_gfconv_closure_deep = r.cfg.config_gfconv_closure_deep;", "    q.config_gfconv_closure_deep = 1;",
+     ["dycore_RGCP_step1_qv", "dycore_RGCP_restart_xmb_total"]),
+    (DRV, "      q.config_len_disp = c.config_len_disp;\n      q.mynn = mynn_options(c);",
+     "      q.config_len_disp = 2. * c.config_len_disp;\n      q.mynn = mynn_options(c);",
+     ["dycore_RGCP_history1h_hpbl", "dycore_RGCP_history2h_u"]),
+    (DRV, '    q.refl10cm_max = p.v("refl10cm_max");', '    q.refl10cm_max = p.v("refl10cm_1km_max");',
+     ["dycore_RGCP_streams_restart.2026-10-12_01.10.00", "dycore_RGCP_streams_all"]),
+    # (gsw read from glw and config_gfconv_closure_shallow = 7 both survive RGCP24: see the report)
+    (DRV, '    q.nt_c = cv(p.R("nt_c"));', '    q.nt_c = cv(p.R("mu_c"));',
+     ["dycore_RGCP24_history.2026-10-13_00.00.00", "dycore_RGCP24_all"]),
+    # the scalars of the suite (core/namelist.cpp active_scalars) and the dycore's check of them
+    (NL, '  if (mynn || thompson) v.push_back("ni");', '  if (thompson) v.push_back("ni");', ["unit_namelist"]),
+    ("src/core_atmosphere/atm_dycore.cpp", '  const bool suite = c.config_physics_suite == "mesoscale_reference" || cp;',
+     '  const bool suite = c.config_physics_suite == "mesoscale_reference";', ["unit_dycore"]),
+    ("src/physics/mpas_atmphys_control.cpp", "    if (c.config_do_restart) no(\"config_do_restart = true with convection_permitting",
+     "    if (false) no(\"config_do_restart = true with convection_permitting", ["unit_namelist"]),
+]
+
+# The MYNN review's findings (tests/mynn_column, tests/sfmynn_column): MPAS_to_physics' ni_p odd-tail lane of the
+# reference object code (PI:397), the kte bounds of get_pblh's and mym_length's DO WHILE loops, the index -1 of an
+# inactive constituent in physics_get_tend, init_pbl not called, unset bl_mynn pool arrays, sf_mynn with one level.
+# Indices 821-827.
+MUTATIONS += [
+    (PIF, "    const bool tail_src = n >= 18 && (n & 1);", "    const bool tail_src = false;", ["mynn_column"]),
+    (MYK, "    if (k > kte) {\n      kernel_fail(\"get_pblh:", "    if (false) {\n      kernel_fail(\"get_pblh:",
+     ["mynn_column"]),
+    (MYK, "    if (k > kte) {\n      kernel_fail(\"mym_length:", "    if (false) {\n      kernel_fail(\"mym_length:",
+     ["mynn_column"]),
+    (PTD, "  if (pbl == \"bl_mynn\" && (mp.index_qs <= 0 || mp.index_ni <= 0))",
+     "  if (pbl == \"bl_mynn\" && (!mp.index_qs || !mp.index_ni))", ["mynn_column"]),
+    (PBD, "  if (!(mp.mynn_const.cp > 0.) || !(mp.mynn_const.grav > 0.) || !(mp.mynn_const.r_d > 0.))",
+     "  if (false)", ["mynn_column"]),
+    (PBD, "      if (!q) throw Error(\"driver_pbl: the bl_mynn pool arrays are not all set\");",
+     "      (void)q;", ["mynn_column"]),
+    ("src/physics/mpas_atmphys_sfclayer.cpp", "  if (mynn && vp.kme < 3)", "  if (mynn && vp.kme < 2)",
+     ["sfmynn_column"]),
+]
 
 
 def ctest(build, regex):

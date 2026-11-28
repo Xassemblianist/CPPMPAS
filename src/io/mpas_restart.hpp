@@ -29,9 +29,11 @@ struct RestartInput {
 };
 
 // Reads a restart file as MPAS's restart stream does; start_stamp is the clock's start time (atm_start_time_stamp).
-// scalars: the active constituents (as read_mpas_init).
+// scalars: the active constituents (as read_mpas_init). physics_pools: a run with the physics suite, whose pool
+// fields of the restart stream read_restart_pools reads next (io/mpas_reader.hpp); without it they must be fields no
+// ported routine reads.
 RestartInput read_mpas_restart(const std::string& path, const std::vector<std::string>& scalars,
-                               const std::string& start_stamp);
+                               const std::string& start_stamp, bool physics_pools = false);
 
 // The variables of the restart stream that MPAS reads but no ported routine uses on the verified path, each with the
 // reason (for the tests and the error message); physics pools are covered by a rule, see mpas_restart.cpp.

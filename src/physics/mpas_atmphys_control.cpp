@@ -250,6 +250,8 @@ void check_physics_supported(const PhysicsConfig& c) {
     if (c.config_mynn_mixclouds != 1) no("config_mynn_mixclouds /= 1");
     if (c.config_mynn_mixqt != 0) no("config_mynn_mixqt /= 0");
     if (c.config_do_DAcycling) no("config_do_DAcycling = true in the model run");
+    // a restart run is proven with mesoscale_reference only (RGR); none of convection_permitting
+    if (c.config_do_restart) no("config_do_restart = true with convection_permitting (a restart run)");
   }
   if (c.config_les_model != "none") no("config_les_model = '" + c.config_les_model + "'");
   // the time-dependent surface updates and the bucket limits: not ported

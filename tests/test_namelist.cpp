@@ -28,6 +28,7 @@
 
 #include "core/error.hpp"
 #include "core/namelist.hpp"
+#include "physics/mpas_atmphys_control.hpp"
 
 using namespace cppmpas;
 
@@ -210,6 +211,37 @@ int main(int argc, char** argv) {
     cp.config_microp_scheme = "off";
     expect(active_scalars(cp) == std::vector<std::string>{"qv", "qc", "qi", "qs", "ni"},
            "convection_permitting without microphysics: qc, qi, qs, ni of bl_mynn_in");
+    {  // check_physics_supported: RGCP's convection_permitting options, then the same as a restart run (refused)
+      phys::PhysicsConfig p;
+      p.config_physics_suite = "convection_permitting";
+      p.config_microp_scheme = "mp_thompson";
+      p.config_convection_scheme = "cu_grell_freitas";
+      p.config_pbl_scheme = "bl_mynn";
+      p.config_gwdo_scheme = "bl_ysu_gwdo";
+      p.config_radt_lw_scheme = "rrtmg_lw";
+      p.config_radt_sw_scheme = "rrtmg_sw";
+      p.config_radt_cld_scheme = "cld_fraction";
+      p.config_sfclayer_scheme = "sf_mynn";
+      p.config_lsm_scheme = "sf_noah";
+      p.config_les_model = "none";
+      p.config_bucket_update = p.config_conv_interval = p.config_pbl_interval = p.config_sounding_interval = "none";
+      bool ok = true;
+      try {
+        phys::check_physics_supported(p);
+      } catch (const Error& e) {
+        ok = false;
+        std::printf("  unexpected: %s\n", e.what());
+      }
+      expect(ok, "check_physics_supported accepts RGCP's convection_permitting options");
+      p.config_do_restart = true;
+      bool refused = false;
+      try {
+        phys::check_physics_supported(p);
+      } catch (const Error& e) {
+        refused = std::string(e.what()).find("config_do_restart = true with convection_permitting") != std::string::npos;
+      }
+      expect(refused, "check_physics_supported refuses a convection_permitting restart");
+    }
     // each of the other physics choices is an error
     auto refuses = [&](InitConfig x, const std::string& text) {
       try {
