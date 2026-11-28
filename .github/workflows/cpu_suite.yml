@@ -38,6 +38,9 @@ on:
     branches: [main]
 permissions:
   contents: read
+defaults:
+  # bash -eo pipefail: a failing command before a pipe (plan.py | tee) fails its step
+  run: {shell: bash}
 concurrency:
   # pushes to main: only the newest runs; every dispatch runs on its own
   group: cpu_suite-${{ github.event_name == 'push' && github.ref || github.run_id }}
