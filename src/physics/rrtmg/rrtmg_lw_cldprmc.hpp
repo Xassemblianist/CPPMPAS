@@ -55,6 +55,8 @@ CPPMPAS_FORCEINLINE void rrtmg_lw_cldprmc(
               int ib = icb[tables.ngb[ig] - 1];
               abscoice = tables.absice1[ib * 2 + 0] + tables.absice1[ib * 2 + 1] / radice;
             } else if (iceflag == 2) {
+              // MPAS v8.4.2 module_ra_rrtmg_lw.F:2949-2951: the radius is limited to 5..131 um
+              if (radice < rb(5.0) || radice > rb(131.0)) ::cppmpas::kernel_fail("ICE RADIUS OUT OF BOUNDS");
               rb factor = (radice - rb(2.0)) / rb(3.0);
               int index = static_cast<int>(factor);
               if (index >= 43) index = 42;
@@ -65,7 +67,9 @@ CPPMPAS_FORCEINLINE void rrtmg_lw_cldprmc(
               abscoice = tables.absice2[ib * 43 + idx0] +
                          fint * (tables.absice2[ib * 43 + idx0 + 1] - tables.absice2[ib * 43 + idx0]);
             } else if (iceflag >= 3) {
-              // Fu (1996) generalized effective size
+              // Fu (1996) generalized effective size; module_ra_rrtmg_lw.F:2964-2971 (2966): limited to 5..140 um
+              if (radice < rb(5.0) || radice > rb(140.0))
+                ::cppmpas::kernel_fail("ERROR: ICE GENERALIZED EFFECTIVE SIZE OUT OF BOUNDS");
               rb factor = (radice - rb(2.0)) / rb(3.0);
               int index = static_cast<int>(factor);
               if (index >= 46) index = 45;
@@ -80,6 +84,9 @@ CPPMPAS_FORCEINLINE void rrtmg_lw_cldprmc(
 
           // Incorporate snow if iceflag == 5
           if (cswp > rb(0.0) && iceflag == 5) {
+            // module_ra_rrtmg_lw.F:2988: the snow size is limited to 5..140 um (FATAL_ERROR)
+            if (radsno < rb(5.0) || radsno > rb(140.0))
+              ::cppmpas::kernel_fail("ERROR: SNOW GENERALIZED EFFECTIVE SIZE OUT OF BOUNDS");
             rb factor = (radsno - rb(2.0)) / rb(3.0);
             int index = static_cast<int>(factor);
             if (index >= 46) index = 45;

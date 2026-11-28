@@ -55,6 +55,9 @@ struct GwdoColumn {
 // GW:55-643 for one column (its = ite): kte levels, kme = kte + 1 (module_bl_gwdo.F passes kme = kte + 1)
 template <typename T>
 CPPMPAS_HD inline void bl_gwdo_run(GwdoColumn<T>& c, int kte, T g_, T cp_, T rd_, T fv_, T pi_, T deltim) {
+  // GW:298 kbl = max(min(kbl, kpblmax), kpblmin = 2) then reads prsl(2): one level is past MPAS's column (undefined); more than
+  // kMaxLevels is past the column arrays (prsi to kte + 1 of KM). Refused before any array is touched
+  if (kte < 2 || kte > kMaxLevels) kernel_fail("bl_gwdo_run: kte outside 2..128");
   constexpr int kts = 1;  // GW:120
   // GW:141-154, 188-189, 192-195
   const T ric = T(0.25), dw2min = T(1.), rimin = T(-100.), bnv2min = T(1.0e-5), efmin = T(0.0), efmax = T(10.0);

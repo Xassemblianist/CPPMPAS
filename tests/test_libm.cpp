@@ -10,6 +10,10 @@
 // payloads), whose result glibc defines as the input NaN quieted. Every port is also called with -x written at the
 // call (each argument in turn), as code calls them: a fold of that negation into the port must not change a NaN's
 // sign.
+// log / log10 (scalar) and the libmvec lanes mvec_log / mvec_log10 outside the normal range (+-0, subnormals,
+// negatives, +-inf, NaNs; the lanes there call the scalar libm, whatever the CPU's rcpps gives), also the inputs
+// of the GPU audit (log10 of 0x1p-1023 and of the bits 0x0000080078dde6c4), against libm and both lanes of libmvec;
+// the scalar ones on random normal inputs too.
 //   test_libm [N]   N random inputs per function (default 2'000'000)
 #include <emmintrin.h>
 #include <gnu/libc-version.h>
@@ -30,6 +34,8 @@
 extern "C" __m128d _ZGVbN2v_sin(__m128d);
 extern "C" __m128d _ZGVbN2v_cos(__m128d);
 extern "C" __m128d _ZGVbN2vv_pow(__m128d, __m128d);
+extern "C" __m128d _ZGVbN2v_log(__m128d);
+extern "C" __m128d _ZGVbN2v_log10(__m128d);
 extern "C" void sincos(double, double*, double*);
 
 namespace {
@@ -40,6 +46,8 @@ double (*volatile c_acos)(double) = ::acos;
 double (*volatile c_atan2)(double, double) = ::atan2;
 double (*volatile c_pow)(double, double) = ::pow;
 void (*volatile c_sincos)(double, double*, double*) = ::sincos;
+double (*volatile c_log)(double) = ::log;
+double (*volatile c_log10)(double) = ::log10;
 
 std::uint64_t bits(double x) {
   std::uint64_t b;
@@ -91,7 +99,26 @@ int main(int argc, char** argv) {
     return ((rng() & 1) ? -1.0 : 1.0) * std::ldexp(m, e - 1);
   };
   Count sc{"sincos.sin"}, cc{"sincos.cos"}, s{"sin"}, co{"cos"}, as{"asin"}, ac{"acos"}, at{"atan2"}, pw{"pow"},
-      vs{"mvec_sin"}, vc{"mvec_cos"}, vp{"mvec_pow"};
+      vs{"mvec_sin"}, vc{"mvec_cos"}, vp{"mvec_pow"}, lg{"log"}, lg10{"log10"}, vlg{"mvec_log"},
+      vlg10{"mvec_log10"};
+  // log / log10, and the lanes of libmvec's log / log10 whose input is outside the normal range (both lanes, so
+  // that no lane takes the rcpps path)
+  auto logs = [&](double x) {
+    lg.check(x, 0, cppmpas::libm::log(x), c_log(x));
+    lg10.check(x, 0, cppmpas::libm::log10(x), c_log10(x));
+    lg.check(-x, 0, cppmpas::libm::log(-x), c_log(-x));
+    lg10.check(-x, 0, cppmpas::libm::log10(-x), c_log10(-x));
+    if (std::fabs(x) >= DBL_MIN && std::fabs(x) <= DBL_MAX) return;  // a normal |x|: rcpps (CPU-dependent)
+    for (double v : {x, -x}) {
+      double o[2], o10[2];
+      _mm_storeu_pd(o, _ZGVbN2v_log(_mm_set_pd(v, v)));
+      _mm_storeu_pd(o10, _ZGVbN2v_log10(_mm_set_pd(v, v)));
+      vlg.check(v, 0, cppmpas::libm::mvec_log(v), o[0]);
+      vlg.check(v, 0, cppmpas::libm::mvec_log(v), o[1]);
+      vlg10.check(v, 0, cppmpas::libm::mvec_log10(v), o10[0]);
+      vlg10.check(v, 0, cppmpas::libm::mvec_log10(v), o10[1]);
+    }
+  };
   auto unary = [&](double x) {
     double gs, gc, ps, pc;
     c_sincos(x, &gs, &gc);
@@ -187,6 +214,17 @@ int main(int argc, char** argv) {
           mvec_pow_pair(sy, sx, sx, sy);
         }
   std::printf("special inputs: %ld unary, %zu binary pairs\n", nspecial, 4 * sp.size() * sp.size());
+  // log / log10: the special values, the audit's inputs, subnormals of every exponent (+-4 ulps around each power
+  // of two) and random subnormal bits
+  for (double x : sp) logs(x);
+  for (std::uint64_t b : {0x0000080078dde6c4ull, 0x0008000000000000ull /* 0x1p-1023 */, 0x000fffffffffffffull,
+                          0x0000000000000001ull, 0xfff8000000000000ull, 0x7ff0000000000001ull})
+    logs(from_bits(b));
+  for (int e = 0; e < 52; ++e) {
+    const std::uint64_t b = 1ull << e;
+    for (std::uint64_t d = b > 4 ? b - 4 : 1; d <= b + 4; ++d) logs(from_bits(d));
+  }
+  for (long i = 0; i < N / 20; ++i) logs(from_bits(rng() & 0x000fffffffffffffull));
   for (long i = 0; i < N; ++i) {
     // sincos over every branch of s_sincos.c (|x| from 2^-30 to 2^40) and the angle range MPAS passes (|x| < 2 pi)
     const double x = (i & 1) ? any_double(-30, 40) : (u01(rng) - 0.5) * 4.0 * M_PI;
@@ -206,6 +244,10 @@ int main(int argc, char** argv) {
     const double b = std::fabs(any_double(-12, 12));
     const double e = (i % 4 == 0) ? 287.0 / 717.5 : (i % 4 == 1) ? 0.25 : (i % 4 == 2) ? 0.75 : any_double(-4, 4);
     pw.check(b, e, cppmpas::libm::pow(b, e), c_pow(b, e));
+    // scalar log / log10 on normal inputs (the lanes of normal inputs depend on the CPU's rcpps: not compared here)
+    const double lx = std::fabs(any_double(-1021, 1023));
+    lg.check(lx, 0, cppmpas::libm::log(lx), c_log(lx));
+    lg10.check(lx, 0, cppmpas::libm::log10(lx), c_log10(lx));
     // libmvec lanes: two inputs per call
     const double v1 = (u01(rng) - 0.5) * 8.0 * M_PI, v2 = any_double(-30, 30);
     const __m128d vin = _mm_set_pd(v2, v1);
@@ -221,7 +263,8 @@ int main(int argc, char** argv) {
     mvec_pow_pair(b, e, b2, (i & 1) ? e : any_double(-4, 4));
   }
   bool ok = true;
-  for (const Count* c : {&sc, &cc, &s, &co, &as, &ac, &at, &pw, &vs, &vc, &vp}) ok = c->report() && ok;
+  for (const Count* c : {&sc, &cc, &s, &co, &as, &ac, &at, &pw, &vs, &vc, &vp, &lg, &lg10, &vlg, &vlg10})
+    ok = c->report() && ok;
   std::printf(ok ? "PASS\n" : "FAIL\n");
   return ok ? 0 : 1;
 }

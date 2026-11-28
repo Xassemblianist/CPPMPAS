@@ -170,6 +170,9 @@ CPPMPAS_FORCEINLINE void rrtmg_lw_prep(const RrtmgLwCallConfig& c, const LwColum
                                       const RrtmgLwTables& CPPMPAS_RESTRICT tables,
                                       const RrtmgLwConsts& CPPMPAS_RESTRICT kc, bool setcoef = true) {
   const int num_levels = c.num_levels, nlayers = c.nlayers;
+  // the column arrays hold kMcicaMaxLayers layers (hgt, the two-word cloud mask): a larger nlayers writes past them
+  // (CPPMPAS's wrappers check it before; a direct call is checked here)
+  if (nlayers < 1 || nlayers > kMcicaMaxLayers) ::cppmpas::kernel_fail("rrtmg_lw_prep: nlayers outside 1..128");
   constexpr rb deltap = rb(4.0);  // mb
   const rb xland = in.xland;
   auto qc_of = [&](int k) { return in.has_qc ? in.qc3d[k] : rb(0.0); };

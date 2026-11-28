@@ -13,6 +13,10 @@ namespace cppmpas::phys::rrtmg {
 // The tables as packed structs of reals R (WRF's rb) and int32 members, in the order the dump program writes
 // them (tests/phys/ra_rrtmg_sw/dump_sw_tables.f90): RrtmgSwTablesOf<double> is the layout of the WRF -r8 dump, RrtmgSwTablesOf<float> that of
 // the WRF real*4 dump (data/rrtmg/README.md).
+// Packed: the double members of six bands (b17, b19, b21, b23, b25, b28) sit at offsets of 4 modulo 8. Read them only
+// through the packed member (tables.b17.ka[i]: the compilers emit unaligned loads); never pass &tables.bNN.x[0] as a
+// plain double* (on the GPU an aligned ld.global.f64 of a misaligned address is undefined). Every consumer
+// (rrtmg_sw_taumol.hpp) reads the members directly.
 #pragma pack(push, 1)
 
 template <class R>

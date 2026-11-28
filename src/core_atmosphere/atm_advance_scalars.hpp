@@ -15,6 +15,8 @@ namespace cppmpas {
 
 // Refuses (Error) the scalar-transport configurations and meshes whose path is not ported.
 void check_advance_scalars_supported(const DycoreConfig& cfg, const Mesh& m);
+// Error for more scalars than the per-thread work arrays hold (8: convection_permitting's list), on both builds
+void check_scalar_capacity(int num_scalars);
 
 // advance_scalars('scalars', ...) at TI:2504-2507 for rk_step 1..3: scalars of time level 1 (State::scalars) and 2
 // (f.scalars2), rho_zz of both levels, diag ruAvg / wwAvg, tend scalars_tend (f.tend_scalars).
