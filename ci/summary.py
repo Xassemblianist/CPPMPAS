@@ -8,6 +8,7 @@ usage: summary.py <plan dir> <results dir (one sub-directory per job, each with 
 - A test without the label "gpu" passes only if it ran and passed in every job that ran it (a fixture setup such as
   make_inputs runs in several jobs). Failed, Not Run (a fixture failed, an executable is missing), Skipped, or no
   result at all: the suite fails. A check that did not run is a failure.
+- A job without junit.xml, or a plan without a CPU test, fails the suite.
 - A test with the label "gpu" must be reported Skipped (exit status 77: this CPU build has no CUDA backend). It is
   counted as skipped, never as passed; a GPU test that passes or fails here is an error.
 Writes <out>/summary.md (also the job summary), summary.json, failed.txt, and costs_measured.tsv (the longest
@@ -35,10 +36,12 @@ def main():
 
     runs = {}  # name -> [(job, status, seconds, message)]
     job_state = {}
+    problems = []
     for job in jobs:
         junit = results / job["name"] / "junit.xml"
         if not junit.is_file():
             job_state[job["name"]] = "no junit.xml (the job failed before or during ctest)"
+            problems.append(f"job {job['name']}: no junit.xml (the job failed before or during ctest)")
             continue
         root = ET.parse(junit).getroot()
         cases = root.iter("testcase")
@@ -60,7 +63,8 @@ def main():
         job_state[job["name"]] = f"{n} results"
 
     verdict = {}
-    problems = []
+    if not any("gpu" not in info["labels"] and info["kind"] == "selected" for info in expected.values()):
+        problems.append("the plan selects no CPU test")
     for name, info in expected.items():
         gpu = "gpu" in info["labels"]
         got = runs.get(name, [])

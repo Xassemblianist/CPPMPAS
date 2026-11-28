@@ -815,7 +815,7 @@ if(CPPMPAS_ENABLE_CUDA)
   foreach(_flag IN LISTS _cuda_bad)
     foreach(_var CMAKE_CUDA_FLAGS CMAKE_CUDA_FLAGS_RELEASE)
       add_test(NAME cmake_rejects_cuda_${_i}_${_var} COMMAND ${CMAKE_COMMAND} -E env sh -c
-        "rm -rf '${W}/cmake_cuda_${_i}_${_var}'; out=$(${CMAKE_COMMAND} -S '${CMAKE_SOURCE_DIR}' -B '${W}/cmake_cuda_${_i}_${_var}' -DCMAKE_BUILD_TYPE=Release -DCPPMPAS_ENABLE_CUDA=ON -DCMAKE_CUDA_COMPILER='${CMAKE_CUDA_COMPILER}' -DCMAKE_CUDA_HOST_COMPILER='${CMAKE_CUDA_HOST_COMPILER}' -DCMAKE_CUDA_ARCHITECTURES='${CMAKE_CUDA_ARCHITECTURES}' '-D${_var}=${_flag}' 2>&1); rc=$?; rm -rf '${W}/cmake_cuda_${_i}_${_var}'; echo \"$out\" | tail -5; [ $rc -ne 0 ] && echo \"$out\" | grep -q 'changes the floating-point'")
+        "rm -rf '${W}/cmake_cuda_${_i}_${_var}'; out=$(${CMAKE_COMMAND} -S '${CMAKE_SOURCE_DIR}' -B '${W}/cmake_cuda_${_i}_${_var}' -DCMAKE_BUILD_TYPE=Release -DCPPMPAS_ENABLE_CUDA=ON -DCMAKE_CUDA_COMPILER='${CMAKE_CUDA_COMPILER}' -DCMAKE_CUDA_HOST_COMPILER='${CMAKE_CUDA_HOST_COMPILER}' -DCMAKE_CUDA_ARCHITECTURES='${CMAKE_CUDA_ARCHITECTURES}' '-D${_var}=${_flag}' 2>&1); rc=$?; rm -rf '${W}/cmake_cuda_${_i}_${_var}'; echo \"$out\" | tail -5; [ $rc -ne 0 ] && echo \"$out\" | tr -s '\\n ' '  ' | grep -q 'changes the floating-point'")
       set_tests_properties(cmake_rejects_cuda_${_i}_${_var} PROPERTIES FIXTURES_REQUIRED work_dir LABELS gpu)
     endforeach()
     math(EXPR _i "${_i} + 1")

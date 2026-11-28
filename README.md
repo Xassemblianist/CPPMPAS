@@ -81,6 +81,13 @@ It uploads a git bundle of the commits `origin/main` lacks to the `jobs` release
 name, starts `cpu_suite` with it (the build job checks its SHA-256 and checks the commit out,
 [ci/fetch_bundle.sh](ci/fetch_bundle.sh)), waits, prints the summary and deletes the bundle whatever the outcome.
 
+Only the workflow file (and `ci/fetch_bundle.sh`) comes from the workflow's ref (`--workflow-ref`, default `main`).
+Everything else in `ci/` comes from the commit under test: the image, the build, the plan with `ci/data.tsv` and
+`ci/costs.tsv`, the data checks, the test runner and the summary. So a commit that adds a reference release to
+`ci/data.tsv`, or changes the planner, is tested as it is. The workflow file keeps its own checks: the image's
+SHA-256, and a verdict that reads every JUnit result itself (each selected CPU test passed, each GPU test skipped, at
+least one CPU test, every job succeeded).
+
 ## Goal
 
 - The same answers as MPAS-Atmosphere, bit for bit: a pinned MPAS release built with GNU Fortran is the reference, and
