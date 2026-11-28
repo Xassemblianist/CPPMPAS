@@ -23,6 +23,7 @@ on:
                default: ""}
       bundle_sha256: {description: "SHA-256 of the bundle", default: ""}
       tag: {description: "a name for the run (ci_submit.sh finds the run by it)", default: ""}
+      max_parallel: {description: "test jobs at once (at most 10)", default: "10"}
   push:
     branches: [main]
 permissions:
@@ -145,7 +146,8 @@ jobs:
     strategy:
       fail-fast: false
       # the account's runners are shared: one run takes at most 10 at once, so two runs fit the project's 20
-      max-parallel: 10
+      # (fewer when other jobs of the project run: input max_parallel)
+      max-parallel: ${{ fromJSON(inputs.max_parallel || '10') > 10 && 10 || fromJSON(inputs.max_parallel || '10') }}
       matrix: ${{ fromJSON(needs.build.outputs.matrix) }}
     name: test ${{ matrix.name }}
     steps:
