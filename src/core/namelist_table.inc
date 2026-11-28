@@ -14,8 +14,6 @@
 //   mpas842-dbl-rg24-001/RG24/forecast/namelist.atmosphere
 //   mpas842-dbl-rgcp-001/RGCP/steps/namelist.atmosphere
 //   mpas842-dbl-rgcp-001/RGCP/forecast/namelist.atmosphere
-//   mpas842-dbl-rgcp24-001/RGCP24/steps/namelist.atmosphere
-//   mpas842-dbl-rgcp24-001/RGCP24/forecast/namelist.atmosphere
 // Do not edit by hand. Columns: record, option, type, Registry default, accepted values (normalised, one
 // per line: reals as the shortest round-trip decimal, logicals true / false).
 CPPMPAS_NML_OPTION("nhyd_model", "config_time_integration", "character", "SRK3", "SRK3")
