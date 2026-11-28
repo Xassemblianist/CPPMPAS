@@ -58,6 +58,7 @@ SKIP = (
     "mpas842-dbl-rg-00[5-6]",                 # RG reruns, the tests use rg-004
     "mpas842-dbl-rgcp-00[2-4]",               # determinism / AMD cross-checks of rgcp-001
     "mpas842-dbl-rgcp24-00[2-9]",             # AMD cross-check of rgcp24-001
+    "mpas842-dbl-rgr-00[2-9]",                # AMD cross-check of rgr-001 (identical by refcompare)
     "mpas842-dbl-rg60-*", "mpas842-dbl-rg60l-*",    # uniform 60 km / 120 km meshes (about 73 GB): not used by a
     "mpas842-dbl-rg120-*", "mpas842-dbl-rg120l-*",  # test or a GPU run yet; name the tag to mirror one
 )
@@ -374,8 +375,9 @@ def cmd_box_copy(args):
             if n != b or s256 != sha:
                 raise RuntimeError(f"download is {n} B sha256 {s256}, the release says {b} B {sha}")
             t1 = time.time()
+            # an upload Drive keeps throttling can retry chunks for an hour: give up below 1 MB/s, the retry starts over
             subprocess.run(rc + ["copyto", *RC_FLAGS, "--retries", "3", f, f"{REMOTE}:{ROOT}/{t}/{a}"], check=True,
-                           capture_output=True)
+                           capture_output=True, timeout=max(900, b / 1e6))
             st = drive_stat(rc, t, a)
             if st != [b, md5]:
                 raise RuntimeError(f"Drive reports {st}, the upload was {b} B md5 {md5}")
