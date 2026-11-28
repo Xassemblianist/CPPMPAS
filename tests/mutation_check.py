@@ -1757,6 +1757,7 @@ MUTATIONS += [
     # the top-level CMakeLists.txt's refusal of flags that change results (tests/check_fp_flags.py configures with each)
     ("CMakeLists.txt", "|-fno-signed-zeros|", "|", ["cmake_fp_flags"]),
     ("CMakeLists.txt", 'set(_cppmpas_sep "[ \\t,;:=>\\"\']")', 'set(_cppmpas_sep "")', ["cmake_fp_flags"]),
+    ("CMakeLists.txt", 'set(_cppmpas_end "[ \\t,;>\\"\']")', 'set(_cppmpas_end "")', ["cmake_fp_flags"]),
     ("CMakeLists.txt", 'cppmpas_check_fp_directory("${CMAKE_SOURCE_DIR}")', '# cppmpas_check_fp_directory', ["cmake_fp_flags"]),
     ("CMakeLists.txt", '    if(_v MATCHES "^CMAKE_[A-Za-z]+_FLAGS(_[A-Za-z0-9_]+)?$" OR',
      '    if(_v MATCHES "^CMAKE_[A-Za-z]+_FLAGS(_RELEASE)?$" OR', ["cmake_fp_flags"]),

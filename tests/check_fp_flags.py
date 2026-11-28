@@ -75,11 +75,13 @@ REFUSED_INCLUDE = [
     ("set_source_files_properties(src/io/mpas_writer.cpp PROPERTIES COMPILE_FLAGS \"-O3 -fassociative-math\")",
      "-fassociative-math"),
 ]
-# flags that look like refused ones but do not change results: the whole project must configure with them
+# flags that look like refused ones but do not change results: the whole project must configure with them. A refused
+# flag at the end of a longer word (-I/opt/build-m32, -DTAG=x-mfma) and one at the start of a longer flag (-mno-sse3,
+# -mno-sse2avx: -mno-sse and -mno-sse2 are refused) show that whole flags are matched, not substrings
 ACCEPTED = [
     ("CMAKE_CXX_FLAGS", "-fno-fast-math -fsigned-zeros -mno-fma -ffp-contract=off -fno-reciprocal-math "
      "-fno-associative-math -fno-unsafe-math-optimizations -fno-finite-math-only -fexcess-precision=standard "
-     "-mtune=generic -O3"),
+     "-mtune=generic -O3 -I/opt/build-m32 -I/opt/fftw-ffast-math -DTAG=x-mfma -mno-sse3 -mno-sse4 -mno-sse2avx"),
     ("CMAKE_CUDA_FLAGS", "--fmad=false -fmad=false --ftz=false --prec-div=true --prec-sqrt=true "
      "-Xcompiler=-fno-fast-math,-ffp-contract=off --compiler-options=-fsigned-zeros"),
 ]
