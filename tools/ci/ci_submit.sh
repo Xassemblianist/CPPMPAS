@@ -11,10 +11,13 @@
 # COMMIT: default HEAD. --labels: the tests to run (default all; short: without the label long). The script waits
 # for the run (at most --hours, default 3), downloads its summary (the artifact "summary") to --out (default
 # ~/cppwrf_scratch/ci/cppmpas/<run id>) and prints it (per label: tests, passed, skipped, failed, not run). Exit 0
-# only when the run succeeded and its summary says PASSED. --no-wait: wait only until the build job has fetched the
-# bundle (then delete it), print the run's URL and exit. --workflow-ref: the branch whose cpu_suite.yml and ci/ run
-# (default main; the commit under test is only the source that is built and tested). --max-parallel: test jobs at
-# once (default 10, at most 10; fewer when other jobs of the project run: its share is 20 runners).
+# only when the run succeeded and its summary says PASSED for this commit. --no-wait: wait only until the build job
+# has fetched the bundle (then delete it), print the run's URL and exit (1 when the build job or its fetch of the
+# bundle has already failed). --workflow-ref: the branch whose cpu_suite.yml runs (default main). The commit under
+# test brings everything else: its ci/ (the image, the build, the plan with ci/data.tsv and ci/costs.tsv, the data
+# checks, the test runner, the summary), so a new reference release in ci/data.tsv or a planner change is tested
+# without being on main. --max-parallel: test jobs at once (default 10, at most 10; fewer when other jobs of the
+# project run: its share is 20 runners).
 # Needs gh, logged in with the rights to start CPPMPAS's workflows and upload to cppmpas-data's releases.
 set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -25,7 +28,7 @@ while [ $# -gt 0 ]; do
   case $1 in
     --labels) LABELS=$2; shift 2 ;; --no-wait) WAIT=0; shift ;; --hours) HOURS=$2; shift 2 ;;
     --out) OUT=$2; shift 2 ;; --workflow-ref) WREF=$2; shift 2 ;; --max-parallel) MAXP=$2; shift 2 ;;
-    -*) sed -n '3,19p' "$0"; exit 2 ;;
+    -*) sed -n '3,21p' "$0"; exit 2 ;;
     *) COMMIT=$1; shift ;;
   esac
 done
@@ -80,6 +83,15 @@ done
 [ -n "$RUN" ] || { echo "[ci_submit] the run $TAG did not appear"; exit 1; }
 URL=https://github.com/$GH_REPO_SRC/actions/runs/$RUN
 echo "[ci_submit] commit ${SHA:0:8} ($LABELS), run $RUN: $URL"
+build_state() {  # the run's jobs (JSON) -> the build job's state: failed, fetched (the source is checked out) or waiting
+  jq -r '[.jobs[] | select(.name == "build")][0] as $b | [$b.steps[]? | select(.name == "source from the bundle"
+           and .status == "completed")][0] as $f
+         | if $b == null then "waiting"
+           elif ($b.status == "completed" and $b.conclusion != "success") or ($f != null and $f.conclusion != "success")
+           then "failed"
+           elif $b.status == "completed" or $f != null then "fetched"
+           else "waiting" end'
+}
 t0=$SECONDS last=
 while :; do  # every minute: the run's status, and the jobs that ended
   st=$(gh run view "$RUN" -R "$GH_REPO_SRC" --json status,conclusion --jq '.status + " " + .conclusion' 2> /dev/null || echo "unknown ")
@@ -89,10 +101,11 @@ while :; do  # every minute: the run's status, and the jobs that ended
   [ "$line" = "$last" ] || { echo "[ci_submit] $(date +%H:%M) $line"; last=$line; }
   case $st in completed*) break ;; esac
   if [ "$WAIT" = 0 ]; then  # the bundle is needed until the build job has checked the commit out
-    fetched=$(jq -r '[.jobs[] | select(.name == "build") | (.status == "completed" or
-                     ([.steps[]? | select(.name == "source from the bundle" and .status == "completed")] | length > 0))]
-                     | any' <<< "$jobs")
-    [ -n "$BUNDLE" ] && [ "$fetched" != true ] || { cleanup; echo "[ci_submit] not waiting for the suite: $URL"; exit 0; }
+    build=$(build_state <<< "$jobs")
+    if [ "$build" = failed ]; then
+      cleanup; echo "[ci_submit] the build job failed (or its fetch of the bundle did): $URL"; exit 1
+    fi
+    [ -n "$BUNDLE" ] && [ "$build" != fetched ] || { cleanup; echo "[ci_submit] not waiting for the suite: $URL"; exit 0; }
   fi
   [ $((SECONDS - t0)) -lt $((HOURS * 3600)) ] || { echo "[ci_submit] still running after $HOURS h: $URL"; exit 1; }
   sleep 60 & wait $!  # (a signal interrupts the wait at once, so the trap deletes the bundle at once)
@@ -111,4 +124,6 @@ done
 cat "$OUT/summary/summary.md"
 echo "[ci_submit] summary in $OUT/summary; run conclusion: ${st#completed }; $URL"
 passed=$(jq -r .passed "$OUT/summary/summary.json")
+tested=$(jq -r '.commit // ""' "$OUT/summary/summary.json")
+[ "$tested" = "$SHA" ] || { echo "[ci_submit] the run tested ${tested:-an unknown commit}, not $SHA"; exit 1; }
 [ "${st#completed }" = success ] && [ "$passed" = true ]
