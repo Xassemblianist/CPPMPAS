@@ -94,7 +94,7 @@ build_state() {  # the run's jobs (JSON) -> the build job's state: failed, fetch
   jq -r '[.jobs[] | select(.name == "build")][0] as $b | [$b.steps[]? | select(.name == "source from the bundle"
            and .status == "completed")][0] as $f
          | if $b == null then "waiting"
-           elif ($b.status == "completed" and $b.conclusion != "success") or ($f != null and $f.conclusion != "success")
+           elif ($b.status == "completed" and $b.conclusion != "success") or ($f != null and $f.conclusion != "success" and $f.conclusion != "skipped")
            then "failed"
            elif $b.status == "completed" or $f != null then "fetched"
            else "waiting" end'
